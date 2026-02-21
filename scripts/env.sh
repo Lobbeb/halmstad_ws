@@ -18,3 +18,7 @@ if [ -f "$WS_ROOT/install/setup.bash" ]; then
 else
   echo "WARN: $WS_ROOT/install/setup.bash not found. Run colcon build."
 fi
+
+# Keep DDS settings aligned with clearpath/robot.yaml defaults.
+export ROS_DOMAIN_ID="${ROS_DOMAIN_ID:-3}"
+export RMW_IMPLEMENTATION="${RMW_IMPLEMENTATION:-rmw_fastrtps_cpp}"

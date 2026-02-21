@@ -9,7 +9,7 @@ from rclpy.time import Time
 
 from nav_msgs.msg import Odometry
 from geometry_msgs.msg import PoseStamped
-from std_msgs.msg import String
+from std_msgs.msg import String, Float32
 
 from tf_transformations import quaternion_from_euler, euler_from_quaternion
 from ros_gz_interfaces.srv import SetEntityPose
@@ -55,7 +55,9 @@ class FollowUav(Node):
         # ---------- Parameters ----------
         self.declare_parameter("world", "orchard")
         self.declare_parameter("uav_name", "dji0")
-        self.declare_parameter("ugv_odom_topic", "/a201_0000/platform/odom/filtered")
+        self.declare_parameter("leader_input_type", "odom")
+        self.declare_parameter("leader_odom_topic", "/a201_0000/platform/odom/filtered")
+        self.declare_parameter("leader_pose_topic", "/coord/leader_estimate")
 
         self.declare_parameter("tick_hz", 5.0)
         self.declare_parameter("d_target", 5.0)
@@ -78,7 +80,12 @@ class FollowUav(Node):
         # ---------- Read params ----------
         self.world = str(self.get_parameter("world").value)
         self.uav_name = str(self.get_parameter("uav_name").value)
-        self.ugv_odom_topic = str(self.get_parameter("ugv_odom_topic").value)
+        self.leader_input_type = str(self.get_parameter("leader_input_type").value).strip().lower()
+        self.leader_odom_topic = str(self.get_parameter("leader_odom_topic").value)
+        self.leader_pose_topic = str(self.get_parameter("leader_pose_topic").value)
+
+        if self.leader_input_type not in ("odom", "pose"):
+            raise ValueError("leader_input_type must be 'odom' or 'pose'")
 
         self.tick_hz = float(self.get_parameter("tick_hz").value)
         self.d_target = float(self.get_parameter("d_target").value)
@@ -110,6 +117,7 @@ class FollowUav(Node):
         self.have_ugv = False
         self.ugv_pose = Pose2D(0.0, 0.0, 0.0)
         self.last_ugv_stamp: Optional[Time] = None
+        self.stale_latched = False
 
         # Commanded UAV pose (deterministic internal state)
         self.uav_cmd = Pose2D(0.0, 0.0, 0.0)
@@ -119,12 +127,22 @@ class FollowUav(Node):
         self.pending_future = None
 
         # ---------- ROS I/O ----------
-        self.odom_sub = self.create_subscription(
-            Odometry,
-            self.ugv_odom_topic,
-            self.on_ugv_odom,
-            10,
-        )
+        if self.leader_input_type == "odom":
+            self.leader_sub = self.create_subscription(
+                Odometry,
+                self.leader_odom_topic,
+                self.on_leader_odom,
+                10,
+            )
+            leader_desc = f"odom:{self.leader_odom_topic}"
+        else:
+            self.leader_sub = self.create_subscription(
+                PoseStamped,
+                self.leader_pose_topic,
+                self.on_leader_pose,
+                10,
+            )
+            leader_desc = f"pose:{self.leader_pose_topic}"
 
         self.pose_pub = self.create_publisher(
             PoseStamped,
@@ -133,6 +151,21 @@ class FollowUav(Node):
         )
 
         self.events_pub = self.create_publisher(String, self.event_topic, 10)
+        # Metrics (for offline evaluation)
+        self.declare_parameter("publish_metrics", True)
+        self.declare_parameter("metrics_prefix", "/coord")
+
+        self.publish_metrics = bool(self.get_parameter("publish_metrics").value)
+        self.metrics_prefix = str(self.get_parameter("metrics_prefix").value).rstrip("/")
+        if self.metrics_prefix == "":
+            self.metrics_prefix = "/coord"
+
+        self.metric_dist_pub = self.create_publisher(
+            Float32, f"{self.metrics_prefix}/follow_dist_cmd", 10
+        )
+        self.metric_err_pub = self.create_publisher(
+            Float32, f"{self.metrics_prefix}/follow_tracking_error_cmd", 10
+        )
 
         srv_name = f"/world/{self.world}/set_pose"
         self.cli = self.create_client(SetEntityPose, srv_name)
@@ -145,7 +178,7 @@ class FollowUav(Node):
 
         self.get_logger().info(
             f"[follow_uav] Started: world={self.world}, uav={self.uav_name}, "
-            f"odom={self.ugv_odom_topic}, tick={self.tick_hz}Hz, "
+            f"leader_input={leader_desc}, tick={self.tick_hz}Hz, "
             f"d_target={self.d_target}, d_max={self.d_max}, z={self.z_alt}, "
             f"pose_timeout_s={self.pose_timeout_s}, min_cmd_period_s={self.min_cmd_period_s}, "
             f"smooth_alpha={self.smooth_alpha}, event_topic={self.event_topic}"
@@ -159,7 +192,7 @@ class FollowUav(Node):
         msg.data = s
         self.events_pub.publish(msg)
 
-    def on_ugv_odom(self, msg: Odometry):
+    def on_leader_odom(self, msg: Odometry):
         p = msg.pose.pose.position
         q = msg.pose.pose.orientation
         (_, _, yaw) = euler_from_quaternion([q.x, q.y, q.z, q.w])
@@ -167,11 +200,25 @@ class FollowUav(Node):
         self.ugv_pose = Pose2D(float(p.x), float(p.y), float(yaw))
         self.have_ugv = True
 
-        # Prefer message stamp if present; fall back to node time
         try:
             self.last_ugv_stamp = Time.from_msg(msg.header.stamp)
         except Exception:
             self.last_ugv_stamp = self.get_clock().now()
+
+    def on_leader_pose(self, msg: PoseStamped):
+        p = msg.pose.position
+        q = msg.pose.orientation
+        (_, _, yaw) = euler_from_quaternion([q.x, q.y, q.z, q.w])
+
+        self.ugv_pose = Pose2D(float(p.x), float(p.y), float(yaw))
+        self.have_ugv = True
+
+        try:
+            self.last_ugv_stamp = Time.from_msg(msg.header.stamp)
+        except Exception:
+            self.last_ugv_stamp = self.get_clock().now()
+
+
 
     def ugv_pose_is_fresh(self, now: Time) -> bool:
         if not self.have_ugv or self.last_ugv_stamp is None:
@@ -228,14 +275,34 @@ class FollowUav(Node):
 
         self.pose_pub.publish(ps)
 
+
+    def publish_metrics_cmd(self, leader: Pose2D, cmd_x: float, cmd_y: float) -> None:
+        if not self.publish_metrics:
+            return
+        d_cmd = math.hypot(cmd_x - leader.x, cmd_y - leader.y)
+        err = abs(d_cmd - self.d_target)
+
+        m1 = Float32()
+        m1.data = float(d_cmd)
+        self.metric_dist_pub.publish(m1)
+
+        m2 = Float32()
+        m2.data = float(err)
+        self.metric_err_pub.publish(m2)
+
     def on_tick(self):
         now = self.get_clock().now()
 
         # Need fresh UGV pose
         if not self.ugv_pose_is_fresh(now):
-            # only emit once per stale period to avoid spam
-            self.emit_event("POSE_STALE_HOLD")
+            if not self.stale_latched:
+                self.emit_event("POSE_STALE_HOLD_ENTER")
+                self.stale_latched = True
             return
+        else:
+            if self.stale_latched:
+                self.emit_event("POSE_STALE_HOLD_EXIT")
+                self.stale_latched = False
 
         # Avoid backlog: if previous request still pending, skip this tick
         if self.pending_future is not None and not self.pending_future.done():
@@ -262,6 +329,8 @@ class FollowUav(Node):
             a = self.smooth_alpha
             xt = a * xt + (1.0 - a) * self.uav_cmd.x
             yt = a * yt + (1.0 - a) * self.uav_cmd.y
+            
+        self.publish_metrics_cmd(ugv, xt, yt)
 
         yaw_cmd = ugv.yaw if self.follow_yaw else (self.uav_cmd.yaw if self.have_uav_cmd else ugv.yaw)
 
@@ -277,7 +346,8 @@ class FollowUav(Node):
         self.last_cmd_time = now
 
         self.emit_event("FOLLOW_TICK")
-
+    
+    
 
 def main(args=None):
     rclpy.init(args=args)
