@@ -54,17 +54,19 @@ class GenSdf(Node):
 
     def process(self):
         res = "dummmy"
-        if self.gimbal or self.robot or self.laser:
+        if self.gimbal or self.laser:
+            self.robot_gimbal = False
+        elif self.robot and not self.with_camera:
             self.robot_gimbal = False
         if not self.xacro_file:
             xacro_path = get_package_share_path('lrs_halmstad') / 'xacro'
             if self.robot_gimbal:
                 self.xacro_file = f'{xacro_path}/lrs_model.xacro'
-            if self.robot:
+            elif self.robot:
                 self.xacro_file = f'{xacro_path}/lrs_robot.xacro'
-            if self.gimbal:
+            elif self.gimbal:
                 self.xacro_file = f'{xacro_path}/lrs_gimbal.xacro'
-            if self.laser:
+            elif self.laser:
                 self.xacro_file = f'{xacro_path}/lrs_laser.xacro'
         mappings = {}
         mappings["robot_type"] = self.type
@@ -124,4 +126,3 @@ def main(args=None):
 
 
     
-

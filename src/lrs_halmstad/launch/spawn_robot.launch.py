@@ -3,6 +3,7 @@ from launch.actions import DeclareLaunchArgument, RegisterEventHandler
 from launch.event_handlers import OnProcessExit
 from launch_ros.actions import Node
 from launch.substitutions import ThisLaunchFileDir, LaunchConfiguration
+from launch.substitutions import PythonExpression
 from ament_index_python.packages import get_package_share_directory
 from launch.substitutions import Command, LaunchConfiguration
 from launch_ros.parameter_descriptions import ParameterValue
@@ -29,6 +30,15 @@ def generate_launch_description():
 
     type_arg = DeclareLaunchArgument(name='type', default_value="piraya",
                                      description='Type of model')
+    
+    uav_mode_arg = DeclareLaunchArgument(name='uav_mode', default_value="teleport",
+                                         description='UAV mode: teleport or physics')
+
+    with_camera_arg = DeclareLaunchArgument(name='with_camera', default_value="false",
+                                            description='Attach camera/gimbal to the model')
+    
+    camera_name_arg = DeclareLaunchArgument(name='camera_name', default_value="camera0",
+                                            description='Attached camera name')
 
     x = LaunchConfiguration('x')
     y = LaunchConfiguration('y')
@@ -36,6 +46,9 @@ def generate_launch_description():
     R = LaunchConfiguration('R')
     P = LaunchConfiguration('P')
     Y = LaunchConfiguration('Y')
+    with_camera_for_mode = PythonExpression([
+        "'true' if '", LaunchConfiguration('uav_mode'), "' == 'physics' else 'false'"
+    ])
 
     spawn_node = Node(
             package="ros_gz_sim",
@@ -48,7 +61,14 @@ def generate_launch_description():
 #                '-topic', ['/', LaunchConfiguration('name'), '/robot_description']
 #                '-file', LaunchConfiguration('model'),
 #                '-file', "/tmp/gen.sdf",
-                '-string', Command(["ros2 run lrs_halmstad", " ", "generate_sdf", " ", "--ros-args", " -p type:=", LaunchConfiguration('type'), " -p name:=", LaunchConfiguration('name'), " -p robot:=True"]),
+                '-string', Command([
+                    "ros2 run lrs_halmstad", " ", "generate_sdf", " ", "--ros-args",
+                    " -p type:=", LaunchConfiguration('type'),
+                    " -p name:=", LaunchConfiguration('name'),
+                    " -p robot:=True",
+                    " -p with_camera:=", with_camera_for_mode,
+                    " -p camera_name:=", LaunchConfiguration('camera_name')
+                ]),
                 '-x', LaunchConfiguration('x'),
                 '-y', LaunchConfiguration('y'),
                 '-z', LaunchConfiguration('z'),
@@ -70,9 +90,11 @@ def generate_launch_description():
         DeclareLaunchArgument('Y', default_value="0.0"),
 
         type_arg,
+        uav_mode_arg,
+        with_camera_arg,
+        camera_name_arg,
         model_arg,
         world_arg,        
         name_arg,
         spawn_node
     ])
-

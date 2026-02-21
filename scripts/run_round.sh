@@ -11,6 +11,11 @@ source "$(dirname "$0")/env.sh"
 # Now enable strict mode safely
 set -euo pipefail
 
+FOLLOW_PID=""
+EST_PID=""
+BAG_PID=""
+
+
 QOS_FILE="$WS_ROOT/config/rosbag_qos.yaml"
 if [ ! -f "$QOS_FILE" ]; then
   echo "ERROR: QoS override file missing: $QOS_FILE"
@@ -32,9 +37,33 @@ if [ "${5:-}" = "--with-cameras" ]; then
   WITH_CAMERAS="true"
 fi
 
+LEADER_MODE="${LEADER_MODE:-odom}"
+UGV_ODOM_TOPIC="${UGV_ODOM_TOPIC:-/a201_0000/platform/odom}"
+UGV_CMD_VEL_TOPIC="${UGV_CMD_VEL_TOPIC:-/a201_0000/cmd_vel}"
+UGV_CMD_TOPICS="${UGV_CMD_TOPICS:-/a201_0000/cmd_vel,/a201_0000/platform/cmd_vel}"
+REQUIRE_FLOW="${REQUIRE_FLOW:-1}"
+NODE_SUFFIX="$(echo "$RUN_ID" | tr -c '[:alnum:]_' '_')"
+
 # Ensure run root exists
 RUN_ROOT="${RUN_ROOT:-$HOME/halmstad_ws/runs}"
-RUN_DIR="$RUN_ROOT/$RUN_ID"
+
+# Put runs into runs/<group>/<run_id> (optional). Default keeps old behavior.
+# You can set RUN_GROUP explicitly, or let it auto-pick based on CONDITION + LEADER_MODE.
+RUN_GROUP="${RUN_GROUP:-auto}"
+
+if [ "$RUN_GROUP" = "auto" ]; then
+  if [ "$CONDITION" = "follow" ]; then
+    if [ "$LEADER_MODE" = "pose" ]; then
+      RUN_GROUP="estimator_pose"
+    else
+      RUN_GROUP="estimator"
+    fi
+  else
+    RUN_GROUP="baseline"
+  fi
+fi
+
+RUN_DIR="$RUN_ROOT/$RUN_GROUP/$RUN_ID"
 mkdir -p "$RUN_DIR"
 rm -rf "$RUN_DIR/bag"
 
@@ -50,21 +79,33 @@ pub_evt () {
   ros2 topic pub -1 "$EVENT_TOPIC" std_msgs/msg/String "{data: '$s'}" >/dev/null
 }
 
+kill_cmd_vel_publishers () {
+  pkill -9 -f "ros2 topic pub.*(/a201_0000/cmd_vel|/a201_0000/platform/cmd_vel)" 2>/dev/null || true
+}
+
 export EVENT_TOPIC
+export REQUIRE_FLOW
+export UGV_CMD_TOPICS
+export UGV_CMD_VEL_TOPIC
+export REQUIRED_FLOW_TOPICS="$UGV_ODOM_TOPIC"
 # Sanity guard (new improvement)
 ros2 run lrs_halmstad contract_check "$WORLD" "$UAV" 10
 
 # Topics list aligns with your Stage-1 logging
 TOPICS=(
   "/clock"
-  "/a201_0000/platform/odom"
+  "$UGV_ODOM_TOPIC"
   "/a201_0000/platform/odom/filtered"
   "/a201_0000/platform/cmd_vel"
-  "/a201_0000/cmd_vel"
+  "$UGV_CMD_VEL_TOPIC"
   "/a201_0000/tf"
   "/a201_0000/tf_static"
   "$EVENT_TOPIC"
   "/${UAV}/pose_cmd"
+  "/coord/leader_estimate"
+  "/coord/leader_estimate_status"
+  "/coord/follow_dist_cmd"
+  "/coord/follow_tracking_error_cmd"
 )
 
 # If we publish markers to /coord/events_raw, also record the impaired output /coord/events
@@ -73,6 +114,8 @@ if [ "$EVENT_TOPIC" != "/coord/events" ]; then
 fi
 
 if [ "$WITH_CAMERAS" = "true" ]; then
+  TOPICS+=("/${UAV}/camera0/image_raw")
+  TOPICS+=("/${UAV}/camera0/camera_info")
   TOPICS+=("/a201_0000/sensors/camera_0/color/image")
 fi
 
@@ -80,6 +123,7 @@ fi
 # Write meta.yaml
 cat > "$RUN_DIR/meta.yaml" << EOF
 run_id: ${RUN_ID}
+run_group: ${RUN_GROUP}
 timestamp: ${START_TS}
 condition: ${CONDITION}
 world: ${WORLD}
@@ -89,11 +133,22 @@ EOF
 
 cleanup() {
   set +e
-  if [ -n "${BAG_PID:-}" ]; then
+  kill_cmd_vel_publishers
+  if [ -n "$FOLLOW_PID" ]; then
+    kill "$FOLLOW_PID" 2>/dev/null || true
+    wait "$FOLLOW_PID" 2>/dev/null || true
+  fi
+  if [ -n "$EST_PID" ]; then
+    kill "$EST_PID" 2>/dev/null || true
+    wait "$EST_PID" 2>/dev/null || true
+  fi
+  if [ -n "$BAG_PID" ]; then
     kill "$BAG_PID" 2>/dev/null || true
     wait "$BAG_PID" 2>/dev/null || true
   fi
+  kill_cmd_vel_publishers
 }
+
 trap cleanup EXIT
 
 echo "[run_round] Recording rosbag to $RUN_DIR/bag ..."
@@ -105,17 +160,43 @@ sleep 1.0 # Give rosbag a moment to start and create the bag directory
 # Event markers
 pub_evt "ROUND_START"
 
+
 # UAV phase (Stage 1 default: grid sweep). Stage 2: follow+leash if CONDITION=follow.
 pub_evt "UAV_PHASE_START"
 
 if [ "$CONDITION" = "follow" ]; then
-  echo "[run_round] CONDITION=follow -> starting follow_uav (background) during UGV phase"
-  # We start the follower now but keep it running through the UGV phase.
+  echo "[run_round] CONDITION=follow -> starting leader_estimator + follow_uav (background) during UGV phase"
+
+  EST_PID=""
+  if [ "$LEADER_MODE" = "pose" ]; then
+    echo "[run_round] Starting leader_estimator (background)"
+    ros2 run lrs_halmstad leader_estimator --ros-args \
+      -r __node:=leader_estimator_${NODE_SUFFIX} \
+      -p use_sim_time:=true \
+      -p ugv_odom_topic:="$UGV_ODOM_TOPIC" \
+      -p out_topic:=/coord/leader_estimate \
+      -p status_topic:=/coord/leader_estimate_status \
+      -p publish_status:=true \
+      -p est_hz:=5.0 \
+      -p pose_timeout_s:=2.0 \
+      -p event_topic:="$EVENT_TOPIC" \
+      -p publish_events:=true \
+      > "$RUN_DIR/leader_estimator.log" 2>&1 &
+    EST_PID=$!
+    sleep 0.3
+  else
+    echo "[run_round] LEADER_MODE=$LEADER_MODE -> not starting leader_estimator"
+  fi
+
+  echo "[run_round] Starting follow_uav (leader_mode=$LEADER_MODE)"
   ros2 run lrs_halmstad follow_uav --ros-args \
+    -r __node:=follow_uav_${NODE_SUFFIX} \
     -p use_sim_time:=true \
     -p world:="$WORLD" \
     -p uav_name:="$UAV" \
-    -p ugv_odom_topic:=/a201_0000/platform/odom \
+    -p leader_input_type:="$LEADER_MODE" \
+    -p leader_odom_topic:="$UGV_ODOM_TOPIC" \
+    -p leader_pose_topic:=/coord/leader_estimate \
     -p tick_hz:=5.0 \
     -p d_target:=5.0 \
     -p d_max:=15.0 \
@@ -127,12 +208,10 @@ if [ "$CONDITION" = "follow" ]; then
     > "$RUN_DIR/follow_uav.log" 2>&1 &
   FOLLOW_PID=$!
 
-  # End UAV phase marker here; follower continues until we stop it after UGV phase.
   pub_evt "UAV_PHASE_END"
 
 else
   echo "[run_round] CONDITION=$CONDITION -> running Stage 1 UAV sweep"
-  # Export for embedded Python blocks
   export UAV="$UAV"
   export WORLD="$WORLD"
   export RUN_DIR="$RUN_DIR"
@@ -178,6 +257,7 @@ PY
 fi
 
 
+
 # UGV movement
 pub_evt "UGV_PHASE_START"
 
@@ -196,7 +276,7 @@ speed_turn = float(defaults.get("ugv_turn_speed", 0.5))
 t_turn = float(defaults.get("ugv_turn_time_s", 3.14))
 cycles = int(defaults.get("ugv_cycles", 10))
 
-topic = "/a201_0000/cmd_vel"
+topic = os.environ.get("UGV_CMD_VEL_TOPIC", "/a201_0000/cmd_vel")
 msg_fwd = (
     "{twist: {linear: {x: " + str(speed_fwd) + ", y: 0.0, z: 0.0}, "
     "angular: {x: 0.0, y: 0.0, z: 0.0}}}"
@@ -228,17 +308,32 @@ for _ in range(cycles):
     run_for_seconds(msg_turn, t_turn)
 PY
 
-
+#
 pub_evt "UGV_PHASE_END"
+
 pub_evt "ROUND_END"
-if [ "${FOLLOW_PID:-}" != "" ]; then
+
+# Stop background nodes (also handled by EXIT trap, but we stop here to finish cleanly)
+if [ -n "$FOLLOW_PID" ]; then
   echo "[run_round] Stopping follow_uav (pid=$FOLLOW_PID)"
   kill "$FOLLOW_PID" 2>/dev/null || true
   wait "$FOLLOW_PID" 2>/dev/null || true
+  FOLLOW_PID=""
 fi
-# Stop bag (cleanup trap also covers this, but do it explicitly)
-kill "$BAG_PID" 2>/dev/null || true
-wait "$BAG_PID" 2>/dev/null || true
+
+if [ -n "$EST_PID" ]; then
+  echo "[run_round] Stopping leader_estimator (pid=$EST_PID)"
+  kill "$EST_PID" 2>/dev/null || true
+  wait "$EST_PID" 2>/dev/null || true
+  EST_PID=""
+fi
+
+# Stop bag
+if [ -n "$BAG_PID" ]; then
+  kill "$BAG_PID" 2>/dev/null || true
+  wait "$BAG_PID" 2>/dev/null || true
+  BAG_PID=""
+fi
 
 echo "[run_round] Done. Bag info:"
 ros2 bag info "$RUN_DIR/bag" | head -n 60 || true

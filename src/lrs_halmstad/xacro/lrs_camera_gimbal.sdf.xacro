@@ -6,10 +6,10 @@
 
 
     <xacro:macro name="lrs_camera_gimbal"
-                 params="name parent_link link_name image_topic camera_info_topic frame_id update_rate im_width im_height im_format hfov_deg far_clip robot_type robot_name">
+                 params="name parent_link link_name image_topic camera_info_topic frame_id update_rate im_width im_height im_format hfov_deg far_clip robot_type robot_name x_offset:=0.0 y_offset:=0.0 z_offset:=0.0 yaw_offset:=0.0">
 
       <link name="${link_name}">
-         <pose rotation_format="euler_rpy" degrees="true">0 0 0 0 0 0</pose>        
+         <pose rotation_format="euler_rpy" degrees="true">${x_offset} ${y_offset} ${z_offset} 0 0 ${yaw_offset}</pose>
             <visual name="visual">
                 <origin xyz="0 0 0.0" rpy="0 0 0"/>
                 <geometry>
@@ -61,7 +61,7 @@
                 <always_on>1</always_on>
                 <visualize>true</visualize>
                 <topic>${image_topic}</topic>
-                <ignition_frame_id>dji0/camera0/image_frame</ignition_frame_id>
+                <ignition_frame_id>${frame_id}</ignition_frame_id>
             </sensor>
         </link>
             

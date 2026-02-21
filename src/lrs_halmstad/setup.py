@@ -73,8 +73,9 @@ setup(
         'console_scripts': [
             'generate_sdf = lrs_halmstad.generate_sdf:main',            
             'command = lrs_halmstad.command:main',            
-             'contract_check = lrs_halmstad.contract_check:main',
-             'follow_uav = lrs_halmstad.follow_uav:main',
+            'contract_check = lrs_halmstad.contract_check:main',
+            'follow_uav = lrs_halmstad.follow_uav:main',
+            "leader_estimator = lrs_halmstad.leader_estimator:main",
 
               # optional later:
               # 'metrics_node = lrs_halmstad.metrics_node:main',
