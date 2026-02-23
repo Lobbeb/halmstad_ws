@@ -1,0 +1,25 @@
+<?xml version="1.0"?>
+<sdf version="1.6">
+  <model name="x2_ugv_demo">
+    <static>false</static>
+    <include>
+      <uri>model://X2_UGV/4</uri>
+    </include>
+    <plugin name="gz::sim::systems::OdometryPublisher" filename="libgz-sim8-odometry-publisher-system.so">
+      <odom_topic>/model/x2_ugv/odometry</odom_topic>
+      <odom_frame>odom</odom_frame>
+      <robot_base_frame>base_link</robot_base_frame>
+      <publish_tf>true</publish_tf>
+      <update_rate>30</update_rate>
+    </plugin>
+    <plugin name="gz::sim::systems::DiffDrive" filename="libgz-sim8-diff-drive-system.so">
+      <left_joint>X2::front_left_wheel_joint</left_joint>
+      <left_joint>X2::rear_left_wheel_joint</left_joint>
+      <right_joint>X2::front_right_wheel_joint</right_joint>
+      <right_joint>X2::rear_right_wheel_joint</right_joint>
+      <wheel_separation>0.35</wheel_separation>
+      <wheel_radius>0.09</wheel_radius>
+      <topic>/cmd_vel</topic>
+    </plugin>
+  </model>
+</sdf>

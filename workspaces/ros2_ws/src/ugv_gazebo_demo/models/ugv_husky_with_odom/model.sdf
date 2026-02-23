@@ -1,0 +1,25 @@
+<?xml version="1.0"?>
+<sdf version="1.6">
+  <model name="ugv">
+    <static>false</static>
+    <include>
+      <uri>model://HUSKY</uri>
+    </include>
+    <plugin name="gz::sim::systems::OdometryPublisher" filename="libgz-sim8-odometry-publisher-system.so">
+      <odom_topic>/model/ugv/odometry</odom_topic>
+      <odom_frame>odom</odom_frame>
+      <robot_base_frame>base_link</robot_base_frame>
+      <publish_tf>true</publish_tf>
+      <update_rate>30</update_rate>
+    </plugin>
+    <plugin name="gz::sim::systems::DiffDrive" filename="libgz-sim8-diff-drive-system.so">
+      <left_joint>marble_husky_sensor_config_5::front_left_wheel_joint</left_joint>
+      <left_joint>marble_husky_sensor_config_5::rear_left_wheel_joint</left_joint>
+      <right_joint>marble_husky_sensor_config_5::front_right_wheel_joint</right_joint>
+      <right_joint>marble_husky_sensor_config_5::rear_right_wheel_joint</right_joint>
+      <wheel_separation>0.5708</wheel_separation>
+      <wheel_radius>0.1651</wheel_radius>
+      <topic>/cmd_vel</topic>
+    </plugin>
+  </model>
+</sdf>

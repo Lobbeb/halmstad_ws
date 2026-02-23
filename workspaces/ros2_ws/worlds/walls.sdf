@@ -1,0 +1,437 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<sdf version="1.9">
+  <world name="walls">
+    <physics type="ode">
+      <max_step_size>0.004</max_step_size>
+      <real_time_factor>1.0</real_time_factor>
+      <real_time_update_rate>250</real_time_update_rate>
+    </physics>
+    
+    <plugin
+      filename="gz-sim-physics-system"
+      name="gz::sim::systems::Physics">
+    </plugin>
+    <plugin
+      filename="gz-sim-user-commands-system"
+      name="gz::sim::systems::UserCommands">
+    </plugin>
+    <plugin
+      filename="gz-sim-scene-broadcaster-system"
+      name="gz::sim::systems::SceneBroadcaster">
+    </plugin>
+    <plugin
+      filename="gz-sim-sensors-system"
+      name="gz::sim::systems::Sensors">
+      <render_engine>ogre2</render_engine>
+    </plugin>
+    <gravity>0 0 -9.8</gravity>
+    <magnetic_field>6e-06 2.3e-05 -4.2e-05</magnetic_field>
+    <atmosphere type="adiabatic"/>
+
+    <scene>
+      <grid>false</grid>
+      <ambient>0.4 0.4 0.4 1</ambient>
+      <background>0.7 0.7 0.7 1</background>
+      <shadows>true</shadows>
+    </scene>
+
+    <model name="ground_plane">
+      <static>true</static>
+      <link name="link">
+        <collision name="collision">
+          <geometry>
+            <plane>
+              <normal>0 0 1</normal>
+              <size>80 80</size>
+            </plane>
+          </geometry>
+        </collision>
+        <visual name="visual">
+          <geometry>
+            <plane>
+              <normal>0 0 1</normal>
+              <size>80 80</size>
+            </plane>
+          </geometry>
+          <material>
+            <ambient>0.82 0.82 0.82 1</ambient>
+            <diffuse>0.82 0.82 0.82 1</diffuse>
+            <specular>0.2 0.2 0.2 1</specular>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <light name="sunUTC" type="directional">
+      <pose>0 0 500 0 0 0</pose>
+      <cast_shadows>true</cast_shadows>
+      <intensity>1</intensity>
+      <direction>0.001 0.625 -0.78</direction>
+      <diffuse>0.904 0.904 0.904 1</diffuse>
+      <specular>0.271 0.271 0.271 1</specular>
+      <attenuation>
+        <range>2000</range>
+        <linear>0</linear>
+        <constant>1</constant>
+        <quadratic>0</quadratic>
+      </attenuation>
+    </light>
+
+    <!-- Outer boundary, low enough to keep scene visibility -->
+    <model name="wall_north">
+      <static>true</static>
+      <pose>0 38 0.6 0 0 0</pose>
+      <link name="link">
+        <collision name="collision"><geometry><box><size>76 1 1.2</size></box></geometry></collision>
+        <visual name="visual"><geometry><box><size>76 1 1.2</size></box></geometry></visual>
+      </link>
+    </model>
+    <model name="wall_south">
+      <static>true</static>
+      <pose>0 -38 0.6 0 0 0</pose>
+      <link name="link">
+        <collision name="collision"><geometry><box><size>76 1 1.2</size></box></geometry></collision>
+        <visual name="visual"><geometry><box><size>76 1 1.2</size></box></geometry></visual>
+      </link>
+    </model>
+    <model name="wall_east">
+      <static>true</static>
+      <pose>38 0 0.6 0 0 0</pose>
+      <link name="link">
+        <collision name="collision"><geometry><box><size>1 76 1.2</size></box></geometry></collision>
+        <visual name="visual"><geometry><box><size>1 76 1.2</size></box></geometry></visual>
+      </link>
+    </model>
+    <model name="wall_west">
+      <static>true</static>
+      <pose>-38 0 0.6 0 0 0</pose>
+      <link name="link">
+        <collision name="collision"><geometry><box><size>1 76 1.2</size></box></geometry></collision>
+        <visual name="visual"><geometry><box><size>1 76 1.2</size></box></geometry></visual>
+      </link>
+    </model>
+
+    <!-- Maze corridors -->
+    <model name="maze_1">
+      <static>true</static>
+      <pose>-20 25 0.6 0 0 0</pose>
+      <link name="link">
+        <collision name="collision"><geometry><box><size>42 1 1.2</size></box></geometry></collision>
+        <visual name="visual"><geometry><box><size>42 1 1.2</size></box></geometry></visual>
+      </link>
+    </model>
+    <model name="maze_2">
+      <static>true</static>
+      <pose>10 12 0.6 0 0 0</pose>
+      <link name="link">
+        <collision name="collision"><geometry><box><size>1 26 1.2</size></box></geometry></collision>
+        <visual name="visual"><geometry><box><size>1 26 1.2</size></box></geometry></visual>
+      </link>
+    </model>
+    <model name="maze_3">
+      <static>true</static>
+      <pose>-2 -2 0.6 0 0 0</pose>
+      <link name="link">
+        <collision name="collision"><geometry><box><size>36 1 1.2</size></box></geometry></collision>
+        <visual name="visual"><geometry><box><size>36 1 1.2</size></box></geometry></visual>
+      </link>
+    </model>
+    <model name="maze_4">
+      <static>true</static>
+      <pose>-18 -15 0.6 0 0 0</pose>
+      <link name="link">
+        <collision name="collision"><geometry><box><size>1 26 1.2</size></box></geometry></collision>
+        <visual name="visual"><geometry><box><size>1 26 1.2</size></box></geometry></visual>
+      </link>
+    </model>
+    <model name="maze_5">
+      <static>true</static>
+      <pose>18 -24 0.6 0 0 0</pose>
+      <link name="link">
+        <collision name="collision"><geometry><box><size>34 1 1.2</size></box></geometry></collision>
+        <visual name="visual"><geometry><box><size>34 1 1.2</size></box></geometry></visual>
+      </link>
+    </model>
+    <model name="maze_6">
+      <static>true</static>
+      <pose>28 8 0.6 0 0 0</pose>
+      <link name="link">
+        <collision name="collision"><geometry><box><size>1 22 1.2</size></box></geometry></collision>
+        <visual name="visual"><geometry><box><size>1 22 1.2</size></box></geometry></visual>
+      </link>
+    </model>
+
+    <!-- Extra segments to create more turns for drive_lidar while leaving the spawn area open -->
+    <model name="maze_7">
+      <static>true</static>
+      <pose>-30 10 0.6 0 0 0</pose>
+      <link name="link">
+        <collision name="collision"><geometry><box><size>18 1 1.2</size></box></geometry></collision>
+        <visual name="visual"><geometry><box><size>18 1 1.2</size></box></geometry></visual>
+      </link>
+    </model>
+    <model name="maze_8">
+      <static>true</static>
+      <pose>-30 -2 0.6 0 0 0</pose>
+      <link name="link">
+        <collision name="collision"><geometry><box><size>1 20 1.2</size></box></geometry></collision>
+        <visual name="visual"><geometry><box><size>1 20 1.2</size></box></geometry></visual>
+      </link>
+    </model>
+    <model name="maze_9">
+      <static>true</static>
+      <pose>-6 16 0.6 0 0 0</pose>
+      <link name="link">
+        <collision name="collision"><geometry><box><size>14 1 1.2</size></box></geometry></collision>
+        <visual name="visual"><geometry><box><size>14 1 1.2</size></box></geometry></visual>
+      </link>
+    </model>
+    <model name="maze_10">
+      <static>true</static>
+      <pose>20 18 0.6 0 0 0</pose>
+      <link name="link">
+        <collision name="collision"><geometry><box><size>14 1 1.2</size></box></geometry></collision>
+        <visual name="visual"><geometry><box><size>14 1 1.2</size></box></geometry></visual>
+      </link>
+    </model>
+    <model name="maze_11">
+      <static>true</static>
+      <pose>36 22 0.6 0 0 0</pose>
+      <link name="link">
+        <collision name="collision"><geometry><box><size>1 18 1.2</size></box></geometry></collision>
+        <visual name="visual"><geometry><box><size>1 18 1.2</size></box></geometry></visual>
+      </link>
+    </model>
+    <model name="maze_12">
+      <static>true</static>
+      <pose>8 -12 0.6 0 0 0</pose>
+      <link name="link">
+        <collision name="collision"><geometry><box><size>12 1 1.2</size></box></geometry></collision>
+        <visual name="visual"><geometry><box><size>12 1 1.2</size></box></geometry></visual>
+      </link>
+    </model>
+    <model name="maze_13">
+      <static>true</static>
+      <pose>26 -10 0.6 0 0 0</pose>
+      <link name="link">
+        <collision name="collision"><geometry><box><size>1 14 1.2</size></box></geometry></collision>
+        <visual name="visual"><geometry><box><size>1 14 1.2</size></box></geometry></visual>
+      </link>
+    </model>
+    <model name="maze_14">
+      <static>true</static>
+      <pose>-8 -26 0.6 0 0 0</pose>
+      <link name="link">
+        <collision name="collision"><geometry><box><size>22 1 1.2</size></box></geometry></collision>
+        <visual name="visual"><geometry><box><size>22 1 1.2</size></box></geometry></visual>
+      </link>
+    </model>
+    <model name="maze_15">
+      <static>true</static>
+      <pose>-2 -34 0.6 0 0 0</pose>
+      <link name="link">
+        <collision name="collision"><geometry><box><size>1 14 1.2</size></box></geometry></collision>
+        <visual name="visual"><geometry><box><size>1 14 1.2</size></box></geometry></visual>
+      </link>
+    </model>
+    <model name="maze_16">
+      <static>true</static>
+      <pose>24 32 0.6 0 0 0</pose>
+      <link name="link">
+        <collision name="collision"><geometry><box><size>24 1 1.2</size></box></geometry></collision>
+        <visual name="visual"><geometry><box><size>24 1 1.2</size></box></geometry></visual>
+      </link>
+    </model>
+    <model name="maze_17">
+      <static>true</static>
+      <pose>-22 6 0.6 0 0 0</pose>
+      <link name="link">
+        <collision name="collision"><geometry><box><size>12 1 1.2</size></box></geometry></collision>
+        <visual name="visual"><geometry><box><size>12 1 1.2</size></box></geometry></visual>
+      </link>
+    </model>
+    <model name="maze_18">
+      <static>true</static>
+      <pose>-12 14 0.6 0 0 0</pose>
+      <link name="link">
+        <collision name="collision"><geometry><box><size>1 16 1.2</size></box></geometry></collision>
+        <visual name="visual"><geometry><box><size>1 16 1.2</size></box></geometry></visual>
+      </link>
+    </model>
+    <model name="maze_19">
+      <static>true</static>
+      <pose>-12 -8 0.6 0 0 0</pose>
+      <link name="link">
+        <collision name="collision"><geometry><box><size>1 16 1.2</size></box></geometry></collision>
+        <visual name="visual"><geometry><box><size>1 16 1.2</size></box></geometry></visual>
+      </link>
+    </model>
+    <model name="maze_20">
+      <static>true</static>
+      <pose>-24 -24 0.6 0 0 0</pose>
+      <link name="link">
+        <collision name="collision"><geometry><box><size>16 1 1.2</size></box></geometry></collision>
+        <visual name="visual"><geometry><box><size>16 1 1.2</size></box></geometry></visual>
+      </link>
+    </model>
+    <model name="maze_21">
+      <static>true</static>
+      <pose>-32 -16 0.6 0 0 0</pose>
+      <link name="link">
+        <collision name="collision"><geometry><box><size>1 18 1.2</size></box></geometry></collision>
+        <visual name="visual"><geometry><box><size>1 18 1.2</size></box></geometry></visual>
+      </link>
+    </model>
+    <model name="maze_22">
+      <static>true</static>
+      <pose>-30 26 0.6 0 0 0</pose>
+      <link name="link">
+        <collision name="collision"><geometry><box><size>1 14 1.2</size></box></geometry></collision>
+        <visual name="visual"><geometry><box><size>1 14 1.2</size></box></geometry></visual>
+      </link>
+    </model>
+    <model name="maze_23">
+      <static>true</static>
+      <pose>4 10 0.6 0 0 0</pose>
+      <link name="link">
+        <collision name="collision"><geometry><box><size>10 1 1.2</size></box></geometry></collision>
+        <visual name="visual"><geometry><box><size>10 1 1.2</size></box></geometry></visual>
+      </link>
+    </model>
+    <model name="maze_24">
+      <static>true</static>
+      <pose>16 2 0.6 0 0 0</pose>
+      <link name="link">
+        <collision name="collision"><geometry><box><size>10 1 1.2</size></box></geometry></collision>
+        <visual name="visual"><geometry><box><size>10 1 1.2</size></box></geometry></visual>
+      </link>
+    </model>
+    <model name="maze_25">
+      <static>true</static>
+      <pose>4 -16 0.6 0 0 0</pose>
+      <link name="link">
+        <collision name="collision"><geometry><box><size>1 12 1.2</size></box></geometry></collision>
+        <visual name="visual"><geometry><box><size>1 12 1.2</size></box></geometry></visual>
+      </link>
+    </model>
+    <model name="maze_26">
+      <static>true</static>
+      <pose>32 -28 0.6 0 0 0</pose>
+      <link name="link">
+        <collision name="collision"><geometry><box><size>1 16 1.2</size></box></geometry></collision>
+        <visual name="visual"><geometry><box><size>1 16 1.2</size></box></geometry></visual>
+      </link>
+    </model>
+
+    <spherical_coordinates>
+      <surface_model>EARTH_WGS84</surface_model>
+      <world_frame_orientation>ENU</world_frame_orientation>
+      <latitude_deg>47.397971057728974</latitude_deg>
+      <longitude_deg>8.546163739800146</longitude_deg>
+      <elevation>0</elevation>
+    </spherical_coordinates>
+    <gui fullscreen="0">
+      <plugin filename="MinimalScene" name="3D View">
+        <gz-gui>
+          <title>3D View</title>
+          <property type="bool" key="showTitleBar">false</property>
+          <property type="string" key="state">docked</property>
+        </gz-gui>
+        <engine>ogre2</engine>
+        <scene>scene</scene>
+        <ambient_light>0.4 0.4 0.4</ambient_light>
+        <background_color>0.8 0.8 0.8</background_color>
+        <camera_pose>-18 0 12 0 0.5 0.0</camera_pose>
+      </plugin>
+      <plugin filename="EntityContextMenuPlugin" name="Entity context menu">
+        <gz-gui>
+          <property key="state" type="string">floating</property>
+          <property key="width" type="double">5</property>
+          <property key="height" type="double">5</property>
+          <property key="showTitleBar" type="bool">false</property>
+        </gz-gui>
+      </plugin>
+      <plugin filename="GzSceneManager" name="Scene Manager">
+        <gz-gui>
+          <property key="resizable" type="bool">false</property>
+          <property key="width" type="double">5</property>
+          <property key="height" type="double">5</property>
+          <property key="state" type="string">floating</property>
+          <property key="showTitleBar" type="bool">false</property>
+        </gz-gui>
+      </plugin>
+      <plugin filename="InteractiveViewControl" name="Interactive view control">
+        <gz-gui>
+          <property key="resizable" type="bool">false</property>
+          <property key="width" type="double">5</property>
+          <property key="height" type="double">5</property>
+          <property key="state" type="string">floating</property>
+          <property key="showTitleBar" type="bool">false</property>
+        </gz-gui>
+      </plugin>
+      <plugin filename="CameraTracking" name="Camera Tracking">
+        <gz-gui>
+          <property key="resizable" type="bool">false</property>
+          <property key="width" type="double">5</property>
+          <property key="height" type="double">5</property>
+          <property key="state" type="string">floating</property>
+          <property key="showTitleBar" type="bool">false</property>
+        </gz-gui>
+      </plugin>
+      <plugin filename="WorldControl" name="World control">
+        <gz-gui>
+          <title>World control</title>
+          <property type="bool" key="showTitleBar">false</property>
+          <property type="bool" key="resizable">false</property>
+          <property type="double" key="height">72</property>
+          <property type="double" key="z">1</property>
+          <property type="string" key="state">floating</property>
+          <anchors target="3D View">
+            <line own="left" target="left"/>
+            <line own="bottom" target="bottom"/>
+          </anchors>
+        </gz-gui>
+        <play_pause>true</play_pause>
+        <step>true</step>
+        <start_paused>true</start_paused>
+        <use_event>true</use_event>
+      </plugin>
+      <plugin filename="WorldStats" name="World stats">
+        <gz-gui>
+          <title>World stats</title>
+          <property type="bool" key="showTitleBar">false</property>
+          <property type="bool" key="resizable">false</property>
+          <property type="double" key="height">110</property>
+          <property type="double" key="width">290</property>
+          <property type="double" key="z">1</property>
+          <property type="string" key="state">floating</property>
+          <anchors target="3D View">
+            <line own="right" target="right"/>
+            <line own="bottom" target="bottom"/>
+          </anchors>
+        </gz-gui>
+        <sim_time>true</sim_time>
+        <real_time>true</real_time>
+        <real_time_factor>true</real_time_factor>
+        <iterations>true</iterations>
+      </plugin>
+      <plugin filename="ImageDisplay" name="Bebop Camera">
+        <gz-gui>
+          <title>Bebop Camera</title>
+          <property key="state" type="string">docked</property>
+        </gz-gui>
+        <topic>/world/walls/model/bebop1/model/parrot_bebop_2/link/body/sensor/rgb_camera_sensor/image</topic>
+      </plugin>
+      <plugin filename="ComponentInspector" name="Component inspector">
+        <gz-gui>
+          <property type="string" key="state">docked</property>
+        </gz-gui>
+      </plugin>
+      <plugin filename="EntityTree" name="Entity tree">
+        <gz-gui>
+          <property type="string" key="state">docked</property>
+        </gz-gui>
+      </plugin>
+    </gui>
+  </world>
+</sdf>

@@ -1,0 +1,30 @@
+# OMNeT IDE workspace metadata (local machine state)
+/.metadata/
+/.settings/
+
+# Downloaded external frameworks / toolchains (not part of this project)
+/omnetpp-6.2.0/
+/inet4.5/
+/flora/
+/Simu5G-1.4.2/
+/veins-veins-5.3.1/
+
+# OMNeT project build outputs and local runtime state
+/UAV_UGV/UAV_UGV
+/UAV_UGV/out/
+/UAV_UGV/results/
+/UAV_UGV/__pycache__/
+/UAV_UGV/.settings/
+/UAV_UGV/.qtenvrc
+
+# Python cache files inside workspace
+**/__pycache__/
+**/*.pyc
+**/*.pyo
+
+# Editor / OS noise
+.vscode/
+.idea/
+*.swp
+*~
+.DS_Store

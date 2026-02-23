@@ -1,0 +1,220 @@
+package uav_ugv;
+
+import inet.environment.common.PhysicalEnvironment;
+import inet.networklayer.configurator.ipv4.Ipv4NetworkConfigurator;
+import inet.visualizer.common.IntegratedVisualizer;
+import inet.common.geometry.common.IGeographicCoordinateSystem;
+import inet.mobility.contract.IMobility;
+import inet.mobility.static.StationaryMobility;
+import inet.networklayer.common.InterfaceTable;
+import inet.networklayer.contract.INetworkLayer;
+import inet.linklayer.contract.IEthernetInterface;
+import inet.transportlayer.contract.IUdp;
+import inet.networklayer.contract.IRoutingTable;
+import inet.common.MessageDispatcher;
+import inet.linklayer.ethernet.contract.IEthernetLayer;
+import inet.protocolelement.contract.IProtocolLayer;
+import inet.node.contract.INetworkNode;
+import inet.node.inet.StandardHost;
+import inet.node.ethernet.Eth1G;
+import inet.applications.contract.IApp;
+import flora.LoRa.LoRaNic;
+import flora.LoRa.LoRaGWNic;
+import flora.LoRa.PacketForwarder;
+import flora.LoRaPhy.LoRaMedium;
+
+@license(LGPL);
+
+module LoRaMobileNode
+{
+    parameters:
+        int numApps = default(0);
+        string deploymentType = default("");
+        double maxGatewayDistance = default(320.0);
+        double gatewayX = default(320.0);
+        double gatewayY = default(320.0);
+        @networkNode();
+        *.interfaceTableModule = default(absPath(".interfaceTable"));
+        @display("bgb=297,313;i=device/accesspoint;is=vs");
+    submodules:
+        interfaceTable: InterfaceTable {
+            @display("p=30,26");
+        }
+        mobility: <default("StationaryMobility")> like IMobility {
+            @display("p=24,88");
+        }
+        LoRaNic: LoRaNic {
+            @display("p=137,239");
+        }
+        app[numApps]: <> like IApp {
+            parameters:
+                @display("p=375,76,row,150");
+        }
+    connections allowunconnected:
+        for i=0..numApps-1 {
+            app[i].socketOut --> LoRaNic.upperLayerIn;
+            LoRaNic.upperLayerOut --> app[i].socketIn;
+        }
+}
+
+module LoRaMobileGW like INetworkNode
+{
+    parameters:
+        @networkNode();
+        *.interfaceTableModule = default(absPath(".interfaceTable"));
+        *.routingTableModule = default(routingTableType != "" ? absPath(".routingTable") : "");
+        *.energySourceModule = default(exists(energyStorage) ? absPath(".energyStorage") : "");
+
+        int numEthInterfaces = default(0);
+        int numWlanInterfaces = 1;
+
+        bool hasIpv4 = default(true);
+        string networkLayerType = default("Ipv4NetworkLayer");
+        string routingTableType = default("Ipv4RoutingTable");
+        int numUdpApps = default(0);
+        bool hasUdp = default(firstAvailableOrEmpty("Udp") != "");
+        string udpType = default(firstAvailableOrEmpty("UDP"));
+
+        *.mobilityModule = default(exists(mobility) ? absPath(".mobility") : "");
+        ethernet.registerProtocol = default(true);
+
+        @display("bgb=783.96,587.688;i=device/antennatower");
+    gates:
+        inout ethg[numEthInterfaces] @labels(EtherFrame-conn) @allowUnconnected;
+        input radioIn[numWlanInterfaces] @directIn;
+
+    submodules:
+        at: MessageDispatcher {
+            parameters:
+                @display("p=394.80002,142.128;b=100,5,,,,1");
+        }
+        tn: MessageDispatcher {
+            parameters:
+                @display("p=394.80002,276.36002;b=100,5,,,,1");
+        }
+        nl: MessageDispatcher {
+            parameters:
+                @display("p=394.80002,391.41602;b=100,5,,,,1");
+        }
+        cb: MessageDispatcher {
+            @display("p=393.60602,394.788;b=500,5");
+        }
+        bl: MessageDispatcher {
+            @display("p=399.516,464.526;b=500,5");
+        }
+        li: MessageDispatcher {
+            parameters:
+                @display("p=394.80002,442.17603;b=100,5,,,,1");
+        }
+        interfaceTable: InterfaceTable {
+            @display("p=135.36,69.936005");
+        }
+        mobility: <default("StationaryMobility")> like IMobility {
+            @display("p=135.36,199.656");
+        }
+        LoRaGWNic: LoRaGWNic {
+            @display("p=626.04004,94.75201");
+        }
+        packetForwarder: PacketForwarder {
+            @display("p=394.80002,69.936005;is=vl");
+        }
+        eth[sizeof(ethg)]: <default("EthernetInterface")> like IEthernetInterface {
+            parameters:
+                @display("p=394.80002,503.088,row,150;q=txQueue");
+        }
+        udp: <default(firstAvailableOrEmpty("Udp"))> like IUdp if hasUdp {
+            parameters:
+                @display("p=394.80002,206.42401");
+        }
+        ipv4: <default("Ipv4NetworkLayer")> like INetworkLayer if hasIpv4 {
+            parameters:
+                @display("p=394.80002,333.888;q=queue");
+        }
+        routingTable: <routingTableType> like IRoutingTable if routingTableType != "" {
+            parameters:
+                @display("p=135.36,313.584;is=s");
+        }
+        bridging: <default("")> like IProtocolLayer if typename != "" {
+            @display("p=248.22,419.61002");
+        }
+
+        ethernet: <default(sizeof(ethg) > 0 ? "EthernetEncapsulation" : "")> like IEthernetLayer if typename != "" {
+            @display("p=273.042,502.35");
+        }
+    connections allowunconnected:
+        at.out++ --> udp.appIn;
+        at.in++ <-- udp.appOut;
+
+        packetForwarder.lowerLayerOut --> LoRaGWNic.upperLayerIn;
+        LoRaGWNic.upperLayerOut --> packetForwarder.lowerLayerIn;
+        packetForwarder.socketOut --> at.in++;
+        packetForwarder.socketIn <-- at.out++;
+
+        for i=0..sizeof(ethg)-1 {
+            ethg[i] <--> { @display("m=s"); } <--> eth[i].phys;
+            eth[i].upperLayerOut --> li.in++;
+            eth[i].upperLayerIn <-- li.out++;
+        }
+
+        ipv4.ifIn <-- nl.out++;
+        ipv4.ifOut --> nl.in++;
+
+        tn.out++ --> ipv4.transportIn;
+        tn.in++ <-- ipv4.transportOut;
+        cb.out++ --> nl.in++;
+        cb.in++ <-- nl.out++;
+        udp.ipOut --> tn.in++;
+        udp.ipIn <-- tn.out++;
+
+        cb.out++ --> bridging.upperLayerIn if exists(bridging);
+        bridging.upperLayerOut --> cb.in++ if exists(bridging);
+
+        cb.out++ --> bl.in++ if !exists(bridging);
+        bl.out++ --> cb.in++ if !exists(bridging);
+
+        bridging.lowerLayerOut --> bl.in++ if exists(bridging);
+        bl.out++ --> bridging.lowerLayerIn if exists(bridging);
+
+        bl.out++ --> ethernet.upperLayerIn if exists(ethernet);
+        ethernet.upperLayerOut --> bl.in++ if exists(ethernet);
+
+        ethernet.lowerLayerOut --> li.in++ if exists(ethernet);
+        li.out++ --> ethernet.lowerLayerIn if exists(ethernet);
+}
+
+network UAV2UGVLoRaSimulation
+{
+    parameters:
+        bool enableGazeboBridge = default(false);
+        @display("bgb=0,0");
+    submodules:
+        gazeboScheduler: GazeboPositionScheduler if enableGazeboBridge {
+            @display("p=30,340");
+        }
+        visualizer: IntegratedVisualizer {
+            @display("p=30,300");
+        }
+        coordinateSystem: <default("SimpleGeographicCoordinateSystem")> like IGeographicCoordinateSystem {
+            @display("p=190,300");
+        }
+        radioMedium: LoRaMedium {
+            @display("p=30,250");
+        }
+        physicalEnvironment: PhysicalEnvironment {
+            @display("p=190,250");
+        }
+        configurator: Ipv4NetworkConfigurator {
+            @display("p=190,200");
+        }
+        networkServer: StandardHost {
+            @display("p=30,120;i=device/server");
+        }
+        ugv: LoRaMobileGW {
+            @display("p=30,30;i=device/antennatower");
+        }
+        uav: LoRaMobileNode {
+            @display("p=150,30;i=device/accesspoint");
+        }
+    connections:
+        networkServer.ethg++ <--> Eth1G <--> ugv.ethg++;
+}

@@ -1,0 +1,23 @@
+# ROS 2 / colcon generated artifacts
+/build/
+/install/
+/log/
+
+# Recorded simulation data (large, generated)
+/bags/
+*.db3
+*.mcap
+*.sqlite3
+
+# Python cache files
+**/__pycache__/
+**/*.pyc
+**/*.pyo
+
+# Editor / OS noise
+.vscode/
+.idea/
+*.swp
+*~
+.DS_Store
+
