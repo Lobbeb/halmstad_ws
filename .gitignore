@@ -44,3 +44,15 @@ opt/omnetpp-*/
 *.qtenvrc
 *.cmdenv-log
 EOF
+
+# editor / local history
+.history/
+
+# windows download metadata
+*:Zone.Identifier
+
+# local archives
+*.zip
+
+# local ML weights (keep in drive, not repo)
+models/
