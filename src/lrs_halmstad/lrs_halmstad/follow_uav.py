@@ -34,6 +34,12 @@ def quat_from_yaw(yaw: float) -> Tuple[float, float, float, float]:
     return (0.0, 0.0, math.sin(half), math.cos(half))
 
 
+def quat_from_camera_pitch_deg(pitch_deg: float) -> Tuple[float, float, float, float]:
+    # Match command.py behavior: camera world pitch uses -pitch_deg.
+    half = -0.5 * math.radians(float(pitch_deg))
+    return (0.0, math.sin(half), 0.0, math.cos(half))
+
+
 def yaw_from_quat(x: float, y: float, z: float, w: float) -> float:
     siny_cosp = 2.0 * (w * z + x * y)
     cosy_cosp = 1.0 - 2.0 * (y * y + z * z)
@@ -86,6 +92,9 @@ class FollowUav(Node):
         # ---------- Parameters ----------
         self.declare_parameter("world", "orchard")
         self.declare_parameter("uav_name", "dji0")
+        self.declare_parameter("camera_name", "camera0")
+        self.declare_parameter("camera_pitch_deg", -45.0)
+        self.declare_parameter("camera_z_offset_m", 0.27)
         self.declare_parameter("leader_input_type", "odom")
         self.declare_parameter("leader_odom_topic", "/a201_0000/platform/odom/filtered")
         self.declare_parameter("leader_pose_topic", "/coord/leader_estimate")
@@ -140,6 +149,10 @@ class FollowUav(Node):
         # ---------- Read params ----------
         self.world = str(self.get_parameter("world").value)
         self.uav_name = str(self.get_parameter("uav_name").value)
+        self.camera_name = str(self.get_parameter("camera_name").value)
+        self.camera_pitch_deg = float(self.get_parameter("camera_pitch_deg").value)
+        self.camera_z_offset_m = float(self.get_parameter("camera_z_offset_m").value)
+        self.camera_model_name = f"{self.uav_name}_{self.camera_name}"
         self.leader_input_type = str(self.get_parameter("leader_input_type").value).strip().lower()
         self.leader_odom_topic = str(self.get_parameter("leader_odom_topic").value)
         self.leader_pose_topic = str(self.get_parameter("leader_pose_topic").value)
@@ -193,6 +206,8 @@ class FollowUav(Node):
 
         if self.tick_hz <= 0.0:
             raise ValueError("tick_hz must be > 0")
+        if self.camera_z_offset_m < 0.0:
+            raise ValueError("camera_z_offset_m must be >= 0")
         if self.d_max <= 0.0 or self.d_target <= 0.0:
             raise ValueError("d_max and d_target must be > 0")
         if self.d_max <= self.d_target:
@@ -258,7 +273,8 @@ class FollowUav(Node):
         self.have_uav_cmd = False
 
         self.last_cmd_time: Optional[Time] = None
-        self.pending_future = None
+        self.pending_futures = []
+        self.camera_setpose_failed_latched = False
         self.last_leader_status_fields = {}
         self.last_leader_status_rx: Optional[Time] = None
         self.quality_hold_latched = False
@@ -306,6 +322,11 @@ class FollowUav(Node):
             f"/{self.uav_name}/pose_cmd",
             10,
         )
+        self.pose_odom_pub = self.create_publisher(
+            Odometry,
+            f"/{self.uav_name}/pose_cmd/odom",
+            10,
+        )
 
         self.events_pub = self.create_publisher(String, self.event_topic, 10)
         # Metrics (for offline evaluation)
@@ -335,6 +356,8 @@ class FollowUav(Node):
 
         self.get_logger().info(
             f"[follow_uav] Started: world={self.world}, uav={self.uav_name}, "
+            f"camera_model={self.camera_model_name}, camera_pitch_deg={self.camera_pitch_deg}, "
+            f"camera_z_offset_m={self.camera_z_offset_m}, "
             f"leader_input={leader_desc}, tick={self.tick_hz}Hz, "
             f"d_target={self.d_target}, d_max={self.d_max}, z={self.z_alt}, "
             f"pose_timeout_s={self.pose_timeout_s}, min_cmd_period_s={self.min_cmd_period_s}, "
@@ -670,7 +693,15 @@ class FollowUav(Node):
         dt = (now - self.last_cmd_time).nanoseconds * 1e-9
         return dt >= self.min_cmd_period_s
 
-    def set_entity_pose_async(self, entity_name: str, x: float, y: float, z: float, yaw_rad: float):
+    def _set_entity_pose_quat_async(
+        self,
+        entity_name: str,
+        x: float,
+        y: float,
+        z: float,
+        quat: Tuple[float, float, float, float],
+        label: str,
+    ):
         req = SetEntityPose.Request()
         req.entity.id = 0
         req.entity.name = entity_name
@@ -680,22 +711,60 @@ class FollowUav(Node):
         req.pose.position.y = float(y)
         req.pose.position.z = float(z)
 
-        quat = quat_from_yaw(float(yaw_rad))
         req.pose.orientation.x = float(quat[0])
         req.pose.orientation.y = float(quat[1])
         req.pose.orientation.z = float(quat[2])
         req.pose.orientation.w = float(quat[3])
 
         fut = self.cli.call_async(req)
-        self.pending_future = fut
 
         def _done_cb(f):
             try:
-                _ = f.result()  # may raise
+                resp = f.result()  # may raise
             except Exception as e:
-                self.get_logger().warn(f"[follow_uav] set_pose failed: {e}")
+                self.get_logger().warn(f"[follow_uav] set_pose failed for {label} '{entity_name}': {e}")
+                return
+            if not getattr(resp, "success", False):
+                if label == "camera":
+                    if not self.camera_setpose_failed_latched:
+                        self.get_logger().warn(
+                            f"[follow_uav] set_pose failed for camera model '{entity_name}'. "
+                            "Camera may not be spawned or named differently."
+                        )
+                        self.camera_setpose_failed_latched = True
+                else:
+                    self.get_logger().warn(
+                        f"[follow_uav] set_pose reported failure for {label} '{entity_name}'"
+                    )
+            elif label == "camera" and self.camera_setpose_failed_latched:
+                self.get_logger().info(
+                    f"[follow_uav] camera set_pose recovered for '{entity_name}'"
+                )
+                self.camera_setpose_failed_latched = False
 
         fut.add_done_callback(_done_cb)
+        return fut
+
+    def set_entity_pose_async(self, entity_name: str, x: float, y: float, z: float, yaw_rad: float):
+        quat = quat_from_yaw(float(yaw_rad))
+        return self._set_entity_pose_quat_async(entity_name, x, y, z, quat, "uav")
+
+    def set_camera_pose_async(self, x: float, y: float, z: float):
+        quat = quat_from_camera_pitch_deg(self.camera_pitch_deg)
+        return self._set_entity_pose_quat_async(
+            self.camera_model_name,
+            x,
+            y,
+            z - self.camera_z_offset_m,
+            quat,
+            "camera",
+        )
+
+    def _has_pending_pose_requests(self) -> bool:
+        if not self.pending_futures:
+            return False
+        self.pending_futures = [f for f in self.pending_futures if f is not None and not f.done()]
+        return bool(self.pending_futures)
 
     def publish_pose_cmd(self, x: float, y: float, z: float, yaw_rad: float):
         ps = PoseStamped()
@@ -712,6 +781,25 @@ class FollowUav(Node):
         ps.pose.orientation.w = float(quat[3])
 
         self.pose_pub.publish(ps)
+
+    def publish_pose_cmd_odom(self, x: float, y: float, z: float, yaw_rad: float):
+        odom = Odometry()
+        odom.header.stamp = self.get_clock().now().to_msg()
+        odom.header.frame_id = "map"
+        odom.child_frame_id = f"{self.uav_name}/base_link"
+
+        odom.pose.pose.position.x = float(x)
+        odom.pose.pose.position.y = float(y)
+        odom.pose.pose.position.z = float(z)
+
+        quat = quat_from_yaw(float(yaw_rad))
+        odom.pose.pose.orientation.x = float(quat[0])
+        odom.pose.pose.orientation.y = float(quat[1])
+        odom.pose.pose.orientation.z = float(quat[2])
+        odom.pose.pose.orientation.w = float(quat[3])
+
+        # Teleport/set-pose control has no reliable twist here; leave zeros.
+        self.pose_odom_pub.publish(odom)
 
 
     def publish_metrics_cmd(self, leader: Pose2D, cmd_x: float, cmd_y: float) -> None:
@@ -743,8 +831,8 @@ class FollowUav(Node):
                 self.emit_event("POSE_STALE_HOLD_EXIT")
                 self.stale_latched = False
 
-        # Avoid backlog: if previous request still pending, skip this tick
-        if self.pending_future is not None and not self.pending_future.done():
+        # Avoid backlog: if previous set_pose requests are still pending, skip this tick.
+        if self._has_pending_pose_requests():
             return
 
         # Rate-limit commands independently of tick rate
@@ -843,11 +931,15 @@ class FollowUav(Node):
                 xt = self.uav_cmd.x
                 yt = self.uav_cmd.y
 
-        # Command UAV model only (camera moves with model)
-        self.set_entity_pose_async(self.uav_name, xt, yt, self.z_alt, yaw_cmd)
+        # Command UAV model and its separately spawned gimbal/camera model.
+        self.pending_futures = [
+            self.set_entity_pose_async(self.uav_name, xt, yt, self.z_alt, yaw_cmd),
+            self.set_camera_pose_async(xt, yt, self.z_alt),
+        ]
 
         # Publish commanded pose for rosbag/metrics
         self.publish_pose_cmd(xt, yt, self.z_alt, yaw_cmd)
+        self.publish_pose_cmd_odom(xt, yt, self.z_alt, yaw_cmd)
 
         # Update internal command state
         self.uav_cmd = Pose2D(xt, yt, yaw_cmd)

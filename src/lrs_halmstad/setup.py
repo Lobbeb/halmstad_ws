@@ -13,6 +13,8 @@ setup(
         ('share/ament_index/resource_index/packages',
             ['resource/' + package_name]),
         (os.path.join('share', package_name), glob('launch/*.launch.py')),
+        (os.path.join('share', package_name, 'config'), glob('config/*.yaml')),
+        (os.path.join('share', package_name, 'hook'), glob('hook/*.dsv')),
         ('share/' + "/matrice_100/materials/textures", glob('models/matrice_100/materials/textures/*')),        
         ('share/' + "/matrice_100/meshes", glob('models/matrice_100/meshes/*')),        
         ('share/' + "/zenmuse_z3/materials/textures", glob('models/zenmuse_z3/materials/textures/*')),        
@@ -76,6 +78,10 @@ setup(
             'contract_check = lrs_halmstad.contract_check:main',
             'follow_uav = lrs_halmstad.follow_uav:main',
             "leader_estimator = lrs_halmstad.leader_estimator:main",
+            "gazebo_pose_tcp_bridge = lrs_halmstad.gazebo_pose_tcp_bridge:main",
+            "pose_cmd_to_odom = lrs_halmstad.pose_cmd_to_odom:main",
+            "uav_setpose_sweep = lrs_halmstad.uav_setpose_sweep:main",
+            "ugv_motion_driver = lrs_halmstad.ugv_motion_driver:main",
 
               # optional later:
               # 'metrics_node = lrs_halmstad.metrics_node:main',

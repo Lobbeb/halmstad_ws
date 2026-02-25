@@ -27,7 +27,7 @@ def generate_launch_description():
     name_arg = DeclareLaunchArgument(name='name', default_value='piraya0',
                                      description='Name of model')
     
-    camera_name_arg = DeclareLaunchArgument(name='camera_name', default_value='camera1',
+    camera_name_arg = DeclareLaunchArgument(name='camera_name', default_value='camera0',
                                             description='Name of camera')
     
     model_arg = DeclareLaunchArgument(name='model', default_value=str(default_sdf_model_path),
@@ -79,8 +79,10 @@ def generate_launch_description():
         package='ros_gz_bridge',
         executable='parameter_bridge',
         arguments=[
-            ['/', LaunchConfiguration('name'), '/camera0/image_raw@sensor_msgs/msg/Image@ignition.msgs.Image'],
-            ['/', LaunchConfiguration('name'), '/camera0/camera_info@sensor_msgs/msg/CameraInfo@ignition.msgs.CameraInfo'],
+            ['/', LaunchConfiguration('name'), '/', LaunchConfiguration('camera_name'),
+             '/image_raw@sensor_msgs/msg/Image@ignition.msgs.Image'],
+            ['/', LaunchConfiguration('name'), '/', LaunchConfiguration('camera_name'),
+             '/camera_info@sensor_msgs/msg/CameraInfo@ignition.msgs.CameraInfo'],
         ],
         output='screen'
     )

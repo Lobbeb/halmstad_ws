@@ -9,7 +9,7 @@ from launch.actions import DeclareLaunchArgument, RegisterEventHandler
 from launch.substitutions import ThisLaunchFileDir, LaunchConfiguration
 
 
-world_arg = DeclareLaunchArgument('world', default_value='warehouse',
+world_arg = DeclareLaunchArgument('world', default_value='orchard',
                       choices=[
                           'construction',
                           'office',
@@ -158,7 +158,7 @@ def generate_launch_description():
         package='ros_gz_bridge',
         executable='parameter_bridge',
         arguments=[
-            '/world/granso/set_pose@ros_gz_interfaces/srv/SetEntityPose'            
+            ['/world/', LaunchConfiguration('world'), '/set_pose@ros_gz_interfaces/srv/SetEntityPose']
         ],
         output='screen'
     )
