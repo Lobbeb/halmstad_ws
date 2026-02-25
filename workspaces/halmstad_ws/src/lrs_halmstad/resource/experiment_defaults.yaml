@@ -1,0 +1,26 @@
+# Default experiment parameters (Stage-1)
+world: orchard
+uav_name: dji0
+
+# UAV survey pattern (grid)
+uav_altitude_m: 10.0
+uav_grid_x_min: -15.0
+uav_grid_x_max: 15.0
+uav_grid_x_steps: 4
+uav_grid_y_min: -25.0
+uav_grid_y_max: 25.0
+uav_grid_y_steps: 5
+uav_wait_s: 1.0
+
+# UGV follow-test pattern (aggressive but long enough for visual evaluation).
+# Alternating turns are enabled by default in run_round.sh; this keeps the path
+# local-ish while still producing enough variation to judge UAV following.
+ugv_forward_speed: 1.5
+ugv_forward_time_s: 0.75
+ugv_turn_speed: 1.9
+ugv_turn_time_s: 0.85
+ugv_cycles: 120
+
+# Recording
+record_cameras: false
+run_root: ~/runs

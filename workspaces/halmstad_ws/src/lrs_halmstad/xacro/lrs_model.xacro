@@ -1,0 +1,201 @@
+<?xml version="1.0"?>
+
+<sdf version="1.6" xmlns:xacro="http://www.ros.org/wiki/xacro">
+  <xacro:arg name="name" default="dji0"/>
+
+  <model name="$(arg name)">  
+    <static>false</static>
+    
+
+    <xacro:arg name="base_link_frame" default="base_link"/>
+    <xacro:arg name="world_frame" default="world"/>
+
+    <xacro:arg name="with_laser" default="false"/>
+    <xacro:arg name="laser_vertical" default="false"/>
+    <xacro:arg name="laser_name" default="laser0"/>
+    <xacro:arg name="robot_type" default="piraya"/>
+
+    <!-- vertical -->
+    <xacro:if value="$(arg laser_vertical)">
+        <xacro:arg name="laser_xyz" default="0.07 0 -0.03"/>
+        <xacro:arg name="laser_x" default="0.07"/>
+        <xacro:arg name="laser_y" default="0.0"/>
+        <xacro:arg name="laser_z" default="-0.03"/>
+        <xacro:arg name="laser_sensor_x" default="0.07"/>
+        <xacro:arg name="laser_sensor_y" default="0.0"/>
+        <xacro:arg name="laser_sensor_z" default="0.0"/>
+
+        <xacro:arg name="laser_rpy" default="0 1.58 0"/>
+    </xacro:if>
+
+    <!-- horizontal -->
+    <xacro:unless value="$(arg laser_vertical)">
+        <xacro:arg name="laser_xyz" default="0.12 0 0.015"/>
+        <xacro:arg name="laser_x" default="-2.5"/>
+        <xacro:arg name="laser_y" default="0.0"/>
+        <xacro:arg name="laser_z" default="0.8"/>
+        <xacro:arg name="laser_sensor_x" default="0.0"/>
+        <xacro:arg name="laser_sensor_y" default="0.0"/>
+        <xacro:arg name="laser_sensor_z" default="0.07"/>
+
+        <xacro:arg name="laser_rpy" default="0 0 0"/>
+    </xacro:unless>
+
+    <xacro:arg name="laser_angle_deg" default="1"/>
+    <xacro:arg name="laser_min_range" default="0.2"/>
+    <xacro:arg name="laser_max_range" default="40.0"/>
+    <xacro:arg name="laser_range_resolution" default="0."/>
+    <xacro:arg name="laser_update_rate" default="40"/>
+    <xacro:arg name="laser_visualize" default="true"/>
+    <xacro:arg name="laser_resolution" default="1"/>
+    <xacro:arg name="laser_frame_id" default="laser_frame"/>
+    <xacro:arg name="laser_topic" default="scan"/>
+
+    <xacro:arg name="with_camera" default="false"/>
+    <xacro:arg name="camera_name" default="camera0"/>
+    <xacro:arg name="camera_image_width" default="640"/>
+    <xacro:arg name="camera_image_height" default="480"/>
+    <xacro:arg name="camera_update_rate" default="30"/>
+    <xacro:arg name="camera_hfov" default="94"/>
+    <xacro:arg name="camera_far_clip" default="100"/>
+    <xacro:arg name="camera_topic" default="image_raw"/>
+
+    <xacro:property name="prop_type" value="$(arg robot_type)"/>    
+    <xacro:if value="${prop_type == 'piraya'}">
+      <xacro:arg name="camera_x_offset" default="0.0"/>
+      <xacro:arg name="camera_y_offset" default="0.0"/>
+      <xacro:arg name="camera_z_offset" default="1.0"/>
+      <xacro:arg name="camera_yaw_offset" default="0.0"/>
+    </xacro:if>
+    <xacro:if value="${prop_type == 'm100'}">
+      <xacro:arg name="camera_x_offset" default="0.0"/>
+      <xacro:arg name="camera_y_offset" default="0.0"/>
+      <xacro:arg name="camera_z_offset" default="-0.1"/>
+      <xacro:arg name="camera_yaw_offset" default="0.0"/>
+    </xacro:if>
+    
+
+    <xacro:property name="base_name" value="$(arg name)"/>
+
+    <!-- make it static as we will update the state externally -->
+    <!-- if this is true, the physics constants play no role -->
+    <!-- gazebo>
+        <plugin name="update_plugin_piraya" filename="liblrs_update_plugin.so"> </plugin>
+        <static>true</static>
+    </gazebo -->
+
+
+    <!-- Base platform -->
+    <xacro:if value="${prop_type == 'piraya'}">    
+      <xacro:include filename="$(find lrs_halmstad)/xacro/lrs_piraya_base.sdf.xacro"/>
+      <xacro:lrs_piraya_macro base_link_name="$(arg base_link_frame)"/>
+    </xacro:if>
+
+    <xacro:if value="${prop_type == 'm100'}">    
+      <xacro:include filename="$(find lrs_halmstad)/xacro/lrs_m100_base.sdf.xacro"/>
+      <xacro:lrs_m100_macro base_link_name="$(arg base_link_frame)"/>
+    </xacro:if>
+
+    <xacro:if value="${prop_type == 'm300'}">    
+      <xacro:include filename="$(find lrs_halmstad)/xacro/lrs_m100_base.sdf.xacro"/>
+      <xacro:lrs_m100_macro base_link_name="$(arg base_link_frame)"/>
+    </xacro:if>
+
+    
+    <!--link name="world"/-->
+
+    <!-- Camera gimbal -->
+    <xacro:if value="$(arg with_camera)">
+
+        <xacro:property name="camera_prefix" value="/${base_name}/$(arg camera_name)"/>
+        <xacro:property name="camera_topic" value="$(arg camera_topic)"/>
+        <xacro:property name="camera_link_name" value="$(arg camera_name)_link"/>
+
+        <xacro:include filename="$(find lrs_halmstad)/xacro/lrs_camera_gimbal.sdf.xacro"/>
+        <xacro:lrs_camera_gimbal name="$(arg camera_name)"
+                                 parent_link="$(arg base_link_frame)"
+                                 link_name="${camera_link_name}"
+                                 hfov_deg="$(arg camera_hfov)"
+                                 camera_info_topic="${camera_prefix}/camera_info"
+                                 image_topic="${camera_prefix}/${camera_topic}"
+                                 frame_id="${camera_prefix}/image_frame"
+                                 im_width="$(arg camera_image_width)"
+                                 im_height="$(arg camera_image_height)"
+                                 update_rate="$(arg camera_update_rate)"
+                                 far_clip="$(arg camera_far_clip)"
+                                 x_offset="$(arg camera_x_offset)"
+                                 y_offset="$(arg camera_y_offset)"
+                                 z_offset="$(arg camera_z_offset)"
+                                 yaw_offset="$(arg camera_yaw_offset)"
+                                 robot_type="$(arg robot_type)"
+                                 robot_name="$(arg name)"
+                                 im_format="R8G8B8"
+
+/>
+
+        <joint type="revolute" name="$(arg name)_gimbal_joint">
+          <pose>0 0 0 0 0 0</pose>
+          <child>${camera_link_name}</child>
+          <parent>$(arg base_link_frame)</parent>
+          <axis>
+            <xyz>0 -1 0</xyz>
+            <limit>
+              <lower>-1.5708</lower>
+              <upper>0.7854</upper>
+              <effort>100</effort>
+              <velocity>-1</velocity>
+            </limit>
+            <dynamics>
+              <damping>0.1</damping>
+            </dynamics>
+            <use_parent_model_frame>1</use_parent_model_frame>
+          </axis>          
+        </joint>
+
+    <plugin
+      filename="ignition-gazebo-joint-position-controller-system"
+      name="ignition::gazebo::systems::JointPositionController">
+      <use_velocity_commands>true</use_velocity_commands>
+      <joint_index>0</joint_index>
+      <joint_name>$(arg name)_gimbal_joint</joint_name>
+      <topic>/model/$(arg name)/joint/$(arg name)_gimbal_joint/pitch/cmd_pos</topic>
+    </plugin>
+        
+    </xacro:if>
+
+
+    <!-- Laser range finder -->
+    <xacro:if value="$(arg with_laser)">
+
+        <xacro:property name="laser_name" value="$(arg laser_name)"/>
+        <xacro:property name="laser_link_name" value="$(arg laser_name)_link"/>
+
+        <xacro:include filename="$(find lrs_halmstad)/urdf/lrs_laser_2d.urdf.xacro"/>
+        <xacro:lrs_laser_2d name="$(arg laser_name)"
+                            parent_link="$(arg base_link_frame)"
+                            link_name="${laser_link_name}"
+                            x="$(arg laser_x)"
+                            y="$(arg laser_y)"
+                            z="$(arg laser_z)"
+                            sensor_x="$(arg laser_sensor_x)"
+                            sensor_y="$(arg laser_sensor_y)"
+                            sensor_z="$(arg laser_sensor_z)"
+                            rpy="$(arg laser_rpy)"
+                            half_angle_deg="$(arg laser_angle_deg)"
+                            visualize="$(arg laser_visualize)"
+                            update_rate="$(arg laser_update_rate)"
+                            ang_res="$(arg laser_resolution)"
+                            min_range="$(arg laser_min_range)"
+                            max_range="$(arg laser_max_range)"
+                            range_res="$(arg laser_range_resolution)"
+                            ns="/${base_name}/$(arg laser_name)/"
+                            topic="$(arg laser_topic)"
+                            frame_id="$(arg laser_frame_id)"
+        />
+    </xacro:if>
+
+  </model>
+
+  
+</sdf>
+

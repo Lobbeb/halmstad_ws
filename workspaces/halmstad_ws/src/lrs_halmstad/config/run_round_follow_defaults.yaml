@@ -1,0 +1,96 @@
+leader_estimator:
+  ros__parameters:
+    use_sim_time: true
+    out_topic: /coord/leader_estimate
+    status_topic: /coord/leader_estimate_status
+    publish_status: true
+    est_hz: 10.0
+    image_timeout_s: 1.0
+    uav_pose_timeout_s: 2.0
+    constant_range_m: 8.0
+    smooth_alpha: 0.35
+    max_hold_frames: 3
+    max_hold_s: 0.5
+    xy_smooth_alpha: 0.5
+    range_mode: auto
+    max_xy_jump_m: 6.0
+    max_target_speed_mps: 8.0
+    max_bearing_jump_deg: 40.0
+    cam_pitch_offset_deg: -90.0
+    cam_yaw_offset_deg: 0.0
+    target_ground_z_m: 0.0
+    ground_min_range_m: 2.0
+    ground_max_range_m: 50.0
+    device: cpu
+    event_topic: /coord/events
+    publish_events: true
+
+follow_uav:
+  ros__parameters:
+    use_sim_time: true
+    leader_input_type: odom
+    leader_pose_topic: /coord/leader_estimate
+    tick_hz: 5.0
+    d_target: 5.0
+    d_max: 15.0
+    z_alt: 10.0
+    pose_timeout_s: 0.75
+    min_cmd_period_s: 0.10
+    smooth_alpha: 1.0
+    max_step_m_per_tick: 0.5
+    cmd_xy_deadband_m: 0.0
+    max_yaw_step_rad_per_tick: 0.0
+    leader_status_topic: /coord/leader_estimate_status
+    quality_scale_enable: true
+    quality_status_timeout_s: 1.5
+    quality_conf_min: 0.15
+    quality_conf_good: 0.65
+    quality_latency_ref_ms: 180.0
+    quality_min_step_scale: 0.25
+    quality_hold_step_scale: 0.08
+    quality_deadband_boost_m: 0.05
+    state_machine_enable: true
+    state_ok_debounce_ticks: 2
+    state_bad_debounce_ticks: 2
+    traj_enable: true
+    traj_rel_frame_enable: true
+    traj_rel_smooth_alpha: 0.35
+    traj_pos_gain: 2.0
+    traj_max_speed_mps: 1.5
+    traj_max_accel_mps2: 3.0
+    traj_quality_min_scale: 0.35
+    traj_reset_on_yaw_jump_rad: 0.7
+    yaw_deadband_rad: 0.05
+    yaw_update_xy_gate_m: 0.03
+    estimate_heading_from_motion_enable: true
+    estimate_heading_alpha: 0.35
+    estimate_heading_min_speed_mps: 0.15
+    estimate_heading_max_dt_s: 1.0
+    event_topic: /coord/events
+    publish_events: true
+
+ugv_motion_driver:
+  ros__parameters:
+    use_sim_time: true
+    cmd_topic: /a201_0000/cmd_vel
+    start_delay_s: 0.0
+    ready_check_enable: true
+    ready_require_cmd_subscriber: true
+    ready_require_odom_flow: true
+    ready_odom_topic: /a201_0000/platform/odom
+    ready_timeout_s: 8.0
+    ready_poll_hz: 10.0
+    ready_settle_s: 0.25
+    motion_profile: default
+    turn_pattern: alternate
+    forward_speed: 1.5
+    forward_time_s: 0.75
+    turn_speed: 1.9
+    turn_time_s: 0.85
+    cycles: 120
+    pub_rate_hz: 12.0
+    startup_pad_s: 0.7
+    variation_enable: true
+    variation_amplitude: 0.20
+    pause_every_n: 0
+    pause_time_s: 0.0

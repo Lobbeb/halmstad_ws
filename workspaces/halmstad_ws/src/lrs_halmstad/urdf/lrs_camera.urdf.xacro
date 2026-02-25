@@ -1,0 +1,66 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<!-- inspired by: https://github.com/caochao39/hku_m100_description  -->
+
+<robot name="lrs_parrot" xmlns:xacro="http://www.ros.org/wiki/xacro">
+
+    <xacro:arg name="name" default="cam0"/>
+
+    <xacro:arg name="base_link_frame" default="base_link"/>
+    <xacro:arg name="world_frame" default="world"/>
+
+    <xacro:arg name="with_camera" default="true"/>
+    <xacro:arg name="camera_name" default="camera0"/>
+    <xacro:arg name="camera_image_width" default="640"/>
+    <xacro:arg name="camera_image_height" default="480"/>
+    <xacro:arg name="camera_update_rate" default="30"/>
+    <xacro:arg name="camera_hfov" default="94"/>
+    <xacro:arg name="camera_far_clip" default="100"/>
+    <xacro:arg name="camera_topic" default="image_raw"/>
+    <xacro:arg name="camera_z_offset" default="-0.5"/>
+
+    <xacro:property name="base_name" value="$(arg name)"/>
+
+    <!-- make it static as we will update the state externally -->
+    <!-- if this is true, the physics constants play no role -->
+    <gazebo>
+        <plugin name="update_plugin_camera" filename="liblrs_update_plugin.so"> </plugin>
+        <static>true</static>
+    </gazebo>
+
+
+    <!-- Base platform -->
+    <xacro:include filename="$(find lrs_halmstad)/urdf/lrs_base_camera.urdf.xacro"/>
+    <xacro:lrs_parrot_macro base_link_name="$(arg base_link_frame)"/>
+
+    <!--link name="world"/-->
+
+    <!-- Camera gimbal -->
+    <xacro:if value="$(arg with_camera)">
+
+        <xacro:property name="camera_prefix" value="/${base_name}/$(arg camera_name)"/>
+        <xacro:property name="camera_topic" value="$(arg camera_topic)"/>
+        <xacro:property name="camera_link_name" value="$(arg camera_name)_link"/>
+
+        <xacro:include filename="$(find lrs_halmstad)/urdf/lrs_camera_gimbal.urdf.xacro"/>
+        <xacro:lrs_camera_gimbal name="$(arg camera_name)"
+                                 parent_link="$(arg base_link_frame)"
+                                 link_name="${camera_link_name}"
+                                 hfov_deg="$(arg camera_hfov)"
+                                 camera_info_topic="${camera_prefix}/camera_info"
+                                 image_topic="${camera_prefix}/${camera_topic}"
+                                 frame_id="${camera_prefix}/image_frame"
+                                 im_width="$(arg camera_image_width)"
+                                 im_height="$(arg camera_image_height)"
+                                 update_rate="$(arg camera_update_rate)"
+                                 far_clip="$(arg camera_far_clip)"
+                                 z_offset="$(arg camera_z_offset)"
+                                 im_format="R8G8B8"
+
+        />
+    </xacro:if>
+
+
+
+</robot>
+

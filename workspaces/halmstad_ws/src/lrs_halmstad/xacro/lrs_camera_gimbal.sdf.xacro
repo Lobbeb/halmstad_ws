@@ -1,0 +1,78 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<robot xmlns:xacro="http://ros.org/wiki/xacro">
+
+    <xacro:property name="M_PI" value="3.1415926535897931"/>
+
+
+    <xacro:macro name="lrs_camera_gimbal"
+                 params="name parent_link link_name image_topic camera_info_topic frame_id update_rate im_width im_height im_format hfov_deg far_clip robot_type robot_name x_offset:=0.0 y_offset:=0.0 z_offset:=0.0 yaw_offset:=0.0">
+
+      <link name="${link_name}">
+         <pose rotation_format="euler_rpy" degrees="true">${x_offset} ${y_offset} ${z_offset} 0 0 ${yaw_offset}</pose>
+            <visual name="visual">
+                <origin xyz="0 0 0.0" rpy="0 0 0"/>
+                <geometry>
+	          <mesh>
+                    <uri>model://zenmuse_z3/meshes/zenmuse_z3.dae</uri>
+                    <scale>1.0 1.0 1.0</scale>
+                  </mesh>
+                </geometry>
+            </visual>
+            <!-- collision name="collision">
+                <origin xyz="0 0 0" rpy="0 0 0"/>
+                <geometry>
+	          <mesh>
+                    <uri>model://zenmuse_z3/meshes/zenmuse_z3.stl</uri>
+                    <scale>1.0 1.0 1.0</scale>
+                  </mesh>
+                </geometry>
+            </collision -->
+
+        <!-- joint name="camera_joint" type="floating">
+            <origin xyz="0.12 0 ${z_offset}" rpy="0 0 0"/>
+            <parent link="${parent_link}"/>
+            <child link="${link_name}"/>
+        </joint -->
+
+        <!-- joint name="camera_optical_joint" type="floating">
+            <origin xyz="0 0 0" rpy="${-M_PI/2} 0.0 ${-M_PI/2}"/>
+            <parent link="${link_name}"/>
+            <child link="camera_optical_frame"/>
+        </joint -->
+
+            <sensor type="camera" name="${robot_name}_camera_sensor">
+                <camera>
+                    <!-- <pose>0.027 0 -0.027 0 1.57 0</pose> -->
+                    <!-- <pose>0.027 0 -0.027 0 1.57 0</pose> -->
+                    <pose>0.027 0 -0.027 0 0 0</pose>
+                    <horizontal_fov>${hfov_deg * M_PI/180.0}</horizontal_fov>
+                    <image>
+                        <format>${im_format}</format>
+                        <width>${im_width}</width>
+                        <height>${im_height}</height>
+                    </image>
+                    <clip>
+                        <near>0.01</near>
+                        <far>${far_clip}</far>
+                    </clip>
+                </camera>
+                <update_rate>${update_rate}</update_rate>
+                <always_on>1</always_on>
+                <visualize>true</visualize>
+                <topic>${image_topic}</topic>
+                <ignition_frame_id>${frame_id}</ignition_frame_id>
+            </sensor>
+        </link>
+            
+                <!-- plugin name="camera_controller_${name}" filename="libgazebo_ros_camera.so">
+                    <cameraName>${name}</cameraName>
+                    <alwaysOn>true</alwaysOn>
+                    <updateRate>${update_rate}</updateRate>
+                    <imageTopicName>${image_topic}</imageTopicName>
+                    <cameraInfoTopicName>${camera_info_topic}</cameraInfoTopicName>
+                    <frameName>${frame_id}</frameName>
+                </plugin -->
+    </xacro:macro>
+
+</robot>

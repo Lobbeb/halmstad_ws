@@ -1,0 +1,90 @@
+import os
+from glob import glob
+
+from setuptools import find_packages, setup
+
+package_name = 'lrs_halmstad'
+
+setup(
+    name=package_name,
+    version='0.0.0',
+    packages=find_packages(exclude=['test']),
+    data_files=[
+        ('share/ament_index/resource_index/packages',
+            ['resource/' + package_name]),
+        (os.path.join('share', package_name), glob('launch/*.launch.py')),
+        (os.path.join('share', package_name, 'config'), glob('config/*.yaml')),
+        (os.path.join('share', package_name, 'hook'), glob('hook/*.dsv')),
+        ('share/' + "/matrice_100/materials/textures", glob('models/matrice_100/materials/textures/*')),        
+        ('share/' + "/matrice_100/meshes", glob('models/matrice_100/meshes/*')),        
+        ('share/' + "/zenmuse_z3/materials/textures", glob('models/zenmuse_z3/materials/textures/*')),        
+        ('share/' + "/zenmuse_z3/meshes", glob('models/zenmuse_z3/meshes/*')),        
+        ('share/' + package_name, ['package.xml']),
+        ('share/' + package_name + "/urdf", glob('urdf/*.xacro')),                  ('share/' + package_name + "/xacro", glob('xacro/*.xacro')),                ('share/' + package_name + "/sdf", glob('sdf/*.sdf')),              
+        ('share/' + package_name + "/models/piraya/materials/textures", glob('models/piraya/materials/textures/*')),
+        ('share/' + package_name + "/models/piraya/meshes", glob('models/piraya/meshes/*')),                
+        ('share/' + package_name + "/models/person_standing_static", glob('models/human/person_standing_static/model.*')),        
+        ('share/' + package_name + "/models/person_standing_static/materials/textures", glob('models/human/person_standing_static/materials/textures/*')),
+        ('share/' + package_name + "/models/person_standing_static/meshes", glob('models/human/person_standing_static/meshes/*')),                
+        ('share/' + package_name + "/models/person_standing", glob('models/people/person_standing/model.*')),        
+        ('share/' + package_name + "/models/person_standing/materials/textures", glob('models/people/person_standing/materials/textures/*')),
+        ('share/' + package_name + "/models/person_standing/meshes", glob('models/people/person_standing/meshes/*')),                
+        ('share/' + package_name + "/models/person_walking", glob('models/people/person_walking/model.*')),        
+        ('share/' + package_name + "/models/person_walking/materials/textures", glob('models/people/person_walking/materials/textures/*')),
+        ('share/' + package_name + "/models/person_walking/meshes", glob('models/people/person_walking/meshes/*')),                
+        ('share/' + package_name + "/models/bobeye", glob('models/people/bobeye/model.*')),        
+        ('share/' + package_name + "/models/bobeye/meshes", glob('models/people/bobeye/meshes/*')),                
+        ('share/' + package_name + "/models/gertrudiseye", glob('models/people/gertrudiseye/model.*')),        
+        ('share/' + package_name + "/models/gertrudiseye/meshes", glob('models/people/gertrudiseye/meshes/*')),                
+        ('share/' + package_name + "/models/kumaeye", glob('models/people/kumaeye/model.*')),        
+        ('share/' + package_name + "/models/kumaeye/meshes", glob('models/people/kumaeye/meshes/*')),                
+        ('share/' + package_name + "/models/naokoeye", glob('models/people/naokoeye/model.*')),        
+        ('share/' + package_name + "/models/naokoeye/meshes", glob('models/people/naokoeye/meshes/*')),                
+        ('share/' + package_name + "/models/oliveeye", glob('models/people/oliveeye/model.*')),        
+        ('share/' + package_name + "/models/oliveeye/meshes", glob('models/people/oliveeye/meshes/*')),                
+        ('share/' + package_name + "/models/timmyeye", glob('models/people/timmyeye/model.*')),        
+        ('share/' + package_name + "/models/timmyeye/meshes", glob('models/people/timmyeye/meshes/*')),                
+        ('share/' + package_name + "/models/medkit", glob('models/medkit/model.*')),        
+        ('share/' + package_name + "/models/medkit/materials/textures", glob('models/medkit/materials/textures/*')),
+        ('share/' + package_name + "/models/medkit/meshes", glob('models/medkit/meshes/*')),
+        
+        ('share/' + package_name + "/models/miniusv/materials", glob('models/miniusv/materials/*')),
+        ('share/' + package_name + "/models/miniusv/meshes", glob('models/miniusv/meshes/*')),                
+        ('share/' + package_name + "/models/suv/materials/textures", glob('models/suv/materials/textures/*')),
+        ('share/' + package_name + "/models/suv/meshes", glob('models/suv/meshes/*')),                
+        ('share/' + package_name + "/models/hatchback/materials/textures", glob('models/hatchback/materials/textures/*')),
+        ('share/' + package_name + "/models/hatchback/meshes", glob('models/hatchback/meshes/*')),                
+        ('share/' + package_name + "/models/fire_truck/materials/textures", glob('models/fire_truck/materials/textures/*')),
+        ('share/' + package_name + "/models/fire_truck/meshes", glob('models/fire_truck/meshes/*')),
+        ('share/' + package_name + "/models/mahas_farm_aug23_8M_24", glob('models/mahas_farm_aug23_8M_24/model*')),
+        ('share/' + package_name + "/models/mahas_farm_aug23_8M_24/meshes", glob('models/mahas_farm_aug23_8M_24/meshes/*')),
+        ('share/' + package_name + "/models/mahas_farm_aug23_8M_24/materials/textures", glob('models/mahas_farm_aug23_8M_24/materials/textures/*')),
+    ],
+    install_requires=['setuptools'],
+    zip_safe=True,
+    maintainer='tompe',
+    maintainer_email='tommy.persson@liu.se',
+    description='TODO: Package description',
+    license='TODO: License declaration',
+    extras_require={
+        'test': [
+            'pytest',
+        ],
+    },
+    entry_points={
+        'console_scripts': [
+            'generate_sdf = lrs_halmstad.generate_sdf:main',            
+            'command = lrs_halmstad.command:main',            
+            'contract_check = lrs_halmstad.contract_check:main',
+            'follow_uav = lrs_halmstad.follow_uav:main',
+            "leader_estimator = lrs_halmstad.leader_estimator:main",
+            "gazebo_pose_tcp_bridge = lrs_halmstad.gazebo_pose_tcp_bridge:main",
+            "pose_cmd_to_odom = lrs_halmstad.pose_cmd_to_odom:main",
+            "uav_setpose_sweep = lrs_halmstad.uav_setpose_sweep:main",
+            "ugv_motion_driver = lrs_halmstad.ugv_motion_driver:main",
+
+              # optional later:
+              # 'metrics_node = lrs_halmstad.metrics_node:main',
+        ],
+    },
+)

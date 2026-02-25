@@ -1,0 +1,13 @@
+Topic information: Topic: /a201_0000/cmd_vel | Type: geometry_msgs/msg/TwistStamped | Count: 1151 | Serialization Format: cdr
+                   Topic: /a201_0000/platform/cmd_vel | Type: geometry_msgs/msg/TwistStamped | Count: 1129 | Serialization Format: cdr
+                   Topic: /a201_0000/platform/odom | Type: nav_msgs/msg/Odometry | Count: 1496 | Serialization Format: cdr
+                   Topic: /a201_0000/platform/odom/filtered | Type: nav_msgs/msg/Odometry | Count: 3280 | Serialization Format: cdr
+                   Topic: /a201_0000/tf | Type: tf2_msgs/msg/TFMessage | Count: 4412 | Serialization Format: cdr
+                   Topic: /a201_0000/tf_static | Type: tf2_msgs/msg/TFMessage | Count: 3 | Serialization Format: cdr
+                   Topic: /clock | Type: rosgraph_msgs/msg/Clock | Count: 25444 | Serialization Format: cdr
+                   Topic: /coord/events | Type: std_msgs/msg/String | Count: 345 | Serialization Format: cdr
+                   Topic: /coord/follow_dist_cmd | Type: std_msgs/msg/Float32 | Count: 335 | Serialization Format: cdr
+                   Topic: /coord/follow_tracking_error_cmd | Type: std_msgs/msg/Float32 | Count: 335 | Serialization Format: cdr
+                   Topic: /coord/leader_estimate | Type: geometry_msgs/msg/PoseStamped | Count: 0 | Serialization Format: cdr
+                   Topic: /coord/leader_estimate_status | Type: std_msgs/msg/String | Count: 746 | Serialization Format: cdr
+                   Topic: /dji0/pose_cmd | Type: geometry_msgs/msg/PoseStamped | Count: 335 | Serialization Format: cdr

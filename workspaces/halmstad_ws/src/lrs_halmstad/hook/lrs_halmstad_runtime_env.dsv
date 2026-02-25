@@ -1,0 +1,15 @@
+# lrs_halmstad runtime defaults (applied when sourcing install/setup.*)
+# Keep these as defaults so users can still override them in their shell.
+set-if-unset;ROS_DOMAIN_ID;3
+set-if-unset;RMW_IMPLEMENTATION;rmw_fastrtps_cpp
+set-if-unset;RMW_FASTRTPS_USE_SHM;0
+set-if-unset;FASTDDS_BUILTIN_TRANSPORTS;UDPv4
+
+# Gazebo model/resource lookup for both source and installed trees.
+# Relative paths are resolved against this package's install prefix.
+prepend-non-duplicate-if-exists;GZ_SIM_RESOURCE_PATH;../../src/lrs_halmstad/models
+prepend-non-duplicate-if-exists;GZ_SIM_RESOURCE_PATH;share
+prepend-non-duplicate-if-exists;IGN_GAZEBO_RESOURCE_PATH;../../src/lrs_halmstad/models
+prepend-non-duplicate-if-exists;IGN_GAZEBO_RESOURCE_PATH;share
+prepend-non-duplicate-if-exists;GAZEBO_MODEL_PATH;../../src/lrs_halmstad/models
+prepend-non-duplicate-if-exists;GAZEBO_MODEL_PATH;share

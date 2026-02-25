@@ -1,0 +1,13 @@
+# pip-installable runtime dependencies (rclpy provided by ROS; do NOT pip-install it)
+PyYAML>=6.0
+pandas>=1.5
+numpy>=1.24
+matplotlib>=3.7
+rospkg>=1.4.1
+
+# developer/test tooling (install only on dev machines)
+pytest>=7.0
+black
+flake8
+mypy
+pre-commit

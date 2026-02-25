@@ -1,0 +1,58 @@
+cat > .gitignore <<'EOF'
+# --- ROS 2 / colcon workspace ---
+build/
+install/
+log/
+.colcon/
+*.log
+
+# --- Runtime output / experiment artifacts ---
+runs/
+*.mcap
+*.db3
+*.sqlite3
+*.bag
+*.bag.active
+
+# --- Python ---
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.venv/
+venv/
+.env
+.pytest_cache/
+.mypy_cache/
+
+# --- VSCode ---
+.vscode/
+
+# --- OS / misc ---
+.DS_Store
+Thumbs.db
+
+# --- OMNeT++ / INET (do NOT store full installs in repo) ---
+omnet-workspace/
+opt/omnetpp-*/
+*.sca
+*.vec
+*.out
+*.elog
+*.anf
+*.vci
+*.qtenvrc
+*.cmdenv-log
+EOF
+
+# editor / local history
+.history/
+
+# windows download metadata
+*:Zone.Identifier
+
+# local archives
+*.zip
+
+# local ML weights (keep in drive, not repo)
+models/
