@@ -53,7 +53,7 @@ def generate_launch_description():
         OnProcessExit(
             target_action=uav_node,
             on_exit=[
-                LogInfo(msg='[run_round_motion] UAV sweep finished; starting UGV motion driver'),
+                LogInfo(msg='[run_sweep_motion] UAV sweep finished; starting UGV motion driver'),
                 ugv_node,
             ],
         )
