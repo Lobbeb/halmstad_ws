@@ -1,0 +1,57 @@
+<?xml version="1.0"?>
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro" name="a200-0000">
+
+  <!-- Common -->
+  <xacro:include filename="$(find clearpath_platform_description)/urdf/common.urdf.xacro"/>
+
+  <!-- Platform -->
+  <xacro:include filename="$(find clearpath_platform_description)/urdf/a200/a200.urdf.xacro"/>
+  <xacro:a200 control="diff_4wd" front_wheels="outdoor" rear_wheels="outdoor"/>
+
+
+  <!-- Attachments -->
+
+  <xacro:include filename="$(find clearpath_platform_description)/urdf/a200/attachments/bumper.urdf.xacro"/>
+  <xacro:bumper name="front_bumper" model="default" parent_link="front_bumper_mount" extension="0.0">
+    <origin xyz="0.0 0.0 0.0" rpy="0.0 0.0 0.0"/>
+  </xacro:bumper>
+
+  <xacro:include filename="$(find clearpath_platform_description)/urdf/a200/attachments/bumper.urdf.xacro"/>
+  <xacro:bumper name="rear_bumper" model="default" parent_link="rear_bumper_mount" extension="0.0">
+    <origin xyz="0.0 0.0 0.0" rpy="0.0 0.0 0.0"/>
+  </xacro:bumper>
+
+  <xacro:include filename="$(find clearpath_platform_description)/urdf/a200/attachments/top_plate.urdf.xacro"/>
+  <xacro:top_plate name="top_plate" model="default" parent_link="default_mount">
+    <origin xyz="0.0 0.0 0.0" rpy="0.0 0.0 0.0"/>
+  </xacro:top_plate>
+
+
+  <!-- Links -->
+
+
+  <!-- Mounts -->
+
+
+  <!-- Sensors -->
+
+  <!-- lidar3d_0 -->
+  <xacro:include filename="$(find clearpath_sensors_description)/urdf/velodyne_lidar.urdf.xacro"/>
+  <xacro:velodyne_lidar name="lidar3d_0" parent_link="base_link" ang_res_h="0.4" ang_res_v="2.0" min_ang_h="-3.141592" max_ang_h="3.141592" min_ang_v="-0.261799" max_ang_v="0.261799" min_range="0.9" max_range="130.0" update_rate="20">
+    <origin xyz="0.21 0.13 0.225" rpy="0.0 0.0 0.0"/>
+  </xacro:velodyne_lidar>
+
+  <!-- camera_0 -->
+  <xacro:include filename="$(find clearpath_sensors_description)/urdf/intel_realsense.urdf.xacro"/>
+  <xacro:intel_realsense name="camera_0" parent_link="base_link" update_rate="30" image_height="480" image_width="640" model="d435">
+    <origin xyz="0.31 0.0 0.23" rpy="0.0 0.0 0.0"/>
+  </xacro:intel_realsense>
+
+
+  <!-- Manipulators -->
+
+
+  <!-- Extras -->
+
+
+</robot>

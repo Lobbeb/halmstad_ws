@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+
+<sdf version="1.6" xmlns:xacro="http://www.ros.org/wiki/xacro">
+
+  <xacro:arg name="camera_name" default="camera0"/>
+  <xacro:arg name="robot_name" default="dji0"/>
+  <xacro:arg name="robot_type" default="laser"/>
+
+  <model name="$(arg robot_name)_$(arg camera_name)">  
+    <static>true</static>
+    
+
+    <xacro:arg name="base_link_frame" default="base_link"/>
+    <xacro:arg name="world_frame" default="world"/>
+
+    <xacro:arg name="robot_type" default="piraya"/>
+
+    <xacro:arg name="camera_image_width" default="1024"/>
+    <xacro:arg name="camera_image_height" default="600"/>
+    <xacro:arg name="camera_update_rate" default="30"/>
+    <xacro:arg name="camera_hfov" default="71"/>
+    <xacro:arg name="camera_far_clip" default="100"/>
+    <xacro:arg name="camera_topic" default="image_raw"/>
+
+    <xacro:property name="prop_type" value="$(arg robot_type)"/>
+    
+    <xacro:property name="base_name" value="$(arg robot_name)"/>
+
+   
+
+    <xacro:property name="camera_prefix" value="/${base_name}/$(arg camera_name)"/>
+    <xacro:property name="camera_topic" value="$(arg camera_topic)"/>
+    <xacro:property name="camera_link_name" value="$(arg camera_name)_link"/>
+
+    
+    <xacro:include filename="$(find lrs_halmstad)/xacro/lrs_camera_gimbal.sdf.xacro"/>
+    
+    <xacro:lrs_camera_gimbal name="$(arg camera_name)"
+                             parent_link="$(arg base_link_frame)"
+                             link_name="${camera_link_name}"
+                             hfov_deg="$(arg camera_hfov)"
+                             camera_info_topic="${camera_prefix}/camera_info"
+                             image_topic="${camera_prefix}/${camera_topic}"
+                             frame_id="${camera_prefix}/image_frame"
+                             im_width="$(arg camera_image_width)"
+                             im_height="$(arg camera_image_height)"
+                             update_rate="$(arg camera_update_rate)"
+                             far_clip="$(arg camera_far_clip)"
+                             robot_type="$(arg robot_type)"
+                             robot_name="$(arg robot_name)"
+                             im_format="R8G8B8" />
+    
+</model>
+</sdf>
+

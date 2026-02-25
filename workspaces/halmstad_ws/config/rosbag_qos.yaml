@@ -1,0 +1,29 @@
+/clock:
+  history: keep_last
+  depth: 50
+  reliability: reliable
+  durability: volatile
+
+/a201_0000/platform/odom:
+  history: keep_last
+  depth: 50
+  reliability: reliable
+  durability: volatile
+
+/a201_0000/cmd_vel:
+  history: keep_last
+  depth: 10
+  reliability: reliable
+  durability: volatile
+
+/a201_0000/tf:
+  history: keep_last
+  depth: 100
+  reliability: reliable
+  durability: volatile
+
+/a201_0000/tf_static:
+  history: keep_last
+  depth: 10
+  reliability: reliable
+  durability: transient_local

@@ -1,0 +1,2 @@
+hooks:
+  - share/lrs_halmstad/hook/lrs_halmstad_runtime_env.dsv
