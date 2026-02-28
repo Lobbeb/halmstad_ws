@@ -1,5 +1,4 @@
 import os
-
 from ament_index_python.packages import get_package_share_directory
 
 from launch import LaunchDescription
@@ -77,11 +76,11 @@ ARGUMENTS.append(
 
 
 def _gz_launch(context, *args, **kwargs):
-    pkg_clearpath_gz = get_package_share_directory('clearpath_gz')
+    pkg_lrs_halmstad = get_package_share_directory('lrs_halmstad')
     pkg_ros_gz_sim = get_package_share_directory('ros_gz_sim')
 
     gz_sim_launch = PathJoinSubstitution([pkg_ros_gz_sim, 'launch', 'gz_sim.launch.py'])
-    gui_config = PathJoinSubstitution([pkg_clearpath_gz, 'config', 'gui.config'])
+    gui_config_path = os.path.join(pkg_lrs_halmstad, 'config', 'gui.config')
 
     auto_start_option = ''
     if LaunchConfiguration('auto_start').perform(context) == 'true':
@@ -96,7 +95,7 @@ def _gz_launch(context, *args, **kwargs):
     if LaunchConfiguration('gui').perform(context) == 'true':
         gz_args.extend([
             ' --gui-config ',
-            gui_config,
+            gui_config_path,
         ])
     else:
         gz_args.append(' -s')
