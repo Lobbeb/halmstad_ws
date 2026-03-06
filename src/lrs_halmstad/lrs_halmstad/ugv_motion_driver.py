@@ -5,6 +5,7 @@ import time
 from typing import List, Tuple
 
 import rclpy
+from geometry_msgs.msg import PoseStamped
 from geometry_msgs.msg import TwistStamped
 from nav_msgs.msg import Odometry
 from rclpy.node import Node
@@ -40,6 +41,8 @@ class UgvMotionDriver(Node):
         self.declare_parameter("ready_require_cmd_subscriber", True)
         self.declare_parameter("ready_require_odom_flow", False)
         self.declare_parameter("ready_odom_topic", "")
+        self.declare_parameter("ready_require_leader_flow", False)
+        self.declare_parameter("ready_leader_topic", "/coord/leader_estimate")
         self.declare_parameter("ready_timeout_s", 8.0)
         self.declare_parameter("ready_poll_hz", 10.0)
         self.declare_parameter("ready_settle_s", 0.25)
@@ -67,6 +70,8 @@ class UgvMotionDriver(Node):
         self.ready_require_cmd_subscriber = bool(self.get_parameter("ready_require_cmd_subscriber").value)
         self.ready_require_odom_flow = bool(self.get_parameter("ready_require_odom_flow").value)
         self.ready_odom_topic = str(self.get_parameter("ready_odom_topic").value)
+        self.ready_require_leader_flow = bool(self.get_parameter("ready_require_leader_flow").value)
+        self.ready_leader_topic = str(self.get_parameter("ready_leader_topic").value)
         self.ready_timeout_s = max(0.0, float(self.get_parameter("ready_timeout_s").value))
         self.ready_poll_hz = max(1e-3, float(self.get_parameter("ready_poll_hz").value))
         self.ready_settle_s = max(0.0, float(self.get_parameter("ready_settle_s").value))
@@ -77,9 +82,15 @@ class UgvMotionDriver(Node):
         self._pub = self.create_publisher(TwistStamped, self.cmd_topic, 10)
         self._ready_odom_seen = False
         self._ready_odom_sub = None
+        self._ready_leader_seen = False
+        self._ready_leader_sub = None
         if self.ready_check_enable and self.ready_require_odom_flow and self.ready_odom_topic:
             self._ready_odom_sub = self.create_subscription(
                 Odometry, self.ready_odom_topic, self._on_ready_odom, 10
+            )
+        if self.ready_check_enable and self.ready_require_leader_flow and self.ready_leader_topic:
+            self._ready_leader_sub = self.create_subscription(
+                PoseStamped, self.ready_leader_topic, self._on_ready_leader, 10
             )
 
     def _apply_motion_profile(self) -> None:
@@ -131,6 +142,9 @@ class UgvMotionDriver(Node):
     def _on_ready_odom(self, _msg: Odometry) -> None:
         self._ready_odom_seen = True
 
+    def _on_ready_leader(self, _msg: PoseStamped) -> None:
+        self._ready_leader_seen = True
+
     def _cmd_has_subscriber(self) -> bool:
         return len(self.get_subscriptions_info_by_topic(self.cmd_topic)) > 0
 
@@ -139,7 +153,11 @@ class UgvMotionDriver(Node):
             return
 
         # If neither condition is enabled, the gate has nothing to do.
-        if not self.ready_require_cmd_subscriber and not self.ready_require_odom_flow:
+        if (
+            not self.ready_require_cmd_subscriber
+            and not self.ready_require_odom_flow
+            and not self.ready_require_leader_flow
+        ):
             self.get_logger().info("UGV readiness gate enabled but no checks selected; continuing immediately")
             return
 
@@ -150,8 +168,10 @@ class UgvMotionDriver(Node):
         self.get_logger().info(
             "Waiting for UGV readiness: "
             f"cmd_subscriber={self.ready_require_cmd_subscriber}, "
-            f"odom_flow={self.ready_require_odom_flow}"
+            f"odom_flow={self.ready_require_odom_flow}, "
+            f"leader_flow={self.ready_require_leader_flow}"
             + (f" on {self.ready_odom_topic}" if self.ready_require_odom_flow and self.ready_odom_topic else "")
+            + (f" and {self.ready_leader_topic}" if self.ready_require_leader_flow and self.ready_leader_topic else "")
         )
 
         while rclpy.ok():
@@ -163,8 +183,9 @@ class UgvMotionDriver(Node):
 
             cmd_ok = (not self.ready_require_cmd_subscriber) or self._cmd_has_subscriber()
             odom_ok = (not self.ready_require_odom_flow) or self._ready_odom_seen
+            leader_ok = (not self.ready_require_leader_flow) or self._ready_leader_seen
 
-            if cmd_ok and odom_ok:
+            if cmd_ok and odom_ok and leader_ok:
                 if stable_t0 is None:
                     stable_t0 = now
                 if (now - stable_t0) >= self.ready_settle_s:
@@ -179,6 +200,8 @@ class UgvMotionDriver(Node):
                     status.append(f"cmd_subscriber={'yes' if cmd_ok else 'no'}")
                 if self.ready_require_odom_flow:
                     status.append(f"odom_flow={'yes' if odom_ok else 'no'}")
+                if self.ready_require_leader_flow:
+                    status.append(f"leader_flow={'yes' if leader_ok else 'no'}")
                 self.get_logger().info("UGV readiness pending: " + ", ".join(status))
                 last_log_t = now
 

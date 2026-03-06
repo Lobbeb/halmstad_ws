@@ -1,100 +1,151 @@
-# Practical Requirements + To‑Do (UAV-side only)
+# Praktiska Krav + To-Do (Halvtid 09/03)
 
-This is a simplified, copy/paste runbook for *our* scope. The UGV stack (SLAM/Nav2/path planning/GNN) is handled by other students.
+Den har filen foljer Google-dokumentets ordning och text sa nara som mojligt.
 
-## 1. Scope and hard constraints
+- Huvudpunkterna ar era riktiga to-do for halvtid.
+- Under varje huvudpunkt ligger korta tekniska delsteg (substeps) sa det gar att exekvera i repo.
+- Sadant som ligger utanfor halvtidskarnan hamnar under Extra (om tid finns).
 
-### 1.1 What we own
-We implement the UAV-side perception + coordination interface, including failure handling and (optional) comm-aware hooks.
+## ROS2-GZ (huvudlista i ordning)
 
-### 1.2 What we do **not** implement
-We do not implement UGV SLAM/Nav2/path planning. We treat the UGV as a black box.
+### 1) Vanta in Tommys uppdatering i GitLab med ny UAV-modell och en controller-vag som gor att UAV:n kan styras pa ett mer realistiskt satt.
 
-### 1.3 Constraint: no UGV state broadcast
-The UAV side must not rely on UGV self-reported state as a dependency (no “UGV publishes its pose to UAV” assumption). Any following/support must be driven by UAV observation and the agreed interface.
+Delsteg:
+- Integrera upstream-kod utan att bryta befintlig follow-stack.
+- Verifiera att bade setpose-backend och controller-backend kan startas fran samma run-harness.
+- Sakerstall att kameratopics och controller-topics finns enligt kontrakt.
 
-## 2. UAV-side requirements
+### 2) Bestam tydligt styrkedjan: vi skickar inte manuella kommandon till UAV:n, utan vi genererar en plan/trajectory som skickas till en controller som sedan styr UAV:n.
 
-### 2.1 Sensing
-Use UAV cameras for environment observation (image + camera info). Depth is optional.
+Delsteg:
+- Las kontrollkedjan: `observation -> estimate -> follow-intent -> backend-adapter -> actuation`.
+- Hall samma planner-logik oavsett backend; backend far bara oversatta intent.
+- Undvik joystick/manuell styrning i experimentkorningar.
 
-### 2.2 Perception
-Run a YOLO-family detector to produce detections relevant to the task (leader/UGV proxy, obstacles/clear paths, etc.).
+### 3) Las grundkravet: UGV ska inte dela sin state till UAV:n. Foljning maste bygga pa vad UAV:n sjalv kan observera.
 
-### 2.3 Estimation output (coordination-grade)
-Publish a compact estimate suitable for coordination (pose estimate + confidence/health), plus a diagnostic status stream. Avoid exposing raw detections as a public “contract” topic (keep detections internal unless explicitly needed).
+Delsteg:
+- Kor policy-lage dar UAV-foljning inte far bero pa UGV-odom (`uav_only` + pose/estimate-kedja).
+- Fail-fast om fel mode kombineras (t.ex. odom i strikt observationslage).
+- Behall odom-lage endast som debug/baseline, inte som krav for UAV-follow.
 
-### 2.4 Prediction / smoothing
-Add a Kalman filter (or similar) layer on top of detections/estimates to stabilize outputs and provide short-horizon prediction during noise/dropouts.
+### 4) Anvand YOLO for att fa en relativ uppskattning av UGV:s position (och om mojligt hastighet) utifran kameradata.
 
-### 2.5 Comms-aware hooks (in scope)
-Expose a comm-quality signal (real later, synthetic first) and support a comm-aware leash / fallback decision (thresholds + hysteresis).
+Detta innebar att vi stabiliserar hela observationskedjan (`kamera -> YOLO -> leader_estimate/leader_estimate_status`) sa att UAV:n kan folja robust utan beroende av UGV-odom i `uav_only`-lage. Vi verifierar aven kontinuerlig estimate- och kommandostrom i bada backends (`setpose` och `controller`) for jamforbara och reproducerbara korningar.
 
-## 3. Links (what each is for)
+Delsteg:
+- Input: `/dji0/camera0/image_raw` + `/dji0/camera0/camera_info` (ev. depth senare).
+- Output: `/coord/leader_estimate` + `/coord/leader_estimate_status`.
+- Lagg robusthet for tappad detektion: quality-gate, hold, reacquire.
+- Sakerstall att estimate driver follow i bada backends med samma loggkontrakt.
 
-### 3.1 Integration
-- `ros_gz_bridge` docs: bridging Gazebo camera topics into ROS 2
-- Gazebo ↔ ROS 2 integration docs: general simulation integration patterns
+### 5) Stabilisering/prediktion: lagg ett Kalmanfilter ovanpa YOLO-matningarna for att klara brus och tappade detektioner och for att kunna prediktera kort framat.
 
-### 3.2 ROS 2 behavior
-- ROS 2 QoS docs/demos: reliability/history/durability settings for your streams
+Delsteg:
+- Filtrera estimate till stabil `pos/vel`.
+- Anvand kort prediktion vid tillfalliga dropouts.
+- Logga filterstatus sa ra vs filtrerad effekt kan visas i resultat.
 
-### 3.3 Clearpath API (reference only)
-- Clearpath ROS API overview: to know which UGV topics exist (UGV team implements their side)
+### 6) Path-generering: anvand den estimerade staten (pos/vel) for att generera en folj-punkt och en rimlig rorelseplan som controllern kan folja.
 
-Nav2/SLAM links are background only for us.
+Delsteg:
+- Berakna foljpunkt/standoff fran estimerad state.
+- Begransa med hastighet/acceleration/deadband for stabil rorelse.
+- Publicera planerad intent till vald backend, inte manuella direkta ryck-kommandon.
 
-## 4. Practical To‑Do (our scope)
+### 7) Hybrid som novelty: kombinera en robust baseline (follow+leash) med perception+Kalman, dar systemet kan falla tillbaka nar perceptionen ar svag.
 
-### 4.1 Track upstream simulation updates
-Keep compatibility with the latest lab repo updates (new UAV model and control path).
+(Kanske ocksa lagga in Edisons ide om PHERMONE fran hans papper som extra novelty om tid finns.)
 
-### 4.2 Freeze the interface contract early
-Lock what *we* publish and what we require as inputs, so the rest of the project can integrate around it.
-- Inputs: UAV camera topics (+ optional depth)
-- Outputs: leader estimate + status (+ optional comm metric)
-- Explicitly: do not require UGV pose/odom as a dependency
+Delsteg:
+- Definiera fallback-villkor (svag perception, stale, lag confidence).
+- Vaxla med hysteresis sa systemet inte flappar.
+- Logga mode/state-vaxlingar for jamforelse i resultat.
 
-### 4.3 Implement perception → estimate pipeline
-1. Run YOLO inference on the UAV camera stream  
-2. Select the relevant detection(s) for “leader/UGV proxy”  
-3. Convert detection(s) into a usable estimate (relative pose proxy or leader estimate)  
-4. Apply Kalman filtering / smoothing + short prediction  
-5. Failure handling:
-   - stale input handling (hold / debounce / reacquire)
-   - publish status continuously
-   - only publish valid estimates when requirements are satisfied
+### 8) Kommunikationssparet (Ruben): utred hur RSSI/natkvalitet kan anvandas som extra signal for leashing eller vaxling i hybridlogiken, och hur det kan kopplas in via OMNeT senare.
 
-### 4.4 Generate UAV motion intent from estimate
-Compute follow-point / standoff behavior and publish into the existing follower/controller interface.
-Avoid “manual drive”; publish planned/commanded intent.
+Delsteg:
+- Definiera comm-signalgranssnitt redan nu (syntetisk forst).
+- Hall integrationen los kopplad sa OMNeT kan kopplas in senare utan omskrivning.
+- Dokumentera vilka trosklar/indikatorer som ska styra vaxling.
 
-### 4.5 Add comm-aware behavior hooks (stub OK)
-1. Define a comm-quality signal you can expose (RSSI/PRR/latency proxy)  
-2. Add simple thresholds + hysteresis for comm-based leash switching  
-3. Start with a synthetic ROS signal; later replace with OMNeT++ / emulation outputs
+### 9) Fardigstall communication-based leashing som extension: behall dagens distansbaserade leash som baseline, men koppla in en faktisk lankkvalitetssignal (t.ex. RSSI/PRR/latens) i leashing-logiken med tydliga trosklar och hysteresis, och logga lankmatt + leashing-state for jamforelse.
 
-## 5. Minimal run plan (defensible results)
+(Starta med en syntetisk lanksignal i ROS och byt senare till OMNeT++/natlager nar det ar pa plats.)
 
-### 5.1 Baseline (no perception)
-Follow/leash baseline without YOLO estimate driving control.
+Delsteg:
+- Implementera comm-aware leash som pabyggnad, inte ersattning av baseline.
+- Sakerstall att baseline-lage kan koras oforandrat for A/B-jamforelse.
+- Logga comm-signal + leash-state i samma bag/meta-kontrakt.
 
-### 5.2 Perception-only (smoke mode)
-YOLO + filter runs and publishes estimate/status, but does not control the follower.
+### 10) Kamera-/vinkeljusteringar for att undvika tappad vision
 
-### 5.3 Estimate-driven follow
-Use the published leader estimate as the leader input for following.
+("Men fick andra kameran och vinkeln ... annars predictade den ingenting ... flog forbi UGV ... tappade vision")
 
-### 5.4 Optional: comm-leash disturbance
-Inject a repeatable comm-quality dip (synthetic first) and show that fallback/hysteresis prevents unstable behavior.
+Delsteg:
+- Justera kamera pitch/yaw/FOV sa UGV halls i synfalt vid normal foljning.
+- Lagg aktiv camera-lock dar relevant sa mal halls centrerat.
+- Verifiera i GUI + status att `NO_DET` minskar och reacquire fungerar.
 
-## 6. What “done” means (acceptance checks)
+### 11) Patcha OMNeT-bridge for flera UAVs i ROS2
 
-### 6.1 Interface checks
-- Topics exist and have stable message types
-- Status topic clearly indicates: OK / stale / disabled / reacquire / etc.
+Delsteg:
+- Sakerstall topic-namning/namespace per UAV.
+- Verifiera att flera UAV-instanser inte krockar i bridge.
+- Dokumentera vad som ar fixat vs kvarvarande begransningar.
 
-### 6.2 Runtime checks
-- Runs are repeatable with the same harness
-- Rosbag + metadata logs exist for each run directory
-- Switching between modes does not change the logging pipeline
+## OMNeT++
+
+### 12) Patcha OMNeT sa flera UAVs kan spawna
+
+Delsteg:
+- Multi-UAV spawn utan manuella specialsteg.
+- Stabil init/teardown mellan runs.
+
+### 13) Satt upp natverkstopologin for multi-UAV ad-hoc
+
+Delsteg:
+- Definiera forsta testtopologi (enkel men reproducerbar).
+- Exponera relevanta natmatt till ROS-sidan for jamforelse.
+
+## Extra (om tid finns)
+
+### E1) Las en liten run-matris for halvtid
+
+Mal:
+- baseline (odom + distans-leash)
+- hybrid (YOLO + KF med fallback)
+- comm-leash (lankkvalitet in i leash)
+
+Delsteg:
+- Fa korningar men tack alla pastaenden ni vill gora.
+- Samma loggkontrakt i alla lagen.
+
+### E2) Frys metrics + loggning en gang
+
+Minst:
+- tracking error / leash-brott
+- estimator-uptime (dropouts)
+- enkel smoothness pa kommandon
+
+Delsteg:
+- Samma rosbag-topics och samma `meta.yaml`-falt i alla lagen.
+- Skriv run-ID i resultat sa allt ar sparbart.
+
+### E3) Lagg in en repeterbar storning
+
+Alternativ:
+- forced YOLO-dropouts/occlusion
+- kontrollerad link-quality dip (syntetisk forst)
+
+Delsteg:
+- Visa att hybrid/comm-leash ger robusthet, inte bara det funkar.
+- Kor minst en A/B-jamforelse med samma setup.
+
+## Snabb status (uppdateras lopande)
+
+- Klart: 1, 2, 3 (implementerat i repo)
+- Pagaende: 4 (slutvalidering + viktjamforelse)
+- Nast pa tur: 5, 6
+- Efter det: 7, 8, 9
+- Sedan: 11, 12, 13 (OMNeT-sparet)

@@ -7,8 +7,12 @@ set -euo pipefail
 
 echo "[kill_everything] Stopping rosbag, project nodes, launches, bridges, and Gazebo..."
 
+pkill -f "run_follow_with_bag.sh" 2>/dev/null || true
+pkill -f "run_follow_preflight.sh" 2>/dev/null || true
+pkill -f "run_round_follow_motion.launch.py" 2>/dev/null || true
 pkill -f "ros2 bag record" 2>/dev/null || true
 pkill -f "ros2 run lrs_halmstad" 2>/dev/null || true
+pkill -f "ros2 node list" 2>/dev/null || true
 pkill -f "leader_estimator" 2>/dev/null || true
 pkill -f "follow_uav" 2>/dev/null || true
 pkill -f "contract_check" 2>/dev/null || true
@@ -31,6 +35,8 @@ sleep 1
 # Escalate for stubborn leftovers from repeated Gazebo/bridge runs.
 pkill -9 -f "ros_gz_image/image_bridge" 2>/dev/null || true
 pkill -9 -f "ros_gz_bridge/parameter_bridge" 2>/dev/null || true
+pkill -9 -f "run_follow_with_bag.sh" 2>/dev/null || true
+pkill -9 -f "run_follow_preflight.sh" 2>/dev/null || true
 pkill -9 -f "a201_0000" 2>/dev/null || true
 pkill -9 -f "ros2 launch" 2>/dev/null || true
 pkill -9 -f "gz sim" 2>/dev/null || true

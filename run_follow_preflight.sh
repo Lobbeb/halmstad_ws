@@ -90,6 +90,15 @@ has_publishers() {
   [[ -n "$count" ]] && (( count > 0 ))
 }
 
+list_existing_follow_nodes() {
+  local timeout_s="${PREFLIGHT_NODE_LIST_TIMEOUT_S:-5}"
+  local nodes
+  if ! nodes="$(timeout "${timeout_s}s" ros2 node list 2>/dev/null)"; then
+    return 124
+  fi
+  printf '%s\n' "$nodes" | grep -E '^/(leader_estimator|follow_uav|ugv_motion_driver)$' || true
+}
+
 wait_for_topic() {
   local topic="$1"
   local timeout_s="$2"
@@ -135,6 +144,7 @@ CONTROLLER_NAME="${3:-platform_velocity_controller}"
 WORLD="${4:-orchard}"
 UAV_NAME="${5:-dji0}"
 UAV_BACKEND="${6:-setpose}"
+LEADER_DEPENDENCY_MODE="${7:-ugv_state}"
 
 PREFLIGHT_TIMEOUT_S="${PREFLIGHT_TIMEOUT_S:-15}"
 PREFLIGHT_ACTIVATE_CONTROLLER="${PREFLIGHT_ACTIVATE_CONTROLLER:-true}"
@@ -145,8 +155,12 @@ PREFLIGHT_MODE_GUARD_ENABLE="${PREFLIGHT_MODE_GUARD_ENABLE:-true}"
 PREFLIGHT_SET_POSE_TIMEOUT_S="${PREFLIGHT_SET_POSE_TIMEOUT_S:-$PREFLIGHT_TIMEOUT_S}"
 PREFLIGHT_UAV_TOPICS_TIMEOUT_S="${PREFLIGHT_UAV_TOPICS_TIMEOUT_S:-$PREFLIGHT_TIMEOUT_S}"
 PREFLIGHT_REQUIRE_UAV_CAMERA_TOPICS="${PREFLIGHT_REQUIRE_UAV_CAMERA_TOPICS:-true}"
+PREFLIGHT_REQUIRE_UAV_CAMERA_FLOW="${PREFLIGHT_REQUIRE_UAV_CAMERA_FLOW:-true}"
+PREFLIGHT_REQUIRE_UGV_ODOM_TOPIC="${PREFLIGHT_REQUIRE_UGV_ODOM_TOPIC:-true}"
 PREFLIGHT_FORBID_CONTROLLER_TOPIC_PUBLISHERS="${PREFLIGHT_FORBID_CONTROLLER_TOPIC_PUBLISHERS:-true}"
 PREFLIGHT_FORBID_INTENT_TOPIC_PUBLISHERS="${PREFLIGHT_FORBID_INTENT_TOPIC_PUBLISHERS:-true}"
+PREFLIGHT_FORBID_EXISTING_FOLLOW_NODES="${PREFLIGHT_FORBID_EXISTING_FOLLOW_NODES:-true}"
+PREFLIGHT_NODE_LIST_TIMEOUT_S="${PREFLIGHT_NODE_LIST_TIMEOUT_S:-5}"
 STATE_DIR="${STATE_DIR:-/tmp/halmstad_ws}"
 MODE_FILE="$STATE_DIR/run_mode.lock"
 
@@ -155,6 +169,14 @@ case "$UAV_BACKEND" in
   *)
     echo "[run_follow_preflight] invalid backend '$UAV_BACKEND' (expected setpose|controller)"
     exit 9
+    ;;
+esac
+
+case "$LEADER_DEPENDENCY_MODE" in
+  uav_only|ugv_state) ;;
+  *)
+    echo "[run_follow_preflight] invalid leader_dependency_mode '$LEADER_DEPENDENCY_MODE' (expected uav_only|ugv_state)"
+    exit 14
     ;;
 esac
 
@@ -170,7 +192,29 @@ set -u
 
 check_mode_guard
 
+if is_truthy "$PREFLIGHT_FORBID_EXISTING_FOLLOW_NODES"; then
+  set +e
+  EXISTING_NODES="$(list_existing_follow_nodes)"
+  NODE_LIST_RC=$?
+  set -e
+  if [[ "$NODE_LIST_RC" -eq 124 ]]; then
+    echo "[run_follow_preflight] ros2 node list timed out after ${PREFLIGHT_NODE_LIST_TIMEOUT_S}s"
+    echo "[run_follow_preflight] stop stale runs and restart ROS daemon:"
+    echo "  ros2 daemon stop; ros2 daemon start"
+    exit 19
+  fi
+  if [[ -n "$EXISTING_NODES" ]]; then
+    echo "[run_follow_preflight] existing follow-stack nodes detected before launch:"
+    while IFS= read -r _n; do
+      [[ -n "$_n" ]] && echo "  - $_n"
+    done <<< "$EXISTING_NODES"
+    echo "[run_follow_preflight] run cleanup first (e.g. bash scripts/kill_everything.sh)"
+    exit 18
+  fi
+fi
+
 echo "[run_follow_preflight] backend=$UAV_BACKEND"
+echo "[run_follow_preflight] leader_dependency_mode=$LEADER_DEPENDENCY_MODE"
 echo "[run_follow_preflight] controller_manager=$CONTROLLER_MANAGER"
 if ! timeout 8s ros2 control list_controllers -c "$CONTROLLER_MANAGER" >/dev/null 2>&1; then
   echo "[run_follow_preflight] controller manager unavailable: $CONTROLLER_MANAGER"
@@ -196,10 +240,14 @@ if is_truthy "$PREFLIGHT_REQUIRE_CLOCK"; then
   fi
 fi
 
-echo "[run_follow_preflight] waiting for odom topic: $ODOM_TOPIC"
-if ! timeout "${PREFLIGHT_TIMEOUT_S}s" ros2 topic echo --once "$ODOM_TOPIC" >/dev/null 2>&1; then
-  echo "[run_follow_preflight] odom did not publish within ${PREFLIGHT_TIMEOUT_S}s on $ODOM_TOPIC"
-  exit 5
+if is_truthy "$PREFLIGHT_REQUIRE_UGV_ODOM_TOPIC"; then
+  echo "[run_follow_preflight] waiting for odom topic: $ODOM_TOPIC"
+  if ! timeout "${PREFLIGHT_TIMEOUT_S}s" ros2 topic echo --once "$ODOM_TOPIC" >/dev/null 2>&1; then
+    echo "[run_follow_preflight] odom did not publish within ${PREFLIGHT_TIMEOUT_S}s on $ODOM_TOPIC"
+    exit 5
+  fi
+else
+  echo "[run_follow_preflight] skipping odom flow requirement (leader_dependency_mode=$LEADER_DEPENDENCY_MODE)"
 fi
 
 if is_truthy "$PREFLIGHT_REQUIRE_SET_POSE_SERVICE"; then
@@ -234,6 +282,22 @@ if is_truthy "$PREFLIGHT_REQUIRE_UAV_CAMERA_TOPICS"; then
     echo "[run_follow_preflight] missing topic within ${PREFLIGHT_UAV_TOPICS_TIMEOUT_S}s: $CAMERA_INFO_TOPIC"
     exit 11
   fi
+  if is_truthy "$PREFLIGHT_REQUIRE_UAV_CAMERA_FLOW"; then
+    echo "[run_follow_preflight] waiting for UAV camera message flow"
+    if ! timeout "${PREFLIGHT_UAV_TOPICS_TIMEOUT_S}s" ros2 topic echo --once "$CAMERA_TOPIC" >/dev/null 2>&1; then
+      echo "[run_follow_preflight] camera image did not publish within ${PREFLIGHT_UAV_TOPICS_TIMEOUT_S}s on $CAMERA_TOPIC"
+      exit 16
+    fi
+    if ! timeout "${PREFLIGHT_UAV_TOPICS_TIMEOUT_S}s" ros2 topic echo --once "$CAMERA_INFO_TOPIC" >/dev/null 2>&1; then
+      echo "[run_follow_preflight] camera info did not publish within ${PREFLIGHT_UAV_TOPICS_TIMEOUT_S}s on $CAMERA_INFO_TOPIC"
+      exit 17
+    fi
+  fi
+fi
+
+if [[ "$LEADER_DEPENDENCY_MODE" == "uav_only" ]] && ! is_truthy "$PREFLIGHT_REQUIRE_UAV_CAMERA_TOPICS"; then
+  echo "[run_follow_preflight] leader_dependency_mode=uav_only requires PREFLIGHT_REQUIRE_UAV_CAMERA_TOPICS=true"
+  exit 15
 fi
 
 if [[ "$UAV_BACKEND" == "controller" ]] && is_truthy "$PREFLIGHT_FORBID_CONTROLLER_TOPIC_PUBLISHERS"; then
