@@ -109,6 +109,33 @@ if [ "$#" -gt 0 ] && [[ "$1" != *":="* ]] && [[ "$1" != *=* ]]; then
   shift
 fi
 
+ARGS=()
+for arg in "$@"; do
+  case "$arg" in
+    name:=*)
+      ARGS+=("uav_name:=${arg#name:=}")
+      ;;
+    height:=*)
+      ARGS+=("z:=${arg#height:=}")
+      ;;
+    mount_pitch_deg:=*)
+      ARGS+=("camera_pitch_offset_deg:=${arg#mount_pitch_deg:=}")
+      ;;
+    sensor_roll_deg:=*)
+      ARGS+=("camera_sensor_roll_deg:=${arg#sensor_roll_deg:=}")
+      ;;
+    sensor_pitch_deg:=*)
+      ARGS+=("camera_sensor_pitch_deg:=${arg#sensor_pitch_deg:=}")
+      ;;
+    sensor_yaw_deg:=*)
+      ARGS+=("camera_sensor_yaw_deg:=${arg#sensor_yaw_deg:=}")
+      ;;
+    *)
+      ARGS+=("$arg")
+      ;;
+  esac
+done
+
 set +u
 # ROS setup scripts may read unset variables while initializing the environment.
 source /opt/ros/jazzy/setup.bash
@@ -116,7 +143,7 @@ source "$WS_ROOT/install/setup.bash"
 source "$WS_ROOT/src/lrs_halmstad/clearpath/setup.bash"
 set -u
 
-setsid ros2 launch lrs_halmstad spawn1m100gimbal.launch.py world:="$WORLD" "$@" &
+setsid ros2 launch lrs_halmstad spawn_uav_1to1.launch.py world:="$WORLD" "${ARGS[@]}" &
 LAUNCH_PID=$!
 
 if [ "$FOLLOW_SIM" = true ]; then

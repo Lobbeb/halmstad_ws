@@ -18,6 +18,18 @@ def _gazebo_world_name(world_sub):
     ])
 
 
+def _default_uav_coord(world_sub, solar_farm_value: str, default_value: str):
+    return PythonExpression([
+        "'",
+        solar_farm_value,
+        "' if '",
+        world_sub,
+        "' == 'solar_farm' else '",
+        default_value,
+        "'",
+    ])
+
+
 def get_m100_with_gimbal(name, x, y, z, world):
     res = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
@@ -48,11 +60,11 @@ def generate_launch_description():
         description='Gazebo World')
     x_arg = DeclareLaunchArgument(
         'x',
-        default_value='-2.0',
+        default_value=_default_uav_coord(LaunchConfiguration('world'), '-62.0', '-2.0'),
         description='UAV spawn x position')
     y_arg = DeclareLaunchArgument(
         'y',
-        default_value='0.0',
+        default_value=_default_uav_coord(LaunchConfiguration('world'), '8.0', '0.0'),
         description='UAV spawn y position')
     z_arg = DeclareLaunchArgument(
         'z',

@@ -23,6 +23,28 @@ REQUIRED_TOPICS = [
     "/a201_0000/tf_static",
 ]
 
+REQUIRED_UAV_CAMERA_TOPICS = [
+    "/{uav}/camera0/image_raw",
+    "/{uav}/camera0/camera_info",
+]
+
+REQUIRED_UAV_ADAPTER_TOPICS = [
+    "/{uav}/pose",
+    "/{uav}/psdk_ros2/flight_control_setpoint_ENUposition_yaw",
+    "/{uav}/update_pan",
+    "/{uav}/update_tilt",
+]
+
+REQUIRED_FOLLOW_TOPICS = [
+    "/{uav}/pose_cmd",
+    "/{uav}/pose_cmd/odom",
+]
+
+REQUIRED_ESTIMATOR_TOPICS = [
+    "/coord/leader_estimate",
+    "/coord/leader_estimate_status",
+]
+
 
 class ContractChecker(Node):
     def __init__(self):
@@ -67,14 +89,24 @@ class ContractChecker(Node):
 
         event_topic = os.environ.get("EVENT_TOPIC", "/coord/events").strip() or "/coord/events"
         require_flow = self._truthy_env("REQUIRE_FLOW", "0")
+        require_uav_adapter = self._truthy_env("REQUIRE_UAV_ADAPTER", "0")
+        require_follow_stack = self._truthy_env("REQUIRE_FOLLOW_STACK", "0")
+        require_estimator = self._truthy_env("REQUIRE_ESTIMATOR", "0")
         cmd_topics_csv = os.environ.get("UGV_CMD_TOPICS", "/a201_0000/cmd_vel,/a201_0000/platform/cmd_vel")
         flow_topics_csv = os.environ.get("REQUIRED_FLOW_TOPICS", "/a201_0000/platform/odom")
         cmd_topics = [t.strip() for t in cmd_topics_csv.split(",") if t.strip()]
         flow_topics = [t.strip() for t in flow_topics_csv.split(",") if t.strip()]
 
         required_topics = [t.format(uav=uav) for t in REQUIRED_TOPICS]
+        required_topics.extend(t.format(uav=uav) for t in REQUIRED_UAV_CAMERA_TOPICS)
+        if require_uav_adapter:
+            required_topics.extend(t.format(uav=uav) for t in REQUIRED_UAV_ADAPTER_TOPICS)
+        if require_follow_stack:
+            required_topics.extend(t.format(uav=uav) for t in REQUIRED_FOLLOW_TOPICS)
+        if require_estimator:
+            required_topics.extend(t.format(uav=uav) for t in REQUIRED_ESTIMATOR_TOPICS)
         if event_topic != "/coord/events":
-            required_topics.append("/coord/events")
+            required_topics.append(event_topic)
 
         required_services = [s.format(world=gazebo_world_name(world)) for s in REQUIRED_SERVICES]
 

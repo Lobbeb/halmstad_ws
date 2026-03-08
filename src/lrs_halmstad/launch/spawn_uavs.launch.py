@@ -5,7 +5,7 @@ import os
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
 from launch.actions import IncludeLaunchDescription
-from launch.actions import DeclareLaunchArgument
+from launch.actions import DeclareLaunchArgument, TimerAction
 from launch.conditions import IfCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch_ros.actions import Node
@@ -22,23 +22,44 @@ def _gazebo_world_name(world_sub):
     ])
 
 
+def _default_uav_coord(world_sub, solar_farm_value: str, default_value: str):
+    return PythonExpression([
+        "'",
+        solar_farm_value,
+        "' if '",
+        world_sub,
+        "' == 'solar_farm' else '",
+        default_value,
+        "'",
+    ])
+
+
+def _default_uav_alt(world_sub, solar_farm_value: str, default_value: str):
+    return PythonExpression([
+        "'",
+        solar_farm_value,
+        "' if '",
+        world_sub,
+        "' == 'solar_farm' else '",
+        default_value,
+        "'",
+    ])
+
+
 world_arg = DeclareLaunchArgument('world', default_value='orchard',
-                      choices=[
-                          'construction',
-                          'office',
-                          'orchard',
-                          'pipeline',
-                          'solar_farm',
-                          'warehouse',
-                      ],
                       description='Gazebo World')
 uav_mode_arg = DeclareLaunchArgument('uav_mode', default_value='teleport',
                       description='UAV mode: teleport (deterministic) or physics')
 camera_mode_arg = DeclareLaunchArgument(
     'camera_mode',
-    default_value='integrated',
+    default_value='detached',
     choices=['integrated', 'detached'],
     description='Camera mode: integrated (camera link in UAV model) or detached (separate camera model)'
+)
+detached_spawn_delay_arg = DeclareLaunchArgument(
+    'detached_spawn_delay_s',
+    default_value='0.25',
+    description='Delay between UAV body and detached camera spawns to match GUI spawner behavior',
 )
 
 def generate_launch_description():
@@ -62,7 +83,9 @@ def generate_launch_description():
                           "uav_mode": LaunchConfiguration('uav_mode'),
                           "with_camera": with_camera_for_uav,
                           "camera_name": "camera0",
-                          "z": "2.27",
+                          "x": _default_uav_coord(LaunchConfiguration('world'), '-62.0', '0.0'),
+                          "y": _default_uav_coord(LaunchConfiguration('world'), '8.0', '0.0'),
+                          "z": _default_uav_alt(LaunchConfiguration('world'), '5.0', '2.27'),
                           "world": LaunchConfiguration('world')
                           }.items(),
     )
@@ -78,7 +101,9 @@ def generate_launch_description():
                           "uav_mode": LaunchConfiguration('uav_mode'),
                           "with_camera": with_camera_for_uav,
                           "camera_name": "camera0",
-                          "z": "3.27",
+                          "x": _default_uav_coord(LaunchConfiguration('world'), '-60.0', '0.0'),
+                          "y": _default_uav_coord(LaunchConfiguration('world'), '8.0', '0.0'),
+                          "z": _default_uav_alt(LaunchConfiguration('world'), '6.0', '3.27'),
                           "world": LaunchConfiguration('world'),
                           }.items(),
     )
@@ -93,7 +118,9 @@ def generate_launch_description():
                           "uav_mode": LaunchConfiguration('uav_mode'),
                           "with_camera": with_camera_for_uav,
                           "camera_name": "camera0",
-                          "z": "4.27",
+                          "x": _default_uav_coord(LaunchConfiguration('world'), '-58.0', '0.0'),
+                          "y": _default_uav_coord(LaunchConfiguration('world'), '8.0', '0.0'),
+                          "z": _default_uav_alt(LaunchConfiguration('world'), '7.0', '4.27'),
                           "world": LaunchConfiguration('world'),
                           }.items(),
     )
@@ -106,7 +133,10 @@ def generate_launch_description():
         launch_arguments={"name": "dji0",
                           "type": "m100",
                           "camera_name": "camera0",
-                          "z": "2.27",
+                          "bridge_camera": "false",
+                          "x": _default_uav_coord(LaunchConfiguration('world'), '-62.0', '0.0'),
+                          "y": _default_uav_coord(LaunchConfiguration('world'), '8.0', '0.0'),
+                          "z": _default_uav_alt(LaunchConfiguration('world'), '5.0', '2.27'),
                           "world": LaunchConfiguration('world')}.items(),
         condition=IfCondition(use_detached_camera),
     )
@@ -119,7 +149,10 @@ def generate_launch_description():
         launch_arguments={"name": "dji1",
                           "type": "m100",
                           "camera_name": "camera0",
-                          "z": "3.27",
+                          "bridge_camera": "false",
+                          "x": _default_uav_coord(LaunchConfiguration('world'), '-60.0', '0.0'),
+                          "y": _default_uav_coord(LaunchConfiguration('world'), '8.0', '0.0'),
+                          "z": _default_uav_alt(LaunchConfiguration('world'), '6.0', '3.27'),
                           "world": LaunchConfiguration('world')}.items(),
         condition=IfCondition(use_detached_camera),
     )
@@ -132,7 +165,10 @@ def generate_launch_description():
         launch_arguments={"name": "dji2",
                           "type": "m100",
                           "camera_name": "camera0",
-                          "z": "4.27",
+                          "bridge_camera": "false",
+                          "x": _default_uav_coord(LaunchConfiguration('world'), '-58.0', '0.0'),
+                          "y": _default_uav_coord(LaunchConfiguration('world'), '8.0', '0.0'),
+                          "z": _default_uav_alt(LaunchConfiguration('world'), '7.0', '4.27'),
                           "world": LaunchConfiguration('world')}.items(),
         condition=IfCondition(use_detached_camera),
     )
@@ -162,16 +198,42 @@ def generate_launch_description():
     )
     
     
+    dji0_camera_delayed = TimerAction(
+        period=LaunchConfiguration('detached_spawn_delay_s'),
+        actions=[dji0_camera],
+    )
+    dji1_delayed = TimerAction(
+        period=PythonExpression([str(2.0), " * ", LaunchConfiguration('detached_spawn_delay_s')]),
+        actions=[dji1],
+    )
+    dji1_camera_delayed = TimerAction(
+        period=PythonExpression([str(3.0), " * ", LaunchConfiguration('detached_spawn_delay_s')]),
+        actions=[dji1_camera],
+    )
+    dji2_delayed = TimerAction(
+        period=PythonExpression([str(4.0), " * ", LaunchConfiguration('detached_spawn_delay_s')]),
+        actions=[dji2],
+    )
+    dji2_camera_delayed = TimerAction(
+        period=PythonExpression([str(5.0), " * ", LaunchConfiguration('detached_spawn_delay_s')]),
+        actions=[dji2_camera],
+    )
+    camera_bridge_delayed = TimerAction(
+        period=PythonExpression([str(6.0), " * ", LaunchConfiguration('detached_spawn_delay_s')]),
+        actions=[camera_bridge],
+    )
+
     return LaunchDescription([
         world_arg,
         uav_mode_arg,
         camera_mode_arg,
+        detached_spawn_delay_arg,
         bridge,
-        camera_bridge,
         dji0,
-        dji0_camera,
-        dji1,
-        dji1_camera,
-        dji2,
-        dji2_camera,
+        dji0_camera_delayed,
+        dji1_delayed,
+        dji1_camera_delayed,
+        dji2_delayed,
+        dji2_camera_delayed,
+        camera_bridge_delayed,
     ])

@@ -76,6 +76,9 @@ class Controller(Node):
             f"gimbal_pitch={gimbal_pitch_topic}"
         )
         self.get_logger().info(
+            "Legacy UAV command topic is published as absolute ENU pose: x, y, z, yaw."
+        )
+        self.get_logger().info(
             f"update_rate_hz={self.update_rate_hz:.1f} "
             f"waypoint_test_enable={self.waypoint_test_enable} "
             f"camera_test_motion_enable={self.camera_test_motion_enable} "
@@ -263,8 +266,9 @@ class Controller(Node):
         z_cmd = new_position.z
             
         msg = Joy()
-        msg.axes.append(x_cmd)
-        msg.axes.append(y_cmd)
+        # The simulator adapter interprets this legacy topic as absolute ENU pose.
+        msg.axes.append(self.world_position.x + x_cmd)
+        msg.axes.append(self.world_position.y + y_cmd)
         msg.axes.append(z_cmd)
         msg.axes.append(yaw)
         self.ctrl_pos_yaw_pub.publish(msg)

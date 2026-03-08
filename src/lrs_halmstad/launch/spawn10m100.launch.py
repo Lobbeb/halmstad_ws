@@ -20,14 +20,6 @@ def _gazebo_world_name(world_sub):
 
 
 world_arg = DeclareLaunchArgument('world', default_value='orchard',
-                      choices=[
-                          'construction',
-                          'office',
-                          'orchard',
-                          'pipeline',
-                          'solar_farm',
-                          'warehouse',
-                      ],
                       description='Gazebo World')
 
 def generate_launch_description():

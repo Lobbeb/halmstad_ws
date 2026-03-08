@@ -2,7 +2,6 @@
 
 import math
 import time
-from typing import List, Tuple
 
 import rclpy
 from geometry_msgs.msg import TwistStamped
@@ -10,6 +9,8 @@ from nav_msgs.msg import Odometry
 from rclpy.node import Node
 from rclpy.qos import qos_profile_sensor_data
 from sensor_msgs.msg import LaserScan
+
+from .ugv_motion_profile import MotionProfileConfig, build_segments
 
 
 class UgvMotionDriver(Node):
@@ -35,7 +36,7 @@ class UgvMotionDriver(Node):
         self.declare_parameter("pause_every_n", 0)
         self.declare_parameter("pause_time_s", 0.0)
         self.declare_parameter("obstacle_avoid_enable", False)
-        self.declare_parameter("scan_topic", "/a201_0000/sensors/lidar3d_0/scan")
+        self.declare_parameter("scan_topic", "/a201_0000/sensors/lidar2d_0/scan")
         self.declare_parameter("scan_timeout_s", 0.75)
         self.declare_parameter("stop_on_scan_timeout", False)
         self.declare_parameter("front_sector_deg", 70.0)
@@ -98,12 +99,9 @@ class UgvMotionDriver(Node):
         self.ready_poll_hz = max(1e-3, float(self.get_parameter("ready_poll_hz").value))
         self.ready_settle_s = max(0.0, float(self.get_parameter("ready_settle_s").value))
 
-        self.variation_amplitude = max(0.0, min(0.45, self.variation_amplitude))
         self.front_sector_half_rad = math.radians(0.5 * self.front_sector_deg)
         self.side_sector_min_rad = math.radians(self.side_sector_min_deg)
         self.side_sector_max_rad = math.radians(self.side_sector_max_deg)
-
-        self._apply_motion_profile()
         self._pub = self.create_publisher(TwistStamped, self.cmd_topic, 10)
         self._ready_odom_seen = False
         self._ready_odom_sub = None
@@ -124,40 +122,22 @@ class UgvMotionDriver(Node):
                 LaserScan, self.scan_topic, self._on_scan, qos_profile_sensor_data
             )
 
-    def _apply_motion_profile(self) -> None:
-        if self.motion_profile in ("fast_wide", "far_fast", "wide_fast"):
-            self.forward_speed *= 1.8
-            self.forward_time_s *= 1.6
-            self.turn_speed *= 1.2
-            self.turn_time_s *= 0.9
-            self.cycles = max(self.cycles, 12)
-        elif self.motion_profile in ("fast", "speed"):
-            self.forward_speed *= 1.8
-            self.turn_speed *= 1.2
-        elif self.motion_profile in ("wide", "far"):
-            self.forward_time_s *= 1.8
-            self.cycles = max(self.cycles, 12)
-
-    def _build_segments(self) -> List[Tuple[str, float, float, float]]:
-        segments: List[Tuple[str, float, float, float]] = []
-        for i in range(self.cycles):
-            if self.variation_enable:
-                # Deterministic modulation for repeatable but less robotic paths.
-                fwd_var = 0.65 * math.sin(0.73 * i) + 0.35 * math.sin(0.19 * i + 1.10)
-                turn_var = 0.60 * math.cos(0.61 * i + 0.40) + 0.40 * math.sin(0.27 * i + 0.90)
-                fs = max(0.40, 1.0 + self.variation_amplitude * fwd_var)
-                ts = max(0.40, 1.0 + self.variation_amplitude * turn_var)
-            else:
-                fs = 1.0
-                ts = 1.0
-
-            segments.append(("fwd", self.forward_speed * fs, 0.0, self.forward_time_s))
-            turn_sign = -1.0 if (self.turn_pattern in ("alternate", "zigzag", "zig-zag") and (i % 2)) else 1.0
-            segments.append(("turn", 0.0, turn_sign * self.turn_speed * ts, self.turn_time_s))
-            if self.pause_every_n > 0 and ((i + 1) % self.pause_every_n == 0) and self.pause_time_s > 0.0:
-                segments.append(("pause", 0.0, 0.0, self.pause_time_s))
-
-        return segments
+    def _build_segments(self):
+        return build_segments(
+            MotionProfileConfig(
+                motion_profile=self.motion_profile,
+                turn_pattern=self.turn_pattern,
+                forward_speed=self.forward_speed,
+                forward_time_s=self.forward_time_s,
+                turn_speed=self.turn_speed,
+                turn_time_s=self.turn_time_s,
+                cycles=self.cycles,
+                variation_enable=self.variation_enable,
+                variation_amplitude=self.variation_amplitude,
+                pause_every_n=self.pause_every_n,
+                pause_time_s=self.pause_time_s,
+            )
+        )
 
     def _publish_cmd(self, vx: float, wz: float) -> None:
         msg = TwistStamped()
@@ -343,7 +323,7 @@ class UgvMotionDriver(Node):
         self._wait_for_ready()
 
         segments = self._build_segments()
-        est_motion_s = sum(float(secs) for _, _, _, secs in segments)
+        est_motion_s = sum(float(segment.duration_s) for segment in segments)
         self.get_logger().info(
             f"UGV motion: profile={self.motion_profile} turn_pattern={self.turn_pattern} "
             f"topic={self.cmd_topic} cycles={self.cycles} est_duration~{est_motion_s:.1f}s"
@@ -369,11 +349,11 @@ class UgvMotionDriver(Node):
                 rclpy.spin_once(self, timeout_sec=0.0)
                 time.sleep(dt)
 
-        for _name, vx, wz, secs in segments:
-            t_end = time.monotonic() + max(0.0, float(secs))
+        for segment in segments:
+            t_end = time.monotonic() + max(0.0, float(segment.duration_s))
             while time.monotonic() < t_end:
                 rclpy.spin_once(self, timeout_sec=0.0)
-                cmd_vx, cmd_wz = self._apply_obstacle_avoidance(vx, wz)
+                cmd_vx, cmd_wz = self._apply_obstacle_avoidance(segment.vx, segment.wz)
                 self._publish_cmd(cmd_vx, cmd_wz)
                 time.sleep(dt)
 

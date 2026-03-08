@@ -2,11 +2,14 @@
 
 #include <algorithm>
 #include <array>
+#include <cerrno>
+#include <chrono>
 #include <cmath>
 #include <cstdlib>
 #include <queue>
 #include <set>
 #include <string>
+#include <thread>
 #include <tuple>
 #include <vector>
 
@@ -34,6 +37,59 @@ namespace
 {
 
 constexpr double kEpsilon = 1e-6;
+constexpr auto kGuiDetachedSpawnDelay = std::chrono::milliseconds(250);
+
+bool ParseEnvDouble(const char *_name, double &_value)
+{
+  const char *raw = std::getenv(_name);
+  if (raw == nullptr || *raw == '\0')
+  {
+    return false;
+  }
+
+  errno = 0;
+  char *end = nullptr;
+  const double parsed = std::strtod(raw, &end);
+  if (end == raw || (end != nullptr && *end != '\0') || errno != 0)
+  {
+    return false;
+  }
+
+  _value = parsed;
+  return true;
+}
+
+bool UseUgvSpawnAnchor(const std::string &_relativeTo)
+{
+  return _relativeTo == "a201_0000/robot" ||
+         _relativeTo == "a201_0000/robot::base_link" ||
+         _relativeTo == "ugv_spawn";
+}
+
+bool ReadUgvSpawnPose(gz::math::Pose3d &_pose)
+{
+  double x = 0.0;
+  double y = 0.0;
+  double z = 0.0;
+  double yaw = 0.0;
+  const bool hasX = ParseEnvDouble("LRS_UGV_SPAWN_X", x);
+  const bool hasY = ParseEnvDouble("LRS_UGV_SPAWN_Y", y);
+  const bool hasZ = ParseEnvDouble("LRS_UGV_SPAWN_Z", z);
+  const bool hasYaw = ParseEnvDouble("LRS_UGV_SPAWN_YAW", yaw);
+  if (!(hasX && hasY))
+  {
+    return false;
+  }
+
+  _pose.Set(
+      x,
+      y,
+      hasZ ? z : 0.0,
+      0.0,
+      0.0,
+      hasYaw ? yaw : 0.0);
+  return true;
+}
 
 std::string ReadText(const tinyxml2::XMLElement *_parent, const char *_name)
 {
@@ -403,6 +459,8 @@ void UavSpawner::LoadConfig(const tinyxml2::XMLElement *_pluginElem)
 
   this->configuredWorldName_ = ReadText(_pluginElem, "world_name");
   this->withCamera_ = ReadBool(_pluginElem, "with_camera", this->withCamera_);
+  this->detachedCamera_ =
+      ReadBool(_pluginElem, "detached_camera", this->detachedCamera_);
   this->modelStatic_ = ReadBool(_pluginElem, "model_static", this->modelStatic_);
   this->allowRenaming_ = ReadBool(_pluginElem, "allow_renaming", this->allowRenaming_);
   this->bridgeCamera_ = ReadBool(_pluginElem, "bridge_camera", this->bridgeCamera_);
@@ -455,28 +513,61 @@ void UavSpawner::Spawn()
   }
 
   const auto spawnName = this->NextName();
+  const auto cameraModelName =
+      QString::fromStdString(this->CameraModelName(spawnName.toStdString()));
   const auto spawnPose = this->SpawnPoseForIndex(this->nextIndex_);
-  QString sdf;
+  QString uavSdf;
+  QString cameraSdf;
   QString error;
 
   this->SetBusy(true);
   this->SetStatus(QString("Generating %1...").arg(spawnName));
 
-  if (!this->GenerateSdf(sdf, error))
+  if (!this->GenerateRobotSdf(spawnName, uavSdf, error))
   {
     this->SetStatus(error);
     this->SetBusy(false);
     return;
   }
 
-  if (!this->RequestSpawn(sdf, spawnName.toStdString(), spawnPose, error))
+  if (!this->RequestSpawn(uavSdf, spawnName.toStdString(), spawnPose, error))
   {
     this->SetStatus(error);
     this->SetBusy(false);
     return;
+  }
+
+  // The launch-based spawn path has process boundaries between model spawns.
+  // Add a short delay here so detached camera sensors do not race Ogre resource
+  // initialization from the GUI thread.
+  std::this_thread::sleep_for(kGuiDetachedSpawnDelay);
+
+  if (this->withCamera_ && this->detachedCamera_)
+  {
+    if (!this->GenerateDetachedCameraSdf(spawnName, cameraSdf, error))
+    {
+      QString cleanupError;
+      this->RequestRemove(spawnName.toStdString(), cleanupError);
+      this->SetStatus(error);
+      this->SetBusy(false);
+      return;
+    }
+
+    if (!this->RequestSpawn(cameraSdf, cameraModelName.toStdString(), spawnPose, error))
+    {
+      QString cleanupError;
+      this->RequestRemove(spawnName.toStdString(), cleanupError);
+      this->SetStatus(error);
+      this->SetBusy(false);
+      return;
+    }
+
+    std::this_thread::sleep_for(kGuiDetachedSpawnDelay);
   }
 
   this->spawnedUavNames_.push_back(spawnName.toStdString());
+  this->spawnedCameraNames_.push_back(
+      (this->withCamera_ && this->detachedCamera_) ? cameraModelName.toStdString() : "");
   ++this->nextIndex_;
   emit this->nextNameChanged();
   emit this->placementChanged();
@@ -533,13 +624,30 @@ void UavSpawner::RemoveLast()
   }
 
   const auto name = this->spawnedUavNames_.back();
+  const auto cameraName =
+      this->spawnedCameraNames_.empty() ? std::string{} : this->spawnedCameraNames_.back();
   QString error;
+  QString cameraError;
 
   this->SetBusy(true);
   this->SetStatus(QString("Removing %1...").arg(QString::fromStdString(name)));
 
+  if (!cameraName.empty())
+  {
+    if (!this->RequestRemove(cameraName, cameraError))
+    {
+      cameraError = QString("Could not remove detached camera %1: %2")
+                        .arg(QString::fromStdString(cameraName))
+                        .arg(cameraError);
+    }
+  }
+
   if (!this->RequestRemove(name, error))
   {
+    if (!cameraError.isEmpty())
+    {
+      error = QString("%1. %2").arg(error, cameraError);
+    }
     this->SetStatus(error);
     this->SetBusy(false);
     return;
@@ -547,6 +655,10 @@ void UavSpawner::RemoveLast()
 
   this->StopCameraBridge(name);
   this->spawnedUavNames_.pop_back();
+  if (!this->spawnedCameraNames_.empty())
+  {
+    this->spawnedCameraNames_.pop_back();
+  }
   if (this->nextIndex_ > 0)
   {
     --this->nextIndex_;
@@ -555,15 +667,55 @@ void UavSpawner::RemoveLast()
   emit this->nextNameChanged();
   emit this->placementChanged();
   emit this->spawnedUavsChanged();
-  this->SetStatus(
+  QString status =
       QString("Removed %1 from %2. Next: %3")
           .arg(QString::fromStdString(name))
           .arg(QString::fromStdString(worldName))
-          .arg(this->NextSpawnSummary()));
+          .arg(this->NextSpawnSummary());
+  if (!cameraError.isEmpty())
+  {
+    status += QString(" (%1)").arg(cameraError);
+  }
+  this->SetStatus(status);
   this->SetBusy(false);
 }
 
-bool UavSpawner::GenerateSdf(QString &_sdf, QString &_error) const
+bool UavSpawner::GenerateRobotSdf(
+    const QString &_name,
+    QString &_sdf,
+    QString &_error) const
+{
+  const bool attachIntegratedCamera = this->withCamera_ && !this->detachedCamera_;
+  return this->GenerateSdf(
+      _name,
+      _name,
+      attachIntegratedCamera,
+      false,
+      _sdf,
+      _error);
+}
+
+bool UavSpawner::GenerateDetachedCameraSdf(
+    const QString &_uavName,
+    QString &_sdf,
+    QString &_error) const
+{
+  return this->GenerateSdf(
+      QString::fromStdString(this->CameraModelName(_uavName.toStdString())),
+      _uavName,
+      false,
+      true,
+      _sdf,
+      _error);
+}
+
+bool UavSpawner::GenerateSdf(
+    const QString &_name,
+    const QString &_robotName,
+    bool _withCamera,
+    bool _gimbal,
+    QString &_sdf,
+    QString &_error) const
 {
   std::string packagePrefix;
   try
@@ -589,12 +741,21 @@ bool UavSpawner::GenerateSdf(QString &_sdf, QString &_error) const
   QStringList arguments{
       "--ros-args",
       "-p", QString("type:=%1").arg(QString::fromStdString(this->robotType_)),
-      "-p", QString("name:=%1").arg(this->NextName()),
-      "-p", "robot:=True",
-      "-p", QString("with_camera:=%1").arg(this->withCamera_ ? "true" : "false"),
+      "-p", QString("name:=%1").arg(_name),
+      "-p", QString("robot:=%1").arg(_gimbal ? "False" : "True"),
+      "-p", QString("with_camera:=%1").arg(_withCamera ? "true" : "false"),
       "-p", QString("model_static:=%1").arg(this->modelStatic_ ? "true" : "false"),
       "-p", QString("camera_name:=%1").arg(QString::fromStdString(this->cameraName_)),
   };
+  if (_gimbal)
+  {
+    arguments << "-p" << "gimbal:=True"
+              << "-p" << QString("robot_name:=%1").arg(_robotName);
+  }
+  else
+  {
+    arguments << "-p" << QString("robot_name:=%1").arg(_robotName);
+  }
 
   process.start(program, arguments);
   if (!process.waitForStarted(3000))
@@ -688,40 +849,57 @@ bool UavSpawner::RequestSpawn(
   const auto worldName = this->WorldName();
   if (worldName.empty())
   {
-    _error = "World name is unset. Cannot call /world/<name>/create.";
+    _error = "World name is unset. Cannot spawn model.";
     return false;
   }
 
-  gz::msgs::EntityFactory request;
-  request.set_name(_name);
-  request.set_allow_renaming(this->allowRenaming_);
-  request.set_sdf(_sdf.toStdString());
-  request.set_relative_to(this->relativeTo_);
-  gz::msgs::Set(request.mutable_pose(), _pose);
-
-  gz::msgs::Boolean reply;
-  bool result = false;
-  gz::transport::Node node;
-  const std::string service = "/world/" + worldName + "/create";
-
-  const bool executed =
-      node.Request(service, request, this->requestTimeoutMs_, reply, result);
-
-  if (!executed)
+  QString executableError;
+  const auto executable =
+      this->PackageExecutable("ros_gz_sim", "create", executableError);
+  if (executable.empty())
   {
-    _error = QString("Timed out calling %1").arg(QString::fromStdString(service));
+    _error = executableError;
     return false;
   }
 
-  if (!result)
+  QProcess process;
+  process.setProgram(QString::fromStdString(executable));
+  process.setArguments(QStringList{
+      "-world", QString::fromStdString(worldName),
+      "-name", QString::fromStdString(_name),
+      "-string", _sdf,
+      "-x", QString::number(_pose.Pos().X(), 'f', 6),
+      "-y", QString::number(_pose.Pos().Y(), 'f', 6),
+      "-z", QString::number(_pose.Pos().Z(), 'f', 6),
+      "-R", QString::number(_pose.Rot().Euler().X(), 'f', 6),
+      "-P", QString::number(_pose.Rot().Euler().Y(), 'f', 6),
+      "-Y", QString::number(_pose.Rot().Euler().Z(), 'f', 6),
+      "--ros-args", "--log-level", "warn",
+  });
+  process.setProcessEnvironment(QProcessEnvironment::systemEnvironment());
+  process.setProcessChannelMode(QProcess::MergedChannels);
+  process.start();
+  if (!process.waitForStarted(3000))
   {
-    _error = QString("%1 rejected the spawn request").arg(QString::fromStdString(service));
+    _error = QString("Failed to start %1").arg(QString::fromStdString(executable));
     return false;
   }
 
-  if (!reply.data())
+  if (!process.waitForFinished(static_cast<int>(this->requestTimeoutMs_) + 5000))
   {
-    _error = QString("Gazebo did not create %1").arg(QString::fromStdString(_name));
+    process.kill();
+    process.waitForFinished(1000);
+    _error = QString("Timed out waiting for ros_gz_sim create to spawn %1")
+                 .arg(QString::fromStdString(_name));
+    return false;
+  }
+
+  if (process.exitStatus() != QProcess::NormalExit || process.exitCode() != 0)
+  {
+    const QString output = QString::fromUtf8(process.readAllStandardOutput()).trimmed();
+    _error = QString("ros_gz_sim create failed for %1: %2")
+                 .arg(QString::fromStdString(_name))
+                 .arg(QString::fromStdString(TrimmedSummary(output)));
     return false;
   }
 
@@ -848,6 +1026,11 @@ std::string UavSpawner::PackageExecutable(
   return executablePath;
 }
 
+std::string UavSpawner::CameraModelName(const std::string &_uavName) const
+{
+  return _uavName + "_" + this->cameraName_;
+}
+
 std::tuple<int, int, int> UavSpawner::GridCellForIndex(int _index) const
 {
   if (_index <= 0)
@@ -926,28 +1109,46 @@ std::tuple<int, int, int> UavSpawner::GridCellForIndex(int _index) const
 
 gz::math::Pose3d UavSpawner::SpawnPoseForIndex(int _index) const
 {
+  gz::math::Pose3d localPose;
   if (!this->useGridSpacing_)
   {
-    return this->customSpawnPose_;
+    localPose = this->customSpawnPose_;
+  }
+  else
+  {
+    const auto cell = this->GridCellForIndex(_index);
+    const double forwardSpacing =
+        EffectiveSpacing(this->gridSpacing_.X(), this->gridSpacing_.Y());
+    const double lateralSpacing =
+        EffectiveSpacing(this->gridSpacing_.Y(), this->gridSpacing_.X());
+    const double verticalSpacing = this->gridSpacing_.Z();
+
+    const gz::math::Vector3d localOffset{
+        static_cast<double>(std::get<0>(cell)) * forwardSpacing,
+        static_cast<double>(std::get<1>(cell)) * lateralSpacing,
+        static_cast<double>(std::get<2>(cell)) * verticalSpacing,
+    };
+    const auto rotatedOffset = this->spawnPose_.Rot().RotateVector(localOffset);
+    localPose = gz::math::Pose3d{
+        this->spawnPose_.Pos() + rotatedOffset,
+        this->spawnPose_.Rot(),
+    };
   }
 
-  const auto cell = this->GridCellForIndex(_index);
-  const double forwardSpacing =
-      EffectiveSpacing(this->gridSpacing_.X(), this->gridSpacing_.Y());
-  const double lateralSpacing =
-      EffectiveSpacing(this->gridSpacing_.Y(), this->gridSpacing_.X());
-  const double verticalSpacing = this->gridSpacing_.Z();
+  if (!UseUgvSpawnAnchor(this->relativeTo_))
+  {
+    return localPose;
+  }
 
-  const gz::math::Vector3d localOffset{
-      static_cast<double>(std::get<0>(cell)) * forwardSpacing,
-      static_cast<double>(std::get<1>(cell)) * lateralSpacing,
-      static_cast<double>(std::get<2>(cell)) * verticalSpacing,
-  };
-  const auto worldOffset = this->spawnPose_.Rot().RotateVector(localOffset);
+  gz::math::Pose3d ugvSpawnPose;
+  if (!ReadUgvSpawnPose(ugvSpawnPose))
+  {
+    return localPose;
+  }
 
   return gz::math::Pose3d{
-      this->spawnPose_.Pos() + worldOffset,
-      this->spawnPose_.Rot(),
+      ugvSpawnPose.Pos() + ugvSpawnPose.Rot().RotateVector(localPose.Pos()),
+      ugvSpawnPose.Rot() * localPose.Rot(),
   };
 }
 

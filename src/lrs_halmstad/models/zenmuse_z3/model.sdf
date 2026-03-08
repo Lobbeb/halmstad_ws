@@ -15,9 +15,14 @@
         <pose>0 0 0 0 0 0</pose>
         <geometry>
 	  <mesh>
-            <uri>model://zenmuse_z3/meshes/zenmuse_z3.dae</uri>
+            <uri>model://zenmuse_z3/meshes/zenmuse_z3.stl</uri>
           </mesh>
         </geometry>
+        <material>
+          <ambient>0.25 0.25 0.25 1.0</ambient>
+          <diffuse>0.45 0.45 0.45 1.0</diffuse>
+          <specular>0.05 0.05 0.05 1.0</specular>
+        </material>
       </visual>
     </link>
   </model>

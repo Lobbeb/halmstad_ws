@@ -1,20 +1,21 @@
-import os
 import re
-import rclpy
-from rclpy.node import Node
 import math
 from typing import Set
 
+import rclpy
 from rclpy.executors import MultiThreadedExecutor
 from rclpy.callback_groups import ReentrantCallbackGroup
+from rclpy.node import Node
 
-from std_srvs.srv import Trigger
-from std_msgs.msg import UInt8, Float64
-from geometry_msgs.msg import PoseArray, PoseStamped, Vector3Stamped, QuaternionStamped, Quaternion, Point
+from std_msgs.msg import Float32, Float64
+from geometry_msgs.msg import PoseStamped, Point, Vector3Stamped
 
-from tf_transformations import quaternion_from_euler, quaternion_multiply
+from tf_transformations import quaternion_from_euler
 from sensor_msgs.msg import Joy
 from ros_gz_interfaces.srv import SetEntityPose
+
+from lrs_halmstad.world_names import gazebo_world_name
+from lrs_halmstad.follow_math import rotate_body_offset, wrap_pi, yaw_from_quat
 
 class Simulator(Node):
     def __init__(self):
@@ -25,23 +26,38 @@ class Simulator(Node):
         self.declare_parameter("uav_name", "")
         self.declare_parameter("name", "")
         self.declare_parameter("update_rate_hz", 30.0)
-        self.declare_parameter("camera_mode", "integrated_joint")
+        self.declare_parameter("camera_mode", "detached_model")
         self.declare_parameter("camera_name", "camera0")
-        self.declare_parameter("camera_z_offset", 0.27)
+        self.declare_parameter("camera_x_offset_m", 0.0)
+        self.declare_parameter("camera_y_offset_m", 0.0)
+        self.declare_parameter("camera_z_offset_m", 0.27)
+        self.declare_parameter("camera_mount_pitch_deg", 45.0)
+        self.declare_parameter("camera_yaw_offset_deg", 0.0)
+        self.declare_parameter("camera_pan_sign", 1.0)
         self.declare_parameter("gimbal_pitch_min_rad", -1.5708)
         self.declare_parameter("gimbal_pitch_max_rad", 0.7854)
+        self.declare_parameter("sync_detached_camera_pose", True)
+        self.declare_parameter("publish_legacy_debug_topics", False)
 
         self.frame_id = "odom"
         self.world = self.get_parameter("world").value
+        self.gz_world = gazebo_world_name(self.world)
         self.uav_name = self._resolve_uav_name()
         self.name = self.uav_name
         self.update_rate_hz = max(1.0, float(self.get_parameter("update_rate_hz").value))
         self.period_time = 1.0 / self.update_rate_hz
         self.camera_mode = str(self.get_parameter("camera_mode").value).strip().lower()
         self.camera_name = str(self.get_parameter("camera_name").value).strip()
-        self.camera_z_offset = float(self.get_parameter("camera_z_offset").value)
+        self.camera_x_offset = float(self.get_parameter("camera_x_offset_m").value)
+        self.camera_y_offset = float(self.get_parameter("camera_y_offset_m").value)
+        self.camera_z_offset = float(self.get_parameter("camera_z_offset_m").value)
+        self.camera_mount_pitch_deg = float(self.get_parameter("camera_mount_pitch_deg").value)
+        self.camera_yaw_offset_deg = float(self.get_parameter("camera_yaw_offset_deg").value)
+        self.camera_pan_sign = float(self.get_parameter("camera_pan_sign").value)
         self.gimbal_pitch_min = float(self.get_parameter("gimbal_pitch_min_rad").value)
         self.gimbal_pitch_max = float(self.get_parameter("gimbal_pitch_max_rad").value)
+        self.sync_detached_camera_pose = bool(self.get_parameter("sync_detached_camera_pose").value)
+        self.publish_legacy_debug_topics = bool(self.get_parameter("publish_legacy_debug_topics").value)
         if self.camera_mode == "integrated":
             self.camera_mode = "integrated_joint"
         if self.camera_mode == "detached":
@@ -69,27 +85,76 @@ class Simulator(Node):
 
         self.yaw = math.radians(float(self.get_parameter("start_yaw_deg").value))
         self.update_msg = None
-        self.update_gimbal_flag = False
         self.tilt = -45.0
         self.pan = 0.0
-        self.tilt_update_msg = None
-        self.pan_update_msg = None
+        self.target_tilt = self.tilt
+        self.target_pan = self.pan
         self.future1 = None
         self.future2 = None
 
-        self.cli = self.create_client(SetEntityPose, f'/world/{self.world}/set_pose', callback_group=self.group)        
-        print(f"WAIT for service: /world/{self.world}/set_pose'")
+        self.cli = self.create_client(SetEntityPose, f'/world/{self.gz_world}/set_pose', callback_group=self.group)
+        print(f"WAIT for service: /world/{self.gz_world}/set_pose'")
         while not self.cli.wait_for_service(timeout_sec=1.0):
             self.get_logger().info('service not available, waiting again...')
 
         pose_topic = self._uav_topic("pose")
+        camera_pose_topic = self._uav_topic("debug_camera_pose")
         cmd_topic = self._uav_topic("psdk_ros2/flight_control_setpoint_ENUposition_yaw")
         tilt_topic = self._uav_topic("update_tilt")
         pan_topic = self._uav_topic("update_pan")
         gimbal_pitch_topic = self._gimbal_topic("pitch")
         gimbal_yaw_topic = self._gimbal_topic("yaw")
+        yaw_debug_topic = self._uav_topic("debug_yaw")
+        follow_actual_tilt_topic = self._uav_topic("follow/actual/tilt_deg")
+        follow_error_tilt_topic = self._uav_topic("follow/error/tilt_deg")
+        follow_target_tilt_topic = self._uav_topic("follow/target/tilt_deg")
+        follow_target_pan_topic = self._uav_topic("follow/target/pan_deg")
+        follow_actual_pan_topic = self._uav_topic("follow/actual/pan_deg")
+        follow_error_pan_topic = self._uav_topic("follow/error/pan_deg")
+        camera_target_pose_topic = self._uav_topic("camera/target/center_pose")
+        camera_actual_pose_topic = self._uav_topic("camera/actual/center_pose")
+        camera_target_world_yaw_topic = self._uav_topic("camera/target/world_yaw_rad")
+        camera_actual_world_yaw_topic = self._uav_topic("camera/actual/world_yaw_rad")
+        camera_error_world_yaw_topic = self._uav_topic("camera/error/world_yaw_rad")
 
         self.pose_pub = self.create_publisher(PoseStamped, pose_topic, 10, callback_group=self.group)
+        self.camera_pose_pub = (
+            self.create_publisher(PoseStamped, camera_pose_topic, 10, callback_group=self.group)
+            if self.publish_legacy_debug_topics
+            else None
+        )
+        self.yaw_debug_pub = (
+            self.create_publisher(Vector3Stamped, yaw_debug_topic, 10, callback_group=self.group)
+            if self.publish_legacy_debug_topics
+            else None
+        )
+        self.follow_target_tilt_pub = self.create_publisher(
+            Float32, follow_target_tilt_topic, 10, callback_group=self.group
+        )
+        self.follow_actual_tilt_pub = self.create_publisher(
+            Float32, follow_actual_tilt_topic, 10, callback_group=self.group
+        )
+        self.follow_error_tilt_pub = self.create_publisher(
+            Float32, follow_error_tilt_topic, 10, callback_group=self.group
+        )
+        self.follow_target_pan_pub = self.create_publisher(
+            Float32, follow_target_pan_topic, 10, callback_group=self.group
+        )
+        self.follow_actual_pan_pub = self.create_publisher(
+            Float32, follow_actual_pan_topic, 10, callback_group=self.group
+        )
+        self.follow_error_pan_pub = self.create_publisher(
+            Float32, follow_error_pan_topic, 10, callback_group=self.group
+        )
+        self.camera_actual_pose_pub = self.create_publisher(
+            PoseStamped, camera_actual_pose_topic, 10, callback_group=self.group
+        )
+        self.camera_actual_world_yaw_pub = self.create_publisher(
+            Float32, camera_actual_world_yaw_topic, 10, callback_group=self.group
+        )
+        self.camera_error_world_yaw_pub = self.create_publisher(
+            Float32, camera_error_world_yaw_topic, 10, callback_group=self.group
+        )
         self.update_sub = self.create_subscription(
             Joy, cmd_topic, self.update_callback, 10, callback_group=self.group
         )
@@ -99,19 +164,36 @@ class Simulator(Node):
         self.update_pan_sub = self.create_subscription(
             Float64, pan_topic, self.update_pan_callback, 10, callback_group=self.group
         )
+        self.camera_target_pose_sub = self.create_subscription(
+            PoseStamped, camera_target_pose_topic, self.update_target_camera_pose_callback, 10, callback_group=self.group
+        )
+        self.camera_target_world_yaw_sub = self.create_subscription(
+            Float32, camera_target_world_yaw_topic, self.update_target_camera_world_yaw_callback, 10, callback_group=self.group
+        )
         self.gimbal_pitch_pub = self.create_publisher(Float64, gimbal_pitch_topic, 10)
         self.gimbal_yaw_pub = self.create_publisher(Float64, gimbal_yaw_topic, 10)
 
         self.timer = self.create_timer(self.period_time, self.timer_callback, callback_group=self.group)
         self.get_logger().info(
             f"Using UAV '{self.uav_name}' topics: cmd={cmd_topic}, pose={pose_topic}, "
-            f"gimbal_pitch={gimbal_pitch_topic}, camera_mode={self.camera_mode}, "
-            f"update_rate_hz={self.update_rate_hz:.1f}"
+            f"gimbal_pitch={gimbal_pitch_topic}, debug_yaw={yaw_debug_topic}, "
+            f"debug_camera_pose={camera_pose_topic}, "
+            f"camera_mode={self.camera_mode}, "
+            f"update_rate_hz={self.update_rate_hz:.1f}, "
+            f"camera_offset=({self.camera_x_offset:.2f},{self.camera_y_offset:.2f},-{self.camera_z_offset:.2f}), "
+            f"camera_mount_pitch_deg={self.camera_mount_pitch_deg:.1f}, "
+            f"camera_yaw_offset_deg={self.camera_yaw_offset_deg:.1f}, "
+            f"camera_pan_sign={self.camera_pan_sign:.1f}"
         )
         self.get_logger().info(
             f"Initial pose x={self.world_position.x:.2f} y={self.world_position.y:.2f} "
             f"z={self.world_position.z:.2f} yaw_deg={math.degrees(self.yaw):.1f}"
         )
+        self.get_logger().info(
+            "Legacy UAV command topic is interpreted as absolute ENU pose: x, y, z, yaw."
+        )
+        self.target_camera_world_yaw = None
+        self.target_camera_pose = None
 
     def _uav_topic(self, suffix: str) -> str:
         return f"/{self.uav_name}/{suffix.lstrip('/')}"
@@ -123,11 +205,18 @@ class Simulator(Node):
         return max(low, min(high, value))
 
     def _default_start_xyz(self, uav_name: str):
+        default_x = 0.0
+        default_y = 0.0
+        default_z = 7.0
+        if self.gz_world == "solar_farm":
+            default_x = -62.0
+            default_y = 8.0
+            default_z = 7.0
         match = re.match(r"^dji(\d+)$", uav_name)
         if match:
             index = int(match.group(1))
-            return 0.0, 0.0, 2.27 + float(index)
-        return 0.0, 0.0, 2.27
+            return default_x, default_y, default_z + float(index)
+        return default_x, default_y, default_z
 
     def _graph_uav_candidates(self) -> Set[str]:
         patterns = [
@@ -172,26 +261,30 @@ class Simulator(Node):
         return "dji0"
 
     def update_callback(self, msg):
-        # print("update_callback:", msg)
         self.update_msg = msg
 
     def update_pan_callback(self, msg):
-        self.pan_update_msg = msg
-        self.pan = msg.data
+        self.target_pan = float(msg.data)
+        self.pan = float(msg.data)
         
     def update_tilt_callback(self, msg):
-        self.tilt_update_msg = msg
-        self.tilt = msg.data
+        self.target_tilt = float(msg.data)
+        self.tilt = float(msg.data)
+
+    def update_target_camera_pose_callback(self, msg):
+        self.target_camera_pose = msg
+
+    def update_target_camera_world_yaw_callback(self, msg):
+        self.target_camera_world_yaw = float(msg.data)
 
     def update(self):
         if self.update_msg:
-            self.world_position.x += self.update_msg.axes[0]
-            self.world_position.y += self.update_msg.axes[1]
-            self.world_position.z = self.update_msg.axes[2]
-            self.yaw = self.update_msg.axes[3]
+            if len(self.update_msg.axes) >= 4:
+                self.world_position.x = float(self.update_msg.axes[0])
+                self.world_position.y = float(self.update_msg.axes[1])
+                self.world_position.z = float(self.update_msg.axes[2])
+                self.yaw = float(self.update_msg.axes[3])
             self.update_msg = None
-        if self.tilt_update_msg and self.pan_update_msg:
-            self.update_gimbal_flag = True
             
     def timer_callback(self):
         try:
@@ -199,21 +292,29 @@ class Simulator(Node):
             x = self.world_position.x
             y = self.world_position.y
             z = self.world_position.z
+            if (
+                self.camera_mode == "detached_model"
+                and self.sync_detached_camera_pose
+                and ((self.future1 is not None and not self.future1.done()) or
+                     (self.future2 is not None and not self.future2.done()))
+            ):
+                return
             self.set_pose(self.name, x, y, z, self.yaw)
-            if self.update_gimbal_flag:
-                if self.camera_mode == "detached_model":
-                    self.set_camera_model_pose(x, y, z, self.pan, self.tilt)
-                else:
-                    pitchmsg = Float64()
-                    pitchmsg.data = self._clamp(
-                        -math.radians(self.tilt), self.gimbal_pitch_min, self.gimbal_pitch_max
-                    )
-                    self.gimbal_pitch_pub.publish(pitchmsg)
-                    yawmsg = Float64()
-                    yawmsg.data = math.radians(self.pan)
-                    self.gimbal_yaw_pub.publish(yawmsg)
+            if self.camera_mode == "detached_model":
+                self.set_camera_model_pose(x, y, z, self.pan, self.tilt)
+            else:
+                pitchmsg = Float64()
+                pitchmsg.data = self._clamp(
+                    -math.radians(self.tilt), self.gimbal_pitch_min, self.gimbal_pitch_max
+                )
+                self.gimbal_pitch_pub.publish(pitchmsg)
+                yawmsg = Float64()
+                yawmsg.data = math.radians(self.pan)
+                self.gimbal_yaw_pub.publish(yawmsg)
+            now_msg = self.get_clock().now().to_msg()
             quat = quaternion_from_euler(0.0, 0.0, self.yaw)
             msg = PoseStamped()
+            msg.header.stamp = now_msg
             msg.header.frame_id = self.frame_id
             msg.pose.position = self.world_position
             msg.pose.orientation.x = quat[0]
@@ -221,6 +322,56 @@ class Simulator(Node):
             msg.pose.orientation.z = quat[2]
             msg.pose.orientation.w = quat[3]
             self.pose_pub.publish(msg)
+            pose_yaw = yaw_from_quat(quat[0], quat[1], quat[2], quat[3])
+            yaw_debug = Vector3Stamped()
+            yaw_debug.header.stamp = now_msg
+            yaw_debug.header.frame_id = self.frame_id
+            yaw_debug.vector.x = float(self.yaw)
+            yaw_debug.vector.y = float(pose_yaw)
+            yaw_debug.vector.z = float(wrap_pi(pose_yaw - self.yaw))
+            if self.yaw_debug_pub is not None:
+                self.yaw_debug_pub.publish(yaw_debug)
+            if self.camera_mode == "detached_model":
+                actual_camera_yaw, _, _, _ = self._camera_pose_components(self.pan, self.tilt)
+                camera_pose = self._camera_pose_msg(now_msg, x, y, z, self.pan, self.tilt)
+                if self.camera_pose_pub is not None:
+                    self.camera_pose_pub.publish(camera_pose)
+                self.camera_actual_pose_pub.publish(camera_pose)
+                actual_camera_yaw_msg = Float32()
+                actual_camera_yaw_msg.data = float(actual_camera_yaw)
+                self.camera_actual_world_yaw_pub.publish(actual_camera_yaw_msg)
+                if self.target_camera_world_yaw is not None:
+                    camera_yaw_error_msg = Float32()
+                    camera_yaw_error_msg.data = float(wrap_pi(actual_camera_yaw - self.target_camera_world_yaw))
+                    self.camera_error_world_yaw_pub.publish(camera_yaw_error_msg)
+            else:
+                actual_camera_yaw_msg = Float32()
+                actual_camera_yaw_msg.data = float(self.yaw)
+                self.camera_actual_world_yaw_pub.publish(actual_camera_yaw_msg)
+                if self.target_camera_world_yaw is not None:
+                    camera_yaw_error_msg = Float32()
+                    camera_yaw_error_msg.data = float(wrap_pi(self.yaw - self.target_camera_world_yaw))
+                    self.camera_error_world_yaw_pub.publish(camera_yaw_error_msg)
+            target_tilt_deg = self._absolute_camera_tilt_deg(self.target_tilt)
+            actual_tilt_deg = self._absolute_camera_tilt_deg(self.tilt)
+            target_tilt_msg = Float32()
+            target_tilt_msg.data = float(target_tilt_deg)
+            self.follow_target_tilt_pub.publish(target_tilt_msg)
+            actual_tilt_msg = Float32()
+            actual_tilt_msg.data = float(actual_tilt_deg)
+            self.follow_actual_tilt_pub.publish(actual_tilt_msg)
+            error_tilt_msg = Float32()
+            error_tilt_msg.data = float(actual_tilt_deg - target_tilt_deg)
+            self.follow_error_tilt_pub.publish(error_tilt_msg)
+            target_pan_msg = Float32()
+            target_pan_msg.data = float(self.target_pan)
+            self.follow_target_pan_pub.publish(target_pan_msg)
+            actual_pan_msg = Float32()
+            actual_pan_msg.data = float(self.pan)
+            self.follow_actual_pan_pub.publish(actual_pan_msg)
+            error_pan_msg = Float32()
+            error_pan_msg.data = float(self.pan - self.target_pan)
+            self.follow_error_pan_pub.publish(error_pan_msg)
         except Exception as ex:
             print("Exception timer_callback:", ex, type(ex))
 
@@ -230,7 +381,7 @@ class Simulator(Node):
             if self.future1 is not None and not self.future1.done():
                 return
             robot_request = SetEntityPose.Request()
-            quat1 = quaternion_from_euler(0.0, 0.0, self.yaw)
+            quat1 = quaternion_from_euler(0.0, 0.0, yaw)
             robot_request.entity.id = 0
             robot_request.entity.name = name
             robot_request.entity.type = robot_request.entity.MODEL
@@ -253,13 +404,12 @@ class Simulator(Node):
             if self.future2 is not None and not self.future2.done():
                 return
             camera_request = SetEntityPose.Request()
-            yaw = self.yaw + math.radians(pan_deg)
-            quat2 = quaternion_from_euler(0.0, -math.radians(tilt_deg), yaw)
+            yaw, offset_x, offset_y, quat2 = self._camera_pose_components(pan_deg, tilt_deg)
             camera_request.entity.id = 0
             camera_request.entity.name = f"{self.name}_{self.camera_name}"
             camera_request.entity.type = camera_request.entity.MODEL
-            camera_request.pose.position.x = x
-            camera_request.pose.position.y = y
+            camera_request.pose.position.x = x + offset_x
+            camera_request.pose.position.y = y + offset_y
             camera_request.pose.position.z = z - self.camera_z_offset
             camera_request.pose.orientation.x = quat2[0]
             camera_request.pose.orientation.y = quat2[1]
@@ -268,6 +418,35 @@ class Simulator(Node):
             self.future2 = self.cli.call_async(camera_request)
         except Exception as ex:
             print("Exception set_camera_model_pose:", ex, type(ex))
+
+    def _camera_pose_components(self, pan_deg, tilt_deg):
+        yaw = self.yaw + math.radians((self.camera_pan_sign * pan_deg) + self.camera_yaw_offset_deg)
+        quat = quaternion_from_euler(0.0, -math.radians(tilt_deg), yaw)
+        offset_x, offset_y = rotate_body_offset(
+            self.camera_x_offset,
+            self.camera_y_offset,
+            self.yaw,
+        )
+        return yaw, offset_x, offset_y, quat
+
+    def _camera_pose_msg(self, stamp, x, y, z, pan_deg, tilt_deg):
+        yaw, offset_x, offset_y, quat = self._camera_pose_components(pan_deg, tilt_deg)
+        msg = PoseStamped()
+        msg.header.stamp = stamp
+        msg.header.frame_id = self.frame_id
+        msg.pose.position.x = float(x + offset_x)
+        msg.pose.position.y = float(y + offset_y)
+        msg.pose.position.z = float(z - self.camera_z_offset)
+        msg.pose.orientation.x = float(quat[0])
+        msg.pose.orientation.y = float(quat[1])
+        msg.pose.orientation.z = float(quat[2])
+        msg.pose.orientation.w = float(quat[3])
+        return msg
+
+    def _absolute_camera_tilt_deg(self, commanded_tilt_deg: float) -> float:
+        if self.camera_mode == "integrated_joint":
+            return float(commanded_tilt_deg - self.camera_mount_pitch_deg)
+        return float(commanded_tilt_deg)
 
 
 def main(args=None):

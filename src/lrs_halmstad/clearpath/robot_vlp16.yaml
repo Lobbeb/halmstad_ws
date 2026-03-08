@@ -1,3 +1,4 @@
+# Legacy alias kept for compatibility. It now mirrors the 2D lidar setup.
 serial_number: a200-0000
 version: 0
 system:
@@ -35,6 +36,7 @@ platform:
     urdf: null
     ros_parameters:
       platform_velocity_controller:
+        cmd_vel_timeout: 60.0
         linear.x.max_velocity": 1.0
         linear.x.min_velocity": -1.0
         linear.x.max_acceleration": 3.0
@@ -75,21 +77,17 @@ sensors:
           pointcloud.enable: true  
   gps: []
   imu: []
-  lidar2d: []
-  lidar3d:
-    - model: velodyne_lidar
+  lidar2d:
+    - model: hokuyo_ust
       urdf_enabled: true
-      launch_enabled: false
+      launch_enabled: true
       parent: base_link
       xyz: [0.0, 0.0, 0.0]
       rpy: [0.0, 0.0, 0.0]
       ros_parameters:
-        velodyne_driver_node:
-          frame_id: lidar3d_0_laser
-          device_ip: 192.168.7.66
-          port: 2368
-          model: VLP16
-        velodyne_transform_node:
-          model: VLP16
-          fixed_frame: lidar3d_0_laser
-          target_frame: lidar3d_0_laser
+        urg_node:
+          laser_frame_id: lidar2d_0_laser
+          ip_address: 192.168.131.20
+          ip_port: 10940
+          angle_min: -3.141592653589793
+          angle_max: 3.141592653589793

@@ -78,7 +78,21 @@ class UavSpawner : public gz::gui::Plugin
 
   protected: void LoadConfig(const tinyxml2::XMLElement *_pluginElem) override;
 
-  private: bool GenerateSdf(QString &_sdf, QString &_error) const;
+  private: bool GenerateRobotSdf(
+      const QString &_name,
+      QString &_sdf,
+      QString &_error) const;
+  private: bool GenerateDetachedCameraSdf(
+      const QString &_uavName,
+      QString &_sdf,
+      QString &_error) const;
+  private: bool GenerateSdf(
+      const QString &_name,
+      const QString &_robotName,
+      bool _withCamera,
+      bool _gimbal,
+      QString &_sdf,
+      QString &_error) const;
   private: bool RequestRemove(const std::string &_name, QString &_error) const;
   private: bool RequestSpawn(
       const QString &_sdf,
@@ -91,6 +105,7 @@ class UavSpawner : public gz::gui::Plugin
       const std::string &_packageName,
       const std::string &_executableName,
       QString &_error) const;
+  private: std::string CameraModelName(const std::string &_uavName) const;
   private: std::tuple<int, int, int> GridCellForIndex(int _index) const;
   private: gz::math::Pose3d SpawnPoseForIndex(int _index) const;
   private: void NotifyPlacementChanged();
@@ -111,6 +126,7 @@ class UavSpawner : public gz::gui::Plugin
   private: int nextIndex_{0};
   private: std::string robotType_{"m100"};
   private: bool withCamera_{true};
+  private: bool detachedCamera_{false};
   private: bool modelStatic_{true};
   private: bool allowRenaming_{false};
   private: bool bridgeCamera_{true};
@@ -127,6 +143,7 @@ class UavSpawner : public gz::gui::Plugin
   private: bool busy_{false};
   private: std::unique_ptr<QProcess> setPoseBridgeProcess_;
   private: std::vector<std::string> spawnedUavNames_;
+  private: std::vector<std::string> spawnedCameraNames_;
   private: std::vector<CameraBridgeProcess> cameraBridgeProcesses_;
 };
 

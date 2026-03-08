@@ -43,7 +43,6 @@ ros2 launch lrs_halmstad run_round_follow_motion.launch.py
 ```
 - Motion-only sequence (UAV sweep then UGV motion):
 ```bash
-ros2 launch lrs_halmstad run_round_motion.launch.py
 ```
 
 4. Start OMNeT pose bridge (TCP pose snapshots from ROS odom topics):
@@ -112,12 +111,9 @@ Movement and follow orchestration
 ---------------------------------
 Motion-only launch:
 ```bash
-ros2 launch lrs_halmstad run_round_motion.launch.py \
   world:=orchard uav_name:=dji0 ugv_cmd_topic:=/a201_0000/cmd_vel
 ```
 
-`run_round_motion.launch.py` arguments:
-- `params_file:=<yaml>` (default `config/run_round_motion_defaults.yaml`)
 - `world:=<world>` (default `orchard`)
 - `uav_name:=<uav_name>` (default `dji0`)
 - `ugv_cmd_topic:=<topic>` (default `/a201_0000/cmd_vel`)
@@ -133,7 +129,7 @@ YOLO estimate mode (UAV follows UGV estimate from camera detections):
 ```bash
 ros2 launch lrs_halmstad run_round_follow_motion.launch.py \
   world:=orchard uav_name:=dji0 leader_mode:=estimate \
-  yolo_weights:=$HOME/halmstad_ws/models/yolov5n.pt yolo_device:=cpu
+  yolo_weights:=detection/yolo5/yolov5n.pt yolo_device:=cpu
 ```
 
 `run_round_follow_motion.launch.py` arguments:
@@ -149,7 +145,7 @@ ros2 launch lrs_halmstad run_round_follow_motion.launch.py \
 - `leader_camera_info_topic:=<topic>` (default `/<uav_name>/camera0/camera_info`)
 - `leader_depth_topic:=<topic>` (default empty / disabled)
 - `leader_uav_pose_topic:=<topic>` (default `/<uav_name>/pose_cmd`)
-- `yolo_weights:=<weights.pt>` (default `/home/ruben/halmstad_ws/models/yolov5n.pt`)
+- `yolo_weights:=<weights.pt>` (relative paths resolve under `/home/ruben/halmstad_ws/models`, for example `detection/yolo5/yolov5n.pt`)
 - `yolo_device:=cpu|cuda` (default `cpu`)
 - `event_topic:=<topic>` (default `/coord/events`)
 - `ugv_start_delay_s:=<seconds>` (default `0.0`; readiness gate handles startup)

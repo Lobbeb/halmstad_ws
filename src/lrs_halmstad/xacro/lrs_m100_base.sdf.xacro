@@ -11,7 +11,7 @@
       <link name="${base_link_name}">
              <pose rotation_format="euler_rpy" degrees="true">0 0 0 0 0 0</pose>        
             <visual name="visual">
-                <origin xyz="0 0 0" rpy="0 0 0"/>
+                <pose>0 0 0 0 0 0</pose>
                 <geometry>
 	          <mesh>
                     <uri>model://matrice_100/meshes/lrs_m100.dae</uri>
@@ -23,7 +23,7 @@
            
 
             <collision name="collision">
-                <origin xyz="0 0 0" rpy="0 0 0"/>
+                <pose>0 0 0 0 0 0</pose>
                 <geometry>
 	          <mesh>
                     <uri>model://matrice_100/meshes/lrs_m100.stl</uri>

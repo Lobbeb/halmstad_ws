@@ -5,9 +5,10 @@
   <xacro:arg name="camera_name" default="camera0"/>
   <xacro:arg name="robot_name" default="dji0"/>
   <xacro:arg name="robot_type" default="laser"/>
+  <xacro:arg name="model_static" default="false"/>
 
   <model name="$(arg robot_name)_$(arg camera_name)">  
-    <static>true</static>
+    <static>$(arg model_static)</static>
     
 
     <xacro:arg name="base_link_frame" default="base_link"/>
@@ -17,10 +18,13 @@
 
     <xacro:arg name="camera_image_width" default="1024"/>
     <xacro:arg name="camera_image_height" default="600"/>
-    <xacro:arg name="camera_update_rate" default="30"/>
-    <xacro:arg name="camera_hfov" default="71"/>
-    <xacro:arg name="camera_far_clip" default="100"/>
-    <xacro:arg name="camera_topic" default="image_raw"/>
+  <xacro:arg name="camera_update_rate" default="30"/>
+  <xacro:arg name="camera_hfov" default="94"/>
+  <xacro:arg name="camera_far_clip" default="100"/>
+  <xacro:arg name="camera_topic" default="image_raw"/>
+  <xacro:arg name="camera_sensor_roll_deg" default="0.0"/>
+  <xacro:arg name="camera_sensor_pitch_deg" default="0.0"/>
+  <xacro:arg name="camera_sensor_yaw_deg" default="0.0"/>
 
     <xacro:property name="prop_type" value="$(arg robot_type)"/>
     
@@ -48,8 +52,10 @@
                              far_clip="$(arg camera_far_clip)"
                              robot_type="$(arg robot_type)"
                              robot_name="$(arg robot_name)"
+                             sensor_roll_offset="$(arg camera_sensor_roll_deg)"
+                             sensor_pitch_offset="$(arg camera_sensor_pitch_deg)"
+                             sensor_yaw_offset="$(arg camera_sensor_yaw_deg)"
                              im_format="R8G8B8" />
     
 </model>
 </sdf>
-

@@ -54,5 +54,6 @@ EOF
 # local archives
 *.zip
 
-# local ML weights (keep in drive, not repo)
-models/
+# local ML weights and datasets (keep in drive, not repo)
+/models
+/datasets

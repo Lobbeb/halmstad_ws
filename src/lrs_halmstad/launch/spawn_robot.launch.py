@@ -59,6 +59,11 @@ def generate_launch_description():
         default_value="true",
         description='Bridge gimbal joint command topic(s) between ROS and Gazebo'
     )
+    camera_pitch_offset_deg_arg = DeclareLaunchArgument(
+        name='camera_pitch_offset_deg',
+        default_value="45.0",
+        description='Attached camera mount pitch offset in degrees',
+    )
     camera_name_arg = DeclareLaunchArgument(name='camera_name', default_value="camera0",
                                             description='Attached camera name')
 
@@ -107,6 +112,7 @@ def generate_launch_description():
                     " -p robot:=True",
                     " -p with_camera:=", with_camera_for_mode,
                     " -p model_static:=", model_static_for_mode,
+                    " -p camera_pitch_offset_deg:=", LaunchConfiguration('camera_pitch_offset_deg'),
                     " -p camera_name:=", LaunchConfiguration('camera_name')
                 ]),
                 '-x', LaunchConfiguration('x'),
@@ -168,6 +174,7 @@ def generate_launch_description():
         with_camera_arg,
         bridge_camera_arg,
         bridge_gimbal_arg,
+        camera_pitch_offset_deg_arg,
         camera_name_arg,
         model_arg,
         world_arg,        

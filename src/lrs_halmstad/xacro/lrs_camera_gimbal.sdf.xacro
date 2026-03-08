@@ -6,18 +6,36 @@
 
 
     <xacro:macro name="lrs_camera_gimbal"
-                 params="name parent_link link_name image_topic camera_info_topic frame_id update_rate im_width im_height im_format hfov_deg far_clip robot_type robot_name x_offset:=0.0 y_offset:=0.0 z_offset:=0.0 pitch_offset:=0.0 yaw_offset:=0.0">
+                 params="name parent_link link_name image_topic camera_info_topic frame_id update_rate im_width im_height im_format hfov_deg far_clip robot_type robot_name x_offset:=0.0 y_offset:=0.0 z_offset:=0.0 pitch_offset:=0.0 yaw_offset:=0.0 sensor_roll_offset:=0.0 sensor_pitch_offset:=0.0 sensor_yaw_offset:=0.0">
 
       <link name="${link_name}">
          <pose rotation_format="euler_rpy" degrees="true">${x_offset} ${y_offset} ${z_offset} 0 ${pitch_offset} ${yaw_offset}</pose>
+            <gravity>false</gravity>
+            <kinematic>true</kinematic>
+            <inertial>
+                <mass>0.01</mass>
+                <inertia>
+                    <ixx>1.0e-4</ixx>
+                    <ixy>0.0</ixy>
+                    <ixz>0.0</ixz>
+                    <iyy>1.0e-4</iyy>
+                    <iyz>0.0</iyz>
+                    <izz>1.0e-4</izz>
+                </inertia>
+            </inertial>
             <visual name="visual">
-                <origin xyz="0 0 0.0" rpy="0 0 0"/>
+                <pose>0 0 0 0 0 0</pose>
                 <geometry>
 	          <mesh>
-                    <uri>model://zenmuse_z3/meshes/zenmuse_z3.dae</uri>
+                    <uri>model://zenmuse_z3/meshes/zenmuse_z3.stl</uri>
                     <scale>1.0 1.0 1.0</scale>
                   </mesh>
                 </geometry>
+                <material>
+                    <ambient>0.25 0.25 0.25 1.0</ambient>
+                    <diffuse>0.45 0.45 0.45 1.0</diffuse>
+                    <specular>0.05 0.05 0.05 1.0</specular>
+                </material>
             </visual>
             <!-- collision name="collision">
                 <origin xyz="0 0 0" rpy="0 0 0"/>
@@ -45,7 +63,7 @@
                 <camera>
                     <!-- <pose>0.027 0 -0.027 0 1.57 0</pose> -->
                     <!-- <pose>0.027 0 -0.027 0 1.57 0</pose> -->
-                    <pose>0.027 0 -0.027 0 0 0</pose>
+                    <pose rotation_format="euler_rpy" degrees="true">0.027 0 -0.027 ${sensor_roll_offset} ${sensor_pitch_offset} ${sensor_yaw_offset}</pose>
                     <horizontal_fov>${hfov_deg * M_PI/180.0}</horizontal_fov>
                     <image>
                         <format>${im_format}</format>
@@ -61,7 +79,6 @@
                 <always_on>1</always_on>
                 <visualize>true</visualize>
                 <topic>${image_topic}</topic>
-                <ignition_frame_id>${frame_id}</ignition_frame_id>
             </sensor>
         </link>
             

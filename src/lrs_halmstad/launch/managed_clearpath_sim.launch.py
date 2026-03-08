@@ -19,6 +19,18 @@ def _gazebo_world_name(world_sub):
     ])
 
 
+def _default_world_pose(world_sub, solar_farm_value: str, default_value: str):
+    return PythonExpression([
+        "'",
+        solar_farm_value,
+        "' if '",
+        world_sub,
+        "' == 'solar_farm' else '",
+        default_value,
+        "'",
+    ])
+
+
 ARGUMENTS = [
     DeclareLaunchArgument(
         'rviz',
@@ -35,7 +47,6 @@ ARGUMENTS = [
     DeclareLaunchArgument(
         'world',
         default_value='orchard',
-        choices=['construction', 'office', 'orchard', 'pipeline', 'solar_farm', 'warehouse'],
         description='Gazebo World',
     ),
     DeclareLaunchArgument(
@@ -58,10 +69,15 @@ ARGUMENTS = [
 ]
 
 for pose_element in ['x', 'y', 'yaw']:
+    default_value = '0.0'
+    if pose_element == 'x':
+        default_value = _default_world_pose(LaunchConfiguration('world'), '-60.0', '0.0')
+    elif pose_element == 'y':
+        default_value = _default_world_pose(LaunchConfiguration('world'), '8.0', '0.0')
     ARGUMENTS.append(
         DeclareLaunchArgument(
             pose_element,
-            default_value='0.0',
+            default_value=default_value,
             description=f'{pose_element} component of the robot pose.',
         )
     )
@@ -78,6 +94,7 @@ ARGUMENTS.append(
 def _gz_launch(context, *args, **kwargs):
     pkg_lrs_halmstad = get_package_share_directory('lrs_halmstad')
     pkg_ros_gz_sim = get_package_share_directory('ros_gz_sim')
+    world_name = LaunchConfiguration('world').perform(context)
 
     gz_sim_launch = PathJoinSubstitution([pkg_ros_gz_sim, 'launch', 'gz_sim.launch.py'])
     gui_config_path = os.path.join(pkg_lrs_halmstad, 'config', 'gui.config')
@@ -113,9 +130,13 @@ def _gz_launch(context, *args, **kwargs):
 
 def generate_launch_description():
     pkg_clearpath_gz = get_package_share_directory('clearpath_gz')
+    pkg_lrs_halmstad = get_package_share_directory('lrs_halmstad')
     pkg_gui_plugins_prefix = get_package_prefix('lrs_halmstad_gui_plugins')
     robot_spawn_launch = PathJoinSubstitution([pkg_clearpath_gz, 'launch', 'robot_spawn.launch.py'])
-
+    pkg_share_root = os.path.dirname(pkg_lrs_halmstad)
+    source_lrs_halmstad = os.path.join(os.path.expanduser('~'), 'halmstad_ws', 'src', 'lrs_halmstad')
+    source_models_dir = os.path.join(source_lrs_halmstad, 'models')
+    source_worlds_dir = os.path.join(source_lrs_halmstad, 'worlds')
     ament_prefix_path = os.getenv('AMENT_PREFIX_PATH', '')
     packages_paths = [
         os.path.join(prefix, 'share')
@@ -126,6 +147,11 @@ def generate_launch_description():
     gz_sim_resource_path = SetEnvironmentVariable(
         name='GZ_SIM_RESOURCE_PATH',
         value=[
+            source_models_dir + ':',
+            source_worlds_dir + ':',
+            pkg_share_root + ':',
+            os.path.join(pkg_lrs_halmstad, 'models') + ':',
+            os.path.join(pkg_lrs_halmstad, 'worlds') + ':',
             os.path.join(pkg_clearpath_gz, 'worlds') + ':',
             os.path.join(pkg_clearpath_gz, 'meshes') + ':',
             ':' + ':'.join(packages_paths),
@@ -144,6 +170,22 @@ def generate_launch_description():
     gazebo_world_name = SetEnvironmentVariable(
         name='LRS_GAZEBO_WORLD',
         value=_gazebo_world_name(LaunchConfiguration('world')),
+    )
+    ugv_spawn_x = SetEnvironmentVariable(
+        name='LRS_UGV_SPAWN_X',
+        value=LaunchConfiguration('x'),
+    )
+    ugv_spawn_y = SetEnvironmentVariable(
+        name='LRS_UGV_SPAWN_Y',
+        value=LaunchConfiguration('y'),
+    )
+    ugv_spawn_z = SetEnvironmentVariable(
+        name='LRS_UGV_SPAWN_Z',
+        value=LaunchConfiguration('z'),
+    )
+    ugv_spawn_yaw = SetEnvironmentVariable(
+        name='LRS_UGV_SPAWN_YAW',
+        value=LaunchConfiguration('yaw'),
     )
 
     clock_bridge = Node(
@@ -172,6 +214,10 @@ def generate_launch_description():
     ld.add_action(gz_sim_resource_path)
     ld.add_action(gz_gui_plugin_path)
     ld.add_action(gazebo_world_name)
+    ld.add_action(ugv_spawn_x)
+    ld.add_action(ugv_spawn_y)
+    ld.add_action(ugv_spawn_z)
+    ld.add_action(ugv_spawn_yaw)
     ld.add_action(OpaqueFunction(function=_gz_launch))
     ld.add_action(clock_bridge)
     ld.add_action(robot_spawn)

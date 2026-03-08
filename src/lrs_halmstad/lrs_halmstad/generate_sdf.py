@@ -1,6 +1,7 @@
 import sys
 import rclpy
 from rclpy.node import Node
+from rcl_interfaces.msg import ParameterDescriptor
 import xacro
 from ament_index_python.packages import get_package_share_path
 
@@ -44,6 +45,15 @@ class GenSdf(Node):
 
         self.declare_parameter("camera_update_rate", 30)
         self.camera_update_rate = self.get_parameter('camera_update_rate').get_parameter_value().integer_value
+        numeric_param = ParameterDescriptor(dynamic_typing=True)
+        self.declare_parameter("camera_pitch_offset_deg", 45.0, numeric_param)
+        self.camera_pitch_offset_deg = float(self.get_parameter('camera_pitch_offset_deg').value)
+        self.declare_parameter("camera_sensor_roll_deg", 0.0, numeric_param)
+        self.camera_sensor_roll_deg = float(self.get_parameter('camera_sensor_roll_deg').value)
+        self.declare_parameter("camera_sensor_pitch_deg", 0.0, numeric_param)
+        self.camera_sensor_pitch_deg = float(self.get_parameter('camera_sensor_pitch_deg').value)
+        self.declare_parameter("camera_sensor_yaw_deg", 0.0, numeric_param)
+        self.camera_sensor_yaw_deg = float(self.get_parameter('camera_sensor_yaw_deg').value)
         
         self.declare_parameter("laser_update_rate", 10)
         self.laser_update_rate = self.get_parameter('laser_update_rate').get_parameter_value().integer_value
@@ -55,6 +65,15 @@ class GenSdf(Node):
         #self.get_logger().error(f'GenSdf: {self.xacro_file}')
         #self.get_logger().error(f'GenSdf: {self.with_camera}')
 
+    def _strip_detached_camera_visuals(self, doc):
+        if not self.gimbal:
+            return doc
+        visuals = list(doc.getElementsByTagName('visual'))
+        for visual in visuals:
+            parent = visual.parentNode
+            if parent is not None:
+                parent.removeChild(visual)
+        return doc
 
     def process(self):
         res = "dummmy"
@@ -79,6 +98,7 @@ class GenSdf(Node):
             mappings["robot_name"] = self.name
             mappings["camera_name"] = self.camera_name
             mappings["model_static"] = "true" if self.model_static else "false"
+            mappings["camera_pitch_offset"] = f'{self.camera_pitch_offset_deg}'
             if self.with_camera:
                 mappings["with_camera"] = "true"
             else:
@@ -90,8 +110,12 @@ class GenSdf(Node):
         if self.gimbal:
             mappings["camera_name"] = self.camera_name
             mappings["robot_name"] = self.robot_name
+            mappings["model_static"] = "false"
             mappings["camera_far_clip"] = "900"
             mappings["camera_update_rate"] = f'{self.camera_update_rate}'
+            mappings["camera_sensor_roll_deg"] = f'{self.camera_sensor_roll_deg}'
+            mappings["camera_sensor_pitch_deg"] = f'{self.camera_sensor_pitch_deg}'
+            mappings["camera_sensor_yaw_deg"] = f'{self.camera_sensor_yaw_deg}'
 
         if self.laser:
             mappings["laser_name"] = self.laser_name
@@ -108,6 +132,8 @@ class GenSdf(Node):
             print("ACROFILE:", self.xacro_file, mappings)
             print("Exception:", ex, type(ex))
             sys.exit(1)
+
+        doc = self._strip_detached_camera_visuals(doc)
         
         res = doc.toprettyxml(indent='  ')
         # self.get_logger().error(f'SDF: {res}')                                

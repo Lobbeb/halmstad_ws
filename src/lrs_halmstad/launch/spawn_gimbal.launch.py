@@ -1,19 +1,11 @@
 import os
-#import logging
-#logging.root.setLevel(logging.DEBUG)
-from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument, RegisterEventHandler
-from launch.event_handlers import OnProcessExit
-from launch_ros.actions import Node
-from launch.substitutions import ThisLaunchFileDir, LaunchConfiguration
-from ament_index_python.packages import get_package_share_directory, get_package_prefix
-from launch.substitutions import Command, LaunchConfiguration, PythonExpression
-from launch_ros.parameter_descriptions import ParameterValue
-from ament_index_python.packages import get_package_share_path
 
-#from lrs_util import XacroContents
-import launch_ros
-#import xacro
+from launch import LaunchDescription
+from launch.actions import DeclareLaunchArgument
+from launch.conditions import IfCondition
+from launch.substitutions import Command, LaunchConfiguration, PythonExpression
+from launch_ros.actions import Node
+from ament_index_python.packages import get_package_prefix, get_package_share_path
 
 
 def _gazebo_world_name(world_sub):
@@ -25,36 +17,52 @@ def _gazebo_world_name(world_sub):
         "'",
     ])
 
-def generate_launch_description():
-    urdf_path = get_package_share_path('lrs_halmstad') / 'urdf'
-    sdf_path = get_package_share_path('lrs_halmstad') / 'sdf'
-    default_urdf_model_path = urdf_path / 'lrs_piraya.urdf.xacro'
-    default_sdf_model_path = sdf_path / 'lrs_piraya.sdf'
 
-    world_arg = DeclareLaunchArgument(name='world', default_value='granso',
+def generate_launch_description():
+    xacro_path = get_package_share_path('lrs_halmstad') / 'xacro'
+    default_xacro_file = xacro_path / 'lrs_gimbal.xacro'
+
+    world_arg = DeclareLaunchArgument(name='world', default_value='orchard',
                                       description='World to spawn in')
-    
-    name_arg = DeclareLaunchArgument(name='name', default_value='piraya0',
+
+    name_arg = DeclareLaunchArgument(name='name', default_value='dji0',
                                      description='Name of model')
-    
+
     camera_name_arg = DeclareLaunchArgument(name='camera_name', default_value='camera0',
                                             description='Name of camera')
-    
-    model_arg = DeclareLaunchArgument(name='model', default_value=str(default_sdf_model_path),
-                                      description='Absolute path to robot file')
 
-    type_arg = DeclareLaunchArgument(name='type', default_value="piraya",
+    type_arg = DeclareLaunchArgument(name='type', default_value="m100",
                                      description='Type of model')
+
+    xacro_file_arg = DeclareLaunchArgument(
+        name='xacro_file',
+        default_value=str(default_xacro_file),
+        description='Absolute path to detached camera xacro file',
+    )
 
     camera_update_rate_arg = DeclareLaunchArgument(name='camera_update_rate', default_value="30",
                                                    description='Camera update rate')
+    camera_sensor_roll_deg_arg = DeclareLaunchArgument(
+        name='camera_sensor_roll_deg',
+        default_value='0.0',
+        description='Detached camera sensor roll offset in degrees',
+    )
+    camera_sensor_pitch_deg_arg = DeclareLaunchArgument(
+        name='camera_sensor_pitch_deg',
+        default_value='0.0',
+        description='Detached camera sensor pitch offset in degrees',
+    )
+    camera_sensor_yaw_deg_arg = DeclareLaunchArgument(
+        name='camera_sensor_yaw_deg',
+        default_value='0.0',
+        description='Detached camera sensor yaw offset in degrees',
+    )
+    bridge_camera_arg = DeclareLaunchArgument(
+        name='bridge_camera',
+        default_value='true',
+        description='Bridge detached camera image_raw and camera_info topics to ROS',
+    )
 
-    x = LaunchConfiguration('x')
-    y = LaunchConfiguration('y')
-    z = LaunchConfiguration('z')
-    R = LaunchConfiguration('R')
-    P = LaunchConfiguration('P')
-    Y = LaunchConfiguration('Y')
     gz_world = _gazebo_world_name(LaunchConfiguration('world'))
     generate_sdf_exe = os.path.join(
         get_package_prefix('lrs_halmstad'),
@@ -71,10 +79,18 @@ def generate_launch_description():
                 '-world', gz_world,
                 '-name', [LaunchConfiguration('name'), "_", LaunchConfiguration('camera_name')],
                 '-robot_namespace', LaunchConfiguration('name'),
-#                '-topic', ['/', LaunchConfiguration('name'), '/robot_description']
-#                '-file', LaunchConfiguration('model'),
-#                '-file', "/tmp/gen.sdf",
-                '-string', Command([generate_sdf_exe, " ", "--ros-args", " -p type:=", LaunchConfiguration('type'), " -p robot_name:=", LaunchConfiguration('name'), " -p camera_name:=", LaunchConfiguration('camera_name'), " -p gimbal:=True", " -p camera_update_rate:=", LaunchConfiguration('camera_update_rate')]),
+                '-string', Command([
+                    generate_sdf_exe, " ", "--ros-args",
+                    " -p type:=", LaunchConfiguration('type'),
+                    " -p robot_name:=", LaunchConfiguration('name'),
+                    " -p camera_name:=", LaunchConfiguration('camera_name'),
+                    " -p xacro_file:=", LaunchConfiguration('xacro_file'),
+                    " -p gimbal:=True",
+                    " -p camera_update_rate:=", LaunchConfiguration('camera_update_rate'),
+                    " -p camera_sensor_roll_deg:=", LaunchConfiguration('camera_sensor_roll_deg'),
+                    " -p camera_sensor_pitch_deg:=", LaunchConfiguration('camera_sensor_pitch_deg'),
+                    " -p camera_sensor_yaw_deg:=", LaunchConfiguration('camera_sensor_yaw_deg'),
+                ]),
                 '-x', LaunchConfiguration('x'),
                 '-y', LaunchConfiguration('y'),
                 '-z', LaunchConfiguration('z'),
@@ -95,7 +111,12 @@ def generate_launch_description():
             ['/', LaunchConfiguration('name'), '/', LaunchConfiguration('camera_name'),
              '/camera_info@sensor_msgs/msg/CameraInfo@ignition.msgs.CameraInfo'],
         ],
-        output='screen'
+        output='screen',
+        condition=IfCondition(PythonExpression([
+            "'",
+            LaunchConfiguration('bridge_camera'),
+            "'.lower() in ('1','true','yes','on')",
+        ])),
     )
     
 
@@ -108,11 +129,15 @@ def generate_launch_description():
         DeclareLaunchArgument('Y', default_value="0.0"),
 
         type_arg,
-        model_arg,
+        xacro_file_arg,
         world_arg,        
         name_arg,
         camera_name_arg,
         camera_update_rate_arg,
+        camera_sensor_roll_deg_arg,
+        camera_sensor_pitch_deg_arg,
+        camera_sensor_yaw_deg_arg,
+        bridge_camera_arg,
         spawn_node,
         bridge
     ])

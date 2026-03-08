@@ -109,12 +109,12 @@ Visualization Manager:
           Alpha: 1
           Show Axes: false
           Show Trail: false
-        lidar3d_0_laser:
+        lidar2d_0_laser:
           Alpha: 1
           Show Axes: false
           Show Trail: false
           Value: true
-        lidar3d_0_link:
+        lidar2d_0_link:
           Alpha: 1
           Show Axes: false
           Show Trail: false
@@ -184,7 +184,7 @@ Visualization Manager:
       Frame Timeout: 15
       Frames:
         All Enabled: true
-        a201_0000/robot/base_link/lidar3d_0:
+        a201_0000/robot/base_link/lidar2d_0:
           Value: true
         base_footprint:
           Value: true
@@ -208,9 +208,9 @@ Visualization Manager:
           Value: true
         inertial_link:
           Value: true
-        lidar3d_0_laser:
+        lidar2d_0_laser:
           Value: true
-        lidar3d_0_link:
+        lidar2d_0_link:
           Value: true
         odom:
           Value: true
@@ -268,10 +268,10 @@ Visualization Manager:
               {}
             inertial_link:
               {}
-            lidar3d_0_link:
-              a201_0000/robot/base_link/lidar3d_0:
+            lidar2d_0_link:
+              a201_0000/robot/base_link/lidar2d_0:
                 {}
-              lidar3d_0_laser:
+              lidar2d_0_laser:
                 {}
             rear_bumper_mount:
               rear_bumper_base_link:
@@ -300,7 +300,7 @@ Visualization Manager:
       Value: false
       Visibility:
         Grid: true
-        PointCloud2: true
+        LaserScan: true
         RobotModel: true
         TF: true
         Value: true
@@ -313,7 +313,7 @@ Visualization Manager:
         Value: true
       Axis: Z
       Channel Name: intensity
-      Class: rviz_default_plugins/PointCloud2
+      Class: rviz_default_plugins/LaserScan
       Color: 255; 255; 255
       Color Transformer: Intensity
       Decay Time: 0
@@ -323,18 +323,19 @@ Visualization Manager:
       Max Intensity: 0
       Min Color: 0; 0; 0
       Min Intensity: 0
-      Name: PointCloud2
+      Name: LaserScan
       Position Transformer: XYZ
       Selectable: true
       Size (Pixels): 3
-      Size (m): 0.009999999776482582
+      Size (m): 0.05000000074505806
       Style: Flat Squares
       Topic:
         Depth: 5
         Durability Policy: Volatile
+        Filter size: 10
         History Policy: Keep Last
-        Reliability Policy: Reliable
-        Value: /a201_0000/sensors/lidar3d_0/points
+        Reliability Policy: Best Effort
+        Value: /a201_0000/sensors/lidar2d_0/scan
       Use Fixed Frame: true
       Use rainbow: true
       Value: true
