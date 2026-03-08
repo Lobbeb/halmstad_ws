@@ -155,7 +155,7 @@ def generate_launch_description():
     )
     ugv_odom_topic_arg = DeclareLaunchArgument(
         'ugv_odom_topic',
-        default_value=['/', LaunchConfiguration('ugv_namespace'), '/platform/odom'],
+        default_value=['/', LaunchConfiguration('ugv_namespace'), '/platform/odom/filtered'],
     )
     leader_image_topic_arg = DeclareLaunchArgument('leader_image_topic', default_value=['/', LaunchConfiguration('uav_name'), '/camera0/image_raw'])
     leader_camera_info_topic_arg = DeclareLaunchArgument('leader_camera_info_topic', default_value=['/', LaunchConfiguration('uav_name'), '/camera0/camera_info'])
