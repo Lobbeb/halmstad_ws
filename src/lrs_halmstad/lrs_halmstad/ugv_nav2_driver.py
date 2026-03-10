@@ -19,6 +19,7 @@ from rclpy.action import ActionClient
 from rclpy.node import Node
 from rclpy.qos import QoSDurabilityPolicy, QoSHistoryPolicy, QoSProfile, QoSReliabilityPolicy
 
+from .follow_math import coerce_bool
 from .ugv_motion_profile import (
     MotionProfileConfig,
     MotionWaypoint,
@@ -112,14 +113,14 @@ class UgvNav2Driver(Node):
         self.turn_speed = float(self.get_parameter("turn_speed").value)
         self.turn_time_s = float(self.get_parameter("turn_time_s").value)
         self.cycles = max(0, int(self.get_parameter("cycles").value))
-        self.variation_enable = bool(self.get_parameter("variation_enable").value)
+        self.variation_enable = coerce_bool(self.get_parameter("variation_enable").value)
         self.variation_amplitude = float(self.get_parameter("variation_amplitude").value)
         self.pause_every_n = max(0, int(self.get_parameter("pause_every_n").value))
         self.pause_time_s = max(0.0, float(self.get_parameter("pause_time_s").value))
 
         self.pose_topic = str(self.get_parameter("pose_topic").value)
         self.pose_topic_type = str(self.get_parameter("pose_topic_type").value).strip().lower()
-        self.set_initial_pose_enable = bool(self.get_parameter("set_initial_pose_enable").value)
+        self.set_initial_pose_enable = coerce_bool(self.get_parameter("set_initial_pose_enable").value)
         self.initial_pose_topic = str(self.get_parameter("initial_pose_topic").value)
         self.initial_pose_frame_id = str(self.get_parameter("initial_pose_frame_id").value)
         self.initial_pose_x = float(self.get_parameter("initial_pose_x").value)
@@ -139,9 +140,9 @@ class UgvNav2Driver(Node):
         self.goal_reject_retry_delay_s = max(0.0, float(self.get_parameter("goal_reject_retry_delay_s").value))
         self.goal_sequence_csv = str(self.get_parameter("goal_sequence_csv").value).strip()
         self.goal_sequence_file = str(self.get_parameter("goal_sequence_file").value).strip()
-        self.goal_sequence_randomize = bool(self.get_parameter("goal_sequence_randomize").value)
-        self.goal_sequence_random_reverse = bool(self.get_parameter("goal_sequence_random_reverse").value)
-        self.goal_sequence_relative_to_current_pose = bool(
+        self.goal_sequence_randomize = coerce_bool(self.get_parameter("goal_sequence_randomize").value)
+        self.goal_sequence_random_reverse = coerce_bool(self.get_parameter("goal_sequence_random_reverse").value)
+        self.goal_sequence_relative_to_current_pose = coerce_bool(
             self.get_parameter("goal_sequence_relative_to_current_pose").value
         )
         self.goal_sequence_seed = int(self.get_parameter("goal_sequence_seed").value)
@@ -151,7 +152,7 @@ class UgvNav2Driver(Node):
         self.path_topic = str(self.get_parameter("path_topic").value)
         self.min_goal_xy_delta_m = max(0.0, float(self.get_parameter("min_goal_xy_delta_m").value))
         self.min_goal_yaw_delta_rad = math.radians(max(0.0, float(self.get_parameter("min_goal_yaw_delta_deg").value)))
-        self.continue_on_goal_failure = bool(self.get_parameter("continue_on_goal_failure").value)
+        self.continue_on_goal_failure = coerce_bool(self.get_parameter("continue_on_goal_failure").value)
 
         self._latest_pose: Optional[Pose2DState] = None
         self._active_goal_handle = None

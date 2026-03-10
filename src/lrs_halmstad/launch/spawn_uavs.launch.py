@@ -22,31 +22,7 @@ def _gazebo_world_name(world_sub):
     ])
 
 
-def _default_uav_coord(world_sub, solar_farm_value: str, default_value: str):
-    return PythonExpression([
-        "'",
-        solar_farm_value,
-        "' if '",
-        world_sub,
-        "' == 'solar_farm' else '",
-        default_value,
-        "'",
-    ])
-
-
-def _default_uav_alt(world_sub, solar_farm_value: str, default_value: str):
-    return PythonExpression([
-        "'",
-        solar_farm_value,
-        "' if '",
-        world_sub,
-        "' == 'solar_farm' else '",
-        default_value,
-        "'",
-    ])
-
-
-world_arg = DeclareLaunchArgument('world', default_value='orchard',
+world_arg = DeclareLaunchArgument('world', default_value='warehouse',
                       description='Gazebo World')
 uav_mode_arg = DeclareLaunchArgument('uav_mode', default_value='teleport',
                       description='UAV mode: teleport (deterministic) or physics')
@@ -83,9 +59,9 @@ def generate_launch_description():
                           "uav_mode": LaunchConfiguration('uav_mode'),
                           "with_camera": with_camera_for_uav,
                           "camera_name": "camera0",
-                          "x": _default_uav_coord(LaunchConfiguration('world'), '-62.0', '0.0'),
-                          "y": _default_uav_coord(LaunchConfiguration('world'), '8.0', '0.0'),
-                          "z": _default_uav_alt(LaunchConfiguration('world'), '5.0', '2.27'),
+                          "x": '0.0',
+                          "y": '0.0',
+                          "z": '2.27',
                           "world": LaunchConfiguration('world')
                           }.items(),
     )
@@ -101,9 +77,9 @@ def generate_launch_description():
                           "uav_mode": LaunchConfiguration('uav_mode'),
                           "with_camera": with_camera_for_uav,
                           "camera_name": "camera0",
-                          "x": _default_uav_coord(LaunchConfiguration('world'), '-60.0', '0.0'),
-                          "y": _default_uav_coord(LaunchConfiguration('world'), '8.0', '0.0'),
-                          "z": _default_uav_alt(LaunchConfiguration('world'), '6.0', '3.27'),
+                          "x": '0.0',
+                          "y": '0.0',
+                          "z": '3.27',
                           "world": LaunchConfiguration('world'),
                           }.items(),
     )
@@ -118,9 +94,9 @@ def generate_launch_description():
                           "uav_mode": LaunchConfiguration('uav_mode'),
                           "with_camera": with_camera_for_uav,
                           "camera_name": "camera0",
-                          "x": _default_uav_coord(LaunchConfiguration('world'), '-58.0', '0.0'),
-                          "y": _default_uav_coord(LaunchConfiguration('world'), '8.0', '0.0'),
-                          "z": _default_uav_alt(LaunchConfiguration('world'), '7.0', '4.27'),
+                          "x": '0.0',
+                          "y": '0.0',
+                          "z": '4.27',
                           "world": LaunchConfiguration('world'),
                           }.items(),
     )
@@ -134,9 +110,9 @@ def generate_launch_description():
                           "type": "m100",
                           "camera_name": "camera0",
                           "bridge_camera": "false",
-                          "x": _default_uav_coord(LaunchConfiguration('world'), '-62.0', '0.0'),
-                          "y": _default_uav_coord(LaunchConfiguration('world'), '8.0', '0.0'),
-                          "z": _default_uav_alt(LaunchConfiguration('world'), '5.0', '2.27'),
+                          "x": '0.0',
+                          "y": '0.0',
+                          "z": '2.27',
                           "world": LaunchConfiguration('world')}.items(),
         condition=IfCondition(use_detached_camera),
     )
@@ -150,9 +126,9 @@ def generate_launch_description():
                           "type": "m100",
                           "camera_name": "camera0",
                           "bridge_camera": "false",
-                          "x": _default_uav_coord(LaunchConfiguration('world'), '-60.0', '0.0'),
-                          "y": _default_uav_coord(LaunchConfiguration('world'), '8.0', '0.0'),
-                          "z": _default_uav_alt(LaunchConfiguration('world'), '6.0', '3.27'),
+                          "x": '0.0',
+                          "y": '0.0',
+                          "z": '3.27',
                           "world": LaunchConfiguration('world')}.items(),
         condition=IfCondition(use_detached_camera),
     )
@@ -166,9 +142,9 @@ def generate_launch_description():
                           "type": "m100",
                           "camera_name": "camera0",
                           "bridge_camera": "false",
-                          "x": _default_uav_coord(LaunchConfiguration('world'), '-58.0', '0.0'),
-                          "y": _default_uav_coord(LaunchConfiguration('world'), '8.0', '0.0'),
-                          "z": _default_uav_alt(LaunchConfiguration('world'), '7.0', '4.27'),
+                          "x": '0.0',
+                          "y": '0.0',
+                          "z": '4.27',
                           "world": LaunchConfiguration('world')}.items(),
         condition=IfCondition(use_detached_camera),
     )

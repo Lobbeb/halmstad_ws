@@ -51,7 +51,7 @@ set -u
 
 ros2 launch clearpath_nav2_demos localization.launch.py \
   use_sim_time:=true \
-  setup_path:=/home/ruben/clearpath \
+  setup_path:="$WS_ROOT/src/lrs_halmstad/clearpath" \
   scan_topic:=/a201_0000/sensors/lidar2d_0/scan \
   map:="$MAP_PATH" \
   "$@"

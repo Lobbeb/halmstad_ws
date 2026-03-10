@@ -19,7 +19,7 @@ def _gazebo_world_name(world_sub):
     ])
 
 
-world_arg = DeclareLaunchArgument('world', default_value='orchard',
+world_arg = DeclareLaunchArgument('world', default_value='warehouse',
                       description='Gazebo World')
 
 def generate_launch_description():

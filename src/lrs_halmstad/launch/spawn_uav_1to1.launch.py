@@ -19,45 +19,21 @@ def _gazebo_world_name(world_sub):
     ])
 
 
-def _default_uav_coord(world_sub, solar_farm_value: str, default_value: str):
-    return PythonExpression([
-        "'",
-        solar_farm_value,
-        "' if '",
-        world_sub,
-        "' == 'solar_farm' else '",
-        default_value,
-        "'",
-    ])
-
-
-def _default_uav_alt(world_sub, solar_farm_value: str, default_value: str):
-    return PythonExpression([
-        "'",
-        solar_farm_value,
-        "' if '",
-        world_sub,
-        "' == 'solar_farm' else '",
-        default_value,
-        "'",
-    ])
-
-
 def generate_launch_description():
-    world_arg = DeclareLaunchArgument('world', default_value='orchard')
+    world_arg = DeclareLaunchArgument('world', default_value='warehouse')
     uav_name_arg = DeclareLaunchArgument('uav_name', default_value='dji0')
     uav_mode_arg = DeclareLaunchArgument('uav_mode', default_value='teleport')
     x_arg = DeclareLaunchArgument(
         'x',
-        default_value=_default_uav_coord(LaunchConfiguration('world'), '-62.0', '-2.0'),
+        default_value='-2.0',
     )
     y_arg = DeclareLaunchArgument(
         'y',
-        default_value=_default_uav_coord(LaunchConfiguration('world'), '8.0', '0.0'),
+        default_value='0.0',
     )
     z_arg = DeclareLaunchArgument(
         'z',
-        default_value=_default_uav_alt(LaunchConfiguration('world'), '7.0', '7.0'),
+        default_value='7.0',
     )
     camera_name_arg = DeclareLaunchArgument('camera_name', default_value='camera0')
     uav_camera_mode_arg = DeclareLaunchArgument('uav_camera_mode', default_value='detached_model')

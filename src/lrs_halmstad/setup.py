@@ -88,8 +88,6 @@ setup(
             "simulator = lrs_halmstad.simulator:main",
             "clock_guard = lrs_halmstad.clock_guard:main",
             "sim_dataset_capture = lrs_halmstad.sim_dataset_capture:main",
-            "uav_setpose_sweep = lrs_halmstad.uav_setpose_sweep:main",
-            "ugv_motion_driver = lrs_halmstad.ugv_motion_driver:main",
             "ugv_nav2_driver = lrs_halmstad.ugv_nav2_driver:main",
             "ugv_nav2_goal_tester = lrs_halmstad.ugv_nav2_goal_tester:main",
               # optional later:

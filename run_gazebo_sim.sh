@@ -2,7 +2,7 @@
 set -euo pipefail
 
 WS_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-WORLD="${1:-orchard}"
+WORLD="${1:-warehouse}"
 GUI="${GUI:-true}"
 STATE_DIR="/tmp/halmstad_ws"
 SIM_PID_FILE="$STATE_DIR/gazebo_sim.pid"

@@ -6,9 +6,11 @@ import os
 import sys
 import time
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Optional, Tuple
 
 import rclpy
+from ament_index_python.packages import get_package_share_path
 from rclpy.node import Node
 from rclpy.qos import QoSDurabilityPolicy, QoSHistoryPolicy, QoSProfile, QoSReliabilityPolicy
 from rclpy.time import Time
@@ -19,6 +21,7 @@ from nav_msgs.msg import Odometry
 from sensor_msgs.msg import CameraInfo, Image
 from std_msgs.msg import String
 from rcl_interfaces.msg import ParameterDescriptor
+from lrs_halmstad.follow_math import coerce_bool
 
 try:
     import cv2  # type: ignore
@@ -57,6 +60,21 @@ class Detection2D:
     bbox: Tuple[float, float, float, float]
     cls_id: Optional[int] = None
     cls_name: str = ""
+
+
+def _default_models_root() -> str:
+    configured_root = os.environ.get("LRS_HALMSTAD_MODELS_ROOT", "").strip()
+    if configured_root:
+        return os.path.expanduser(configured_root)
+    try:
+        pkg_share = get_package_share_path("lrs_halmstad").resolve()
+        for parent in pkg_share.parents:
+            candidate = parent / "src" / "lrs_halmstad"
+            if candidate.is_dir():
+                return str(parent / "models")
+    except Exception:
+        pass
+    return str((Path(__file__).resolve().parents[3] / "models").resolve())
 
 
 def clamp01(x: float) -> float:
@@ -99,7 +117,8 @@ class LeaderEstimator(Node):
         self.declare_parameter("out_topic", "/coord/leader_estimate")
         self.declare_parameter("status_topic", "/coord/leader_estimate_status")
         self.declare_parameter("estimate_error_topic", "/coord/leader_estimate_error")
-        self.declare_parameter("leader_actual_pose_topic", "/a201_0000/platform/odom")
+        self.declare_parameter("leader_actual_pose_enable", True)
+        self.declare_parameter("leader_actual_pose_topic", "/a201_0000/amcl_pose_odom")
         self.declare_parameter("publish_status", True)
         self.declare_parameter("debug_image_topic", "/coord/leader_debug_image")
         self.declare_parameter("publish_debug_image", True)
@@ -113,7 +132,7 @@ class LeaderEstimator(Node):
 
         # YOLO and detection config
         self.declare_parameter("yolo_weights", "")
-        self.declare_parameter("models_root", "~/halmstad_ws/models")
+        self.declare_parameter("models_root", _default_models_root())
         self.declare_parameter("yolo_backend", "ultralytics")  # auto|ultralytics|yolov5
         self.declare_parameter("yolov5_repo_path", "")
         self.declare_parameter("device", "cpu")
@@ -176,12 +195,13 @@ class LeaderEstimator(Node):
         self.out_topic = str(self.get_parameter("out_topic").value)
         self.status_topic = str(self.get_parameter("status_topic").value)
         self.estimate_error_topic = str(self.get_parameter("estimate_error_topic").value)
+        self.leader_actual_pose_enable = coerce_bool(self.get_parameter("leader_actual_pose_enable").value)
         self.leader_actual_pose_topic = str(self.get_parameter("leader_actual_pose_topic").value)
-        self.publish_status = bool(self.get_parameter("publish_status").value)
+        self.publish_status = coerce_bool(self.get_parameter("publish_status").value)
         self.debug_image_topic = str(self.get_parameter("debug_image_topic").value)
-        self.publish_debug_image = bool(self.get_parameter("publish_debug_image").value)
+        self.publish_debug_image = coerce_bool(self.get_parameter("publish_debug_image").value)
         self.fault_status_topic = str(self.get_parameter("fault_status_topic").value)
-        self.publish_fault_status = bool(self.get_parameter("publish_fault_status").value)
+        self.publish_fault_status = coerce_bool(self.get_parameter("publish_fault_status").value)
 
         self.est_hz = float(self.get_parameter("est_hz").value)
         self.image_timeout_s = float(self.get_parameter("image_timeout_s").value)
@@ -210,18 +230,18 @@ class LeaderEstimator(Node):
         self.bbox_continuity_weight = float(self.get_parameter("bbox_continuity_weight").value)
         self.bbox_continuity_class_bonus = float(self.get_parameter("bbox_continuity_class_bonus").value)
         self.bbox_continuity_max_px = float(self.get_parameter("bbox_continuity_max_px").value)
-        self.tracker_enable = bool(self.get_parameter("tracker_enable").value)
+        self.tracker_enable = coerce_bool(self.get_parameter("tracker_enable").value)
         self.tracker_alpha = float(self.get_parameter("tracker_alpha").value)
         self.tracker_beta = float(self.get_parameter("tracker_beta").value)
         self.tracker_min_gain_scale = float(self.get_parameter("tracker_min_gain_scale").value)
         self.tracker_quality_latency_ref_ms = float(self.get_parameter("tracker_quality_latency_ref_ms").value)
-        self.latency_comp_enable = bool(self.get_parameter("latency_comp_enable").value)
+        self.latency_comp_enable = coerce_bool(self.get_parameter("latency_comp_enable").value)
         self.latency_comp_scale = float(self.get_parameter("latency_comp_scale").value)
         self.latency_comp_max_s = float(self.get_parameter("latency_comp_max_s").value)
 
         self.constant_range_m = float(self.get_parameter("constant_range_m").value)
         self.range_mode = str(self.get_parameter("range_mode").value).strip().lower()
-        self.use_depth_range = bool(self.get_parameter("use_depth_range").value)
+        self.use_depth_range = coerce_bool(self.get_parameter("use_depth_range").value)
         self.depth_scale = float(self.get_parameter("depth_scale").value)
         self.depth_min_m = float(self.get_parameter("depth_min_m").value)
         self.depth_max_m = float(self.get_parameter("depth_max_m").value)
@@ -234,13 +254,13 @@ class LeaderEstimator(Node):
         self.cam_x_offset_m = float(self.get_parameter("cam_x_offset_m").value)
         self.cam_y_offset_m = float(self.get_parameter("cam_y_offset_m").value)
         self.cam_z_offset_m = float(self.get_parameter("cam_z_offset_m").value)
-        self.bootstrap_uav_pose_enabled = bool(self.get_parameter("bootstrap_uav_pose_enabled").value)
+        self.bootstrap_uav_pose_enabled = coerce_bool(self.get_parameter("bootstrap_uav_pose_enabled").value)
         self.bootstrap_uav_x = float(self.get_parameter("bootstrap_uav_x").value)
         self.bootstrap_uav_y = float(self.get_parameter("bootstrap_uav_y").value)
         self.bootstrap_uav_yaw = float(self.get_parameter("bootstrap_uav_yaw").value)
 
         self.event_topic = str(self.get_parameter("event_topic").value)
-        self.publish_events = bool(self.get_parameter("publish_events").value)
+        self.publish_events = coerce_bool(self.get_parameter("publish_events").value)
 
         if self.est_hz <= 0.0:
             raise ValueError("est_hz must be > 0")
@@ -360,11 +380,19 @@ class LeaderEstimator(Node):
         else:
             self.depth_sub = None
         self.uav_pose_sub = self.create_subscription(PoseStamped, self.uav_pose_topic, self.on_uav_pose, 10)
-        self.actual_leader_pose_sub = self.create_subscription(
-            Odometry, self.leader_actual_pose_topic, self.on_actual_leader_pose, 10
+        self.actual_leader_pose_sub = (
+            self.create_subscription(
+                Odometry, self.leader_actual_pose_topic, self.on_actual_leader_pose, 10
+            )
+            if self.leader_actual_pose_enable
+            else None
         )
         self.pub = self.create_publisher(PoseStamped, self.out_topic, 10)
-        self.estimate_error_pub = self.create_publisher(Vector3Stamped, self.estimate_error_topic, 10)
+        self.estimate_error_pub = (
+            self.create_publisher(Vector3Stamped, self.estimate_error_topic, 10)
+            if self.leader_actual_pose_enable
+            else None
+        )
         self.status_pub = self.create_publisher(String, self.status_topic, 10)
         self.events_pub = self.create_publisher(String, self.event_topic, 10)
         self.debug_image_pub = self.create_publisher(Image, self.debug_image_topic, 2) if self.publish_debug_image else None
@@ -387,10 +415,14 @@ class LeaderEstimator(Node):
         self.get_logger().info(f"[leader_estimator] Using camera_info_topic={self.camera_info_topic}")
         self.get_logger().info(f"[leader_estimator] Using depth_topic={self.depth_topic or '<disabled>'}")
         self.get_logger().info(f"[leader_estimator] Using uav_pose_topic={self.uav_pose_topic}")
-        self.get_logger().info(f"[leader_estimator] Using leader_actual_pose_topic={self.leader_actual_pose_topic}")
+        if self.leader_actual_pose_enable:
+            self.get_logger().info(f"[leader_estimator] Using leader_actual_pose_topic={self.leader_actual_pose_topic}")
+        else:
+            self.get_logger().info("[leader_estimator] Leader truth diagnostics disabled")
         if self.publish_debug_image:
             self.get_logger().info(f"[leader_estimator] Using debug_image_topic={self.debug_image_topic}")
-        self.get_logger().info(f"[leader_estimator] Using estimate_error_topic={self.estimate_error_topic}")
+        if self.leader_actual_pose_enable:
+            self.get_logger().info(f"[leader_estimator] Using estimate_error_topic={self.estimate_error_topic}")
         if self.publish_fault_status:
             self.get_logger().info(f"[leader_estimator] Using fault_status_topic={self.fault_status_topic}")
         self.get_logger().info("[leader_estimator] Subscribed ok")
@@ -630,6 +662,8 @@ class LeaderEstimator(Node):
         return False
 
     def actual_leader_pose_fresh(self, now: Time) -> bool:
+        if not self.leader_actual_pose_enable:
+            return False
         return self._is_fresh(self.last_actual_leader_pose_stamp, self.leader_actual_pose_timeout_s, now)
 
     def _image_to_bgr(self, msg: Image) -> Optional[np.ndarray]:
@@ -1137,6 +1171,11 @@ class LeaderEstimator(Node):
         self.prev_heading_yaw = est_pose.yaw
 
     def _publish_estimate_error(self, est_pose: Pose2D, now: Time) -> None:
+        if not self.leader_actual_pose_enable or self.estimate_error_pub is None:
+            self.last_estimate_error_dx_m = None
+            self.last_estimate_error_dy_m = None
+            self.last_estimate_error_m = None
+            return
         if not self.actual_leader_pose_fresh(now) or self.last_actual_leader_pose is None:
             self.last_estimate_error_dx_m = None
             self.last_estimate_error_dy_m = None
@@ -1200,7 +1239,7 @@ class LeaderEstimator(Node):
             f"err_dx_m={err_dx_txt} err_dy_m={err_dy_txt} err_planar_m={err_norm_txt}{suffix}"
         )
 
-    def _publish_held_estimate(self, now: Time) -> bool:
+    def _publish_held_estimate(self, now: Time, hold_reason: str = "hold_reuse") -> bool:
         if self.last_good_estimate is None or self.hold_frames_left <= 0:
             return False
         if self.last_good_estimate_stamp is not None and self.max_hold_s > 0.0:
@@ -1212,7 +1251,7 @@ class LeaderEstimator(Node):
         self.last_det_conf = -1.0
         self.last_latency_ms = max(0.0, (now - image_stamp).nanoseconds * 1e-6)
         self.last_range_source = "hold"
-        self.last_reject_reason = "hold_reuse"
+        self.last_reject_reason = str(hold_reason).strip() or "hold_reuse"
         hold_pose = self.last_good_estimate
         if self.track_valid:
             self._tracker_predict_to(now)

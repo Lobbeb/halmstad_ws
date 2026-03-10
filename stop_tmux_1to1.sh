@@ -7,11 +7,11 @@ SIM_WORLD_FILE="$STATE_DIR/gazebo_sim.world"
 TMUX_STATE_DIR="$STATE_DIR/tmux_sessions"
 WORLD="warehouse"
 SESSION=""
-GROUP_GRACE_S=2
+GROUP_GRACE_S=5
 FINAL_GRACE_S=5
 KILL_SESSION=true
 DRY_RUN=false
-CTRL_C_GROUP=(follow localization nav2)
+CTRL_C_GROUP=(record follow localization nav2)
 
 if [ "$#" -gt 0 ] && [[ "$1" != *":="* ]] && [[ "$1" != *=* ]]; then
   WORLD="$1"
@@ -39,7 +39,7 @@ for arg in "$@"; do
       ;;
     *)
       echo "Unknown argument: $arg" >&2
-      echo "Usage: $0 [world] [session:=name] [group_grace_s:=2] [final_grace_s:=5] [kill_session:=true|false] [dry_run:=true|false]" >&2
+      echo "Usage: $0 [world] [session:=name] [group_grace_s:=5] [final_grace_s:=5] [kill_session:=true|false] [dry_run:=true|false]" >&2
       exit 2
       ;;
   esac
@@ -53,9 +53,10 @@ SPAWN_PANE_ID=""
 LOCALIZATION_PANE_ID=""
 NAV2_PANE_ID=""
 FOLLOW_PANE_ID=""
+RECORD_PANE_ID=""
 
 if [ -f "$SESSION_STATE_FILE" ]; then
-  # State file is written by run_tmux_1to1_follow.sh for robust shutdown targeting.
+  # State file is written by run_tmux_1to1.sh for robust shutdown targeting.
   # shellcheck disable=SC1090
   source "$SESSION_STATE_FILE"
 fi
@@ -97,6 +98,9 @@ lookup_saved_pane_id() {
       ;;
     follow)
       printf '%s\n' "$FOLLOW_PANE_ID"
+      ;;
+    record)
+      printf '%s\n' "$RECORD_PANE_ID"
       ;;
     *)
       return 1
@@ -155,6 +159,7 @@ signal_processes_by_pattern() {
 
 run_fallback_cleanup() {
   signal_process_group_from_pid_file "$SIM_PID_FILE" "Gazebo helper" || true
+  signal_processes_by_pattern "experiment recorder" 'ros2 bag record .*runs/experiments/.*/bag' || true
   signal_processes_by_pattern "follow launch" 'ros2 launch lrs_halmstad run_1to1_follow\.launch\.py' || true
   signal_processes_by_pattern "Nav2 launch" 'ros2 launch clearpath_nav2_demos nav2\.launch\.py' || true
   signal_processes_by_pattern "localization launch" 'ros2 launch clearpath_nav2_demos localization\.launch\.py' || true
@@ -209,7 +214,7 @@ if ! tmux_has_session; then
   exit 1
 fi
 
-echo "Stopping tmux 1-to-1 follow session: $SESSION"
+echo "Stopping tmux 1-to-1 session: $SESSION"
 
 for target in "${CTRL_C_GROUP[@]}"; do
   if send_ctrl_c "$target"; then
@@ -236,8 +241,10 @@ if [ "$FINAL_GRACE_S" != "0" ] && [ "$FINAL_GRACE_S" != "0.0" ]; then
 fi
 
 if [ "$KILL_SESSION" = true ]; then
-  echo "Killing tmux session: $SESSION"
-  if [ "$DRY_RUN" != true ]; then
+  if [ "$DRY_RUN" = true ]; then
+    echo "Dry run only. Would kill tmux session: $SESSION"
+  else
+    echo "Killing tmux session: $SESSION"
     tmux kill-session -t "$SESSION"
   fi
   run_fallback_cleanup

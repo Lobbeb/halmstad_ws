@@ -10,6 +10,22 @@ class Pose2D:
     yaw: float
 
 
+def coerce_bool(value) -> bool:
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return False
+    if isinstance(value, (int, float)):
+        return value != 0
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in ("", "0", "false", "no", "off", "n", "f"):
+            return False
+        if normalized in ("1", "true", "yes", "on", "y", "t"):
+            return True
+    return bool(value)
+
+
 def quat_from_yaw(yaw: float) -> Tuple[float, float, float, float]:
     half = 0.5 * float(yaw)
     return (0.0, 0.0, math.sin(half), math.cos(half))

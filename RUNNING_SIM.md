@@ -3,18 +3,21 @@
 Default tested path: `warehouse`.
 
 Assumption:
-- you already start in `~/halmstad_ws`
+- you already start in the workspace root
 
 Recommended tmux workflow:
-- start with `./run_tmux_1to1_follow.sh warehouse`
-- stop with `./stop_tmux_1to1_follow.sh warehouse`
+- start with `./run_tmux_1to1.sh warehouse`
+- start YOLO mode with `./run_tmux_1to1.sh warehouse mode:=yolo`
+- pass a custom YOLO weight with `./run_tmux_1to1.sh warehouse mode:=yolo weights:=yolo26v2.pt`
+- enable truth-assisted YOLO testing with `./run_tmux_1to1.sh warehouse mode:=yolo use_estimate:=false`
+- stop with `./stop_tmux_1to1.sh warehouse`
 - default tmux layout is panes:
   - row 1: `gazebo | spawn`
   - row 2: `localization | nav2`
   - row 3: `follow`
 - current default delays:
-  - `gui:=false` -> `spawn=9`, `localization/nav2/follow=10`
-  - `gui:=true` -> `spawn=7`, `localization/nav2/follow=8`
+  - `gui:=false` -> `spawn=9`, `localization/nav2=11`, `follow=13`
+  - `gui:=true` -> `spawn=7`, `localization/nav2=9`, `follow=11`
 
 ## Start 1-to-1 Sim With Nav2 And AMCL Follow
 
@@ -65,7 +68,13 @@ If you want a different saved map:
 #### If you want the same stack started automatically in tmux, use:
 
 ```bash
-./run_tmux_1to1_follow.sh warehouse
+./run_tmux_1to1.sh warehouse
+```
+
+YOLO variant in tmux:
+
+```bash
+./run_tmux_1to1.sh warehouse mode:=yolo
 ```
 
 Default tmux layout is panes:
@@ -78,32 +87,39 @@ Default tmux layout is panes:
 Useful overrides:
 
 ```bash
-./run_tmux_1to1_follow.sh warehouse gui:=false
-./run_tmux_1to1_follow.sh warehouse delay_s:=9
-./run_tmux_1to1_follow.sh warehouse layout:=windows
-./run_tmux_1to1_follow.sh warehouse attach:=false
-./run_tmux_1to1_follow.sh warehouse dry_run:=true
+./run_tmux_1to1.sh warehouse gui:=false
+./run_tmux_1to1.sh warehouse delay_s:=9
+./run_tmux_1to1.sh warehouse spawn_delay_s:=12 follow_delay_s:=18
+./run_tmux_1to1.sh warehouse layout:=windows
+./run_tmux_1to1.sh warehouse mode:=yolo
+./run_tmux_1to1.sh warehouse mode:=yolo follow_yaw:=false use_tilt:=false
+./run_tmux_1to1.sh warehouse tmux_attach:=false
+./run_tmux_1to1.sh warehouse dry_run:=true
 ```
 
 Default startup is staggered with short delays so the later launches do not all fire at the same instant.
 
 Default delays depend on `gui:=true|false`:
-- `gui:=false` uses `spawn=9` and `localization/nav2/follow=10`
-- `gui:=true` uses `spawn=7` and `localization/nav2/follow=8`
+- `gui:=false` uses `spawn=9`, `localization/nav2=11`, and `follow=13`
+- `gui:=true` uses `spawn=7`, `localization/nav2=9`, and `follow=11`
 
 If your machine is slower, increase the delay args:
 - `delay_s:=...`
+- `spawn_delay_s:=...`
+- `localization_delay_s:=...`
+- `nav2_delay_s:=...`
+- `follow_delay_s:=...`
 
 If you want separate tmux windows instead of the default panes:
 
 ```bash
-./run_tmux_1to1_follow.sh warehouse layout:=windows
+./run_tmux_1to1.sh warehouse layout:=windows
 ```
 
 Alias:
 
 ```bash
-./run_tmux_1to1_follow.sh warehouse panes:=true
+./run_tmux_1to1.sh warehouse panes:=true
 ```
 
 Pane layout is:
@@ -114,29 +130,29 @@ Pane layout is:
 To stop the tmux-managed stack cleanly, use:
 
 ```bash
-./stop_tmux_1to1_follow.sh warehouse
+./stop_tmux_1to1.sh warehouse
 ```
 
 This sends `Ctrl-c` in this order:
 - follow, localization, and Nav2 together
-- wait `2s`
+- wait `5s`
 - Gazebo
-- spawn is expected to exit automatically when sim goes down
+- spawn is expected to exit automatically when Gazebo goes down
 
 Then it waits a few seconds, kills the tmux session, performs a safety cleanup pass for leftover Gazebo / launch processes, and clears stale helper state files under `/tmp/halmstad_ws`.
 
 Useful stop overrides:
 
 ```bash
-./stop_tmux_1to1_follow.sh warehouse group_grace_s:=2
-./stop_tmux_1to1_follow.sh warehouse final_grace_s:=8
-./stop_tmux_1to1_follow.sh warehouse kill_session:=false
-./stop_tmux_1to1_follow.sh session:=halmstad-warehouse-1to1
+./stop_tmux_1to1.sh warehouse group_grace_s:=2
+./stop_tmux_1to1.sh warehouse final_grace_s:=8
+./stop_tmux_1to1.sh warehouse kill_session:=false
+./stop_tmux_1to1.sh session:=halmstad-warehouse-1to1
 ```
 
 Current baseline:
 - this odom-follow path now uses `/<ugv>/amcl_pose_odom`, not raw `/platform/odom`
-- `/<ugv>/amcl_pose_odom` is synthesized from `/<ugv>/amcl_pose` by [pose_cov_to_odom.py](/home/ruben/halmstad_ws/src/lrs_halmstad/lrs_halmstad/pose_cov_to_odom.py)
+- `/<ugv>/amcl_pose_odom` is synthesized from `/<ugv>/amcl_pose` by [pose_cov_to_odom.py](src/lrs_halmstad/lrs_halmstad/pose_cov_to_odom.py)
 - launch `leader_odom_topic` / `ugv_odom_topic` defaults are intentionally pointed at that AMCL-derived topic
 - current UAV camera mode is detached: `uav_camera_mode:=detached_model`
 - current camera defaults are `pan_enable: true` and `tilt_enable: true`
@@ -161,7 +177,7 @@ Important:
 - the wrapper alias also accepts `camera:=attached`
 
 Important runtime note:
-- Gazebo sim time is guarded through [clock_guard.py](/home/ruben/halmstad_ws/src/lrs_halmstad/lrs_halmstad/clock_guard.py)
+- Gazebo sim time is guarded through [clock_guard.py](src/lrs_halmstad/lrs_halmstad/clock_guard.py)
 - expected `/clock` publisher is `clock_guard`
 - if Gazebo is restarted or the world is reset, restart localization, Nav2, and follow
 
@@ -204,18 +220,49 @@ Examples:
 
 ```bash
 ros2 param set /follow_uav d_euclidean 5.0
-ros2 param set /follow_uav d_euclidean 10.0
-ros2 param set /follow_uav d_euclidean 15.0
-```
-
-Advanced direct controls:
-
-```bash
 ros2 param set /follow_uav d_target 9.0
 ros2 param set /follow_uav z_alt 9.0
 ```
 
 Use `d_target` and `z_alt` only if you explicitly want to control horizontal distance and altitude separately.
+
+Runtime follow control helper:
+
+```bash
+./run_follow_control.sh
+```
+
+Default keyboard mode:
+- this is the live tuning path for `d_target` and `z_alt`
+- `w` raises `z_alt`
+- `s` lowers `z_alt`
+- `d` increases `d_target`
+- `a` decreases `d_target`
+- `r` refreshes the current values
+- `h` shows the help text
+- `q` quits
+
+Random sweep mode:
+- pass `--mode random`
+- current defaults:
+- updates every `10s`
+- `z_alt` sampled uniformly in `[2, 40]`
+- `d_target` sampled uniformly in `[1, 20]`
+- sampling is biased toward the `5-15` band by default
+- runs until you stop it with `Ctrl-c`
+
+Useful examples:
+
+```bash
+./run_follow_control.sh
+./run_follow_control.sh --step-z-alt 2 --step-d-target 2
+./run_follow_control.sh --mode params --step-z-alt 2 --step-d-target 2
+./run_follow_control.sh --mode random --interval 8
+./run_follow_control.sh --mode random --count 20
+./run_follow_control.sh --mode random --seed 42
+./run_follow_control.sh --mode random --interval 8 --count 20 --seed 42
+./run_follow_control.sh --mode random --focus-weight 0.8
+```
 
 ## Record Pose Alignment For AMCL Analysis
 
@@ -339,6 +386,49 @@ Then start the YOLO follow flow:
 ./run_1to1_yolo.sh warehouse
 ```
 
+Live follow control works here too:
+
+```bash
+./run_follow_control.sh
+```
+
+Runtime turn analysis:
+
+```bash
+./run_follow_debug.sh
+```
+
+This subscribes to the follow, estimator, and camera topics and prints an interpreted diagnosis such as:
+- camera-only pan is moving
+- UAV body yaw command is moving
+- both camera and body are moving
+- suspicious motion while estimator state is `NO_DET` / `REJECT`
+- logs are also saved by default under `debug_logs/follow_debug/`
+
+That default mode is now direct manual UAV steering. If you want the old runtime `d_target` / `z_alt` tuning path instead, use:
+
+```bash
+./run_follow_control.sh --mode params
+```
+
+Default behavior:
+- Nav2 still drives the UGV through the current `ugv_nav2_driver` path
+- the UAV/camera runtime uses `leader_estimate` rather than shared UGV pose
+- estimate-mode YOLO repositions the UAV to the seeded startup pose before the first estimate arrives
+- through `run_1to1_yolo.sh`, that startup pose defaults to `uav_start_x:=-7.0` and `uav_start_z:=7.0` in non-solar worlds
+- the shared follow/camera fallback tilt baseline stays at `-45.0`
+- held-estimate reuse is disabled by default, so rejected/missing detections now surface directly as `REJECT` / `NO_DET` instead of `*_HOLD`
+- estimator error is still computed against `/<ugv>/amcl_pose_odom` by default
+- bare custom weight names resolve under `models/detection/mymodels/`
+
+Truth-assisted test mode:
+
+```bash
+./run_1to1_yolo.sh warehouse use_estimate:=false
+```
+
+This keeps the YOLO estimator running, but switches the UAV/camera path back to shared UGV pose for comparison/testing.
+
 Warehouse `car` filter:
 
 ```bash
@@ -348,7 +438,25 @@ Warehouse `car` filter:
 Different YOLO weights:
 
 ```bash
-./run_1to1_yolo.sh warehouse weights:=detection/yolo26/yolo26s.pt
+./run_1to1_yolo.sh warehouse weights:=yolo26v2.pt
+```
+
+Detection-family shorthand:
+
+```bash
+./run_1to1_yolo.sh warehouse folder:=yolo26 weights:=yolo26s.pt
+```
+
+OBB-family default:
+
+```bash
+./run_1to1_yolo.sh warehouse obb:=true
+```
+
+OBB-family with explicit subfolder:
+
+```bash
+./run_1to1_yolo.sh warehouse obb:=true folder:=yolo26 weights:=yolo26s-obb.pt
 ```
 
 Estimate error topic:
@@ -357,9 +465,11 @@ Estimate error topic:
 ros2 topic echo /coord/leader_estimate_error
 ```
 
+This topic is populated by default in the current YOLO path and is computed against `/<ugv>/amcl_pose_odom`. Disable it only if you explicitly pass `leader_actual_pose_enable:=false`.
+
 Available YOLO models:
 
-These can be passed to `weights:=...` as relative paths under `/home/ruben/halmstad_ws/models`.
+These can be passed to `weights:=...` as relative paths under `<workspace_root>/models`.
 
 Detection models:
 - `detection/yolo26/yolo26n.pt`
@@ -504,6 +614,11 @@ This creates:
   - maps to `uav_start_z:=...`
 - `mount_pitch_deg:=...`
   - maps to `camera_mount_pitch_deg:=...`
+- `use_tilt:=true|false`
+  - maps to `tilt_enable:=true|false` for `camera_tracker`
+- `follow_yaw:=true|false`
+  - enable or disable UAV body yaw following
+  - default is `false`
 - extra forwarded launch arguments
   - anything else is passed through to `run_1to1_follow.launch.py`
 - common forwarded launch arguments:
@@ -540,25 +655,35 @@ This creates:
   - shorthand for `uav_camera_mode:=integrated_joint|detached_model`
 - `weights:=...`
   - maps to `yolo_weights:=...`
-  - example: `weights:=detection/yolo26/yolo26s.pt`
+  - bare filenames default to `detection/mymodels/`
+  - example: `weights:=yolo26v2.pt`
+- `folder:=...`
+  - selects a subfolder under `detection/` or `obb/`
+  - example: `folder:=yolo26`
+- `obb:=true|false`
+  - default `false`: unresolved `weights:=...` paths are resolved under `detection/`
+  - with no `folder:=...`, bare filenames resolve under `detection/mymodels/`
+  - `true`: default weights switch to the OBB family, and unresolved `weights:=...` paths are resolved under `obb/`
 - `height:=...`
   - maps to `uav_start_z:=...`
 - `mount_pitch_deg:=...`
   - maps to `camera_mount_pitch_deg:=...`
+- `use_tilt:=true|false`
+  - maps to `tilt_enable:=true|false` for `camera_tracker`
+- `follow_yaw:=true|false`
+  - enable or disable UAV body yaw following
+  - default is `false`
+- `camera_default_tilt_deg:=...`
+  - forwarded through to launch if you want to override the shared fallback tilt
 - `target:=...`
   - maps to `target_class_name:=...`
   - example: `target:=car`
+- `use_estimate:=true|false`
+  - default `true`: estimate-only YOLO follow path
+  - `false`: truth-assisted test mode; still runs the estimator, but shares UGV pose into the follow/camera path
 - extra forwarded launch arguments
   - anything else is passed through to `run_1to1_follow.launch.py`
 
-### `./run_yolo.sh`
-
-- `weights:=...`
-  - maps to `yolo_version:=...`
-  - example: `weights:=detection/yolo26/yolo26s.pt`
-- `target:=...`
-  - maps to `target_class_name:=...`
-  - example: `target:=car`
 
 ### `./run_capture_dataset.sh`
 
@@ -595,3 +720,4 @@ Extra useful commands:
 ```bash
 ./run_rqt_perspective.sh
 ```
+

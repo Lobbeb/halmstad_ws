@@ -4,14 +4,14 @@
     "mainwindow": {
       "keys": {
         "geometry": {
-          "repr(QByteArray.hex)": "QtCore.QByteArray(b'01d9d0cb0003000000000353ffffffff000007a300000440000003790000003a0000077d0000041a00000000000000000780000003790000003a0000077d0000041a')",
+          "repr(QByteArray.hex)": "QtCore.QByteArray(b'01d9d0cb00030000000004c8ffffffe2000007a200000423000004ee0000001d0000077c000003fd00000000000000000780000004ee0000001d0000077c000003fd')",
           "type": "repr(QByteArray.hex)",
-          "pretty-print": "     S     @ y : }        y : }  "
+          "pretty-print": "           #     |            |  "
         },
         "state": {
-          "repr(QByteArray.hex)": "QtCore.QByteArray(b'000000ff00000000fd000000010000000300000405000003b7fc0100000001fc00000000000004050000019700fffffffc0200000003fc00000014000001740000005000fffffffc0100000002fb0000005a007200710074005f0069006d006100670065005f0076006900650077005f005f0049006d0061006700650056006900650077005f005f0031005f005f0049006d0061006700650056006900650077005700690064006700650074010000000000000284000000be00fffffffb0000005a007200710074005f0069006d006100670065005f0076006900650077005f005f0049006d0061006700650056006900650077005f005f0032005f005f0049006d0061006700650056006900650077005700690064006700650074010000028a0000017b000000d300fffffffb0000005a007200710074005f0069006d006100670065005f0076006900650077005f005f0049006d0061006700650056006900650077005f005f0033005f005f0049006d0061006700650056006900650077005700690064006700650074010000018e000001980000005000fffffffb0000004c007200710074005f0074006f007000690063005f005f0054006f0070006900630050006c007500670069006e005f005f0031005f005f0054006f007000690063005700690064006700650074010000032c0000009f0000006c00ffffff000004050000000000000004000000040000000800000008fc00000001000000030000000100000036004d0069006e0069006d0069007a006500640044006f0063006b00570069006400670065007400730054006f006f006c0062006100720000000000ffffffff0000000000000000')",
+          "repr(QByteArray.hex)": "QtCore.QByteArray(b'000000ff00000000fd00000001000000030000028f000003b7fc0100000001fc000000000000028f000001a100fffffffc0100000002fc000000000000028f000001a100fffffffc0200000002fb0000005a007200710074005f0069006d006100670065005f0076006900650077005f005f0049006d0061006700650056006900650077005f005f0031005f005f0049006d00610067006500560069006500770057006900640067006500740100000014000001e00000005000fffffffc000001fa000001d1000000a600fffffffc0100000002fb0000004c007200710074005f0074006f007000690063005f005f0054006f0070006900630050006c007500670069006e005f005f0031005f005f0054006f0070006900630057006900640067006500740100000000000001b6000000c800fffffffc000001bc000000d3000000d300fffffffc0200000002fb0000005a007200710074005f0069006d006100670065005f0076006900650077005f005f0049006d0061006700650056006900650077005f005f0032005f005f0049006d006100670065005600690065007700570069006400670065007401000001fa000000d80000005000fffffffb0000005a007200710074005f0069006d006100670065005f0076006900650077005f005f0049006d0061006700650056006900650077005f005f0034005f005f0049006d006100670065005600690065007700570069006400670065007401000002d8000000f30000005000fffffffb0000005a007200710074005f0069006d006100670065005f0076006900650077005f005f0049006d0061006700650056006900650077005f005f0033005f005f0049006d006100670065005600690065007700570069006400670065007403000000200000002000000198000003bd0000028f0000000000000004000000040000000800000008fc00000001000000030000000100000036004d0069006e0069006d0069007a006500640044006f0063006b00570069006400670065007400730054006f006f006c0062006100720000000000ffffffff0000000000000000')",
           "type": "repr(QByteArray.hex)",
-          "pretty-print": "                                        Zrqt_image_view__ImageView__1__ImageViewWidget          Zrqt_image_view__ImageView__2__ImageViewWidget          Zrqt_image_view__ImageView__3__ImageViewWidget          Lrqt_topic__TopicPlugin__1__TopicWidget                            6MinimizedDockWidgetsToolbar        "
+          "pretty-print": "                                        Zrqt_image_view__ImageView__1__ImageViewWidget                                                                                  Zrqt_image_view__ImageView__2__ImageViewWidget          Zrqt_image_view__ImageView__4__ImageViewWidget          Zrqt_image_view__ImageView__3__ImageViewWidget                            6MinimizedDockWidgetsToolbar        "
         }
       },
       "groups": {
@@ -29,7 +29,7 @@
     "pluginmanager": {
       "keys": {
         "running-plugins": {
-          "repr": "{'rqt_image_view/ImageView': [1, 3, 2], 'rqt_topic/TopicPlugin': [1]}",
+          "repr": "{'rqt_image_view/ImageView': [1, 4, 2], 'rqt_topic/TopicPlugin': [1]}",
           "type": "repr"
         }
       },
@@ -69,7 +69,7 @@
                   "type": "repr"
                 },
                 "mouse_pub_topic": {
-                  "repr": "'/dji0/camera0/image_raw_mouse_left'",
+                  "repr": "'/coord/leader_debug_image_mouse_left'",
                   "type": "repr"
                 },
                 "num_gridlines": {
@@ -77,7 +77,7 @@
                   "type": "repr"
                 },
                 "publish_click_location": {
-                  "repr": "True",
+                  "repr": "False",
                   "type": "repr"
                 },
                 "rotate": {
@@ -85,7 +85,7 @@
                   "type": "repr"
                 },
                 "smooth_image": {
-                  "repr": "False",
+                  "repr": "True",
                   "type": "repr"
                 },
                 "toolbar_hidden": {
@@ -93,7 +93,7 @@
                   "type": "repr"
                 },
                 "topic": {
-                  "repr": "'/dji0/camera0/image_raw'",
+                  "repr": "'/coord/leader_debug_image'",
                   "type": "repr"
                 },
                 "zoom1": {
@@ -140,15 +140,15 @@
                   "type": "repr"
                 },
                 "mouse_pub_topic": {
-                  "repr": "'/a201_0000/sensors/camera_0/color/image_mouse_left'",
+                  "repr": "'/dji0/camera0/image_raw_mouse_left'",
                   "type": "repr"
                 },
                 "num_gridlines": {
-                  "repr": "0",
+                  "repr": "1",
                   "type": "repr"
                 },
                 "publish_click_location": {
-                  "repr": "True",
+                  "repr": "False",
                   "type": "repr"
                 },
                 "rotate": {
@@ -164,7 +164,7 @@
                   "type": "repr"
                 },
                 "topic": {
-                  "repr": "'/a201_0000/sensors/camera_0/color/image'",
+                  "repr": "'/dji0/camera0/image_raw'",
                   "type": "repr"
                 },
                 "zoom1": {
@@ -211,7 +211,7 @@
                   "type": "repr"
                 },
                 "mouse_pub_topic": {
-                  "repr": "'mouse_left'",
+                  "repr": "''",
                   "type": "repr"
                 },
                 "num_gridlines": {
@@ -247,6 +247,77 @@
             }
           }
         },
+        "plugin__rqt_image_view__ImageView__4": {
+          "keys": {},
+          "groups": {
+            "dock_widget__ImageViewWidget": {
+              "keys": {
+                "dock_widget_title": {
+                  "repr": "'Image View (4)'",
+                  "type": "repr"
+                },
+                "dockable": {
+                  "repr": "True",
+                  "type": "repr"
+                },
+                "parent": {
+                  "repr": "None",
+                  "type": "repr"
+                }
+              },
+              "groups": {}
+            },
+            "plugin": {
+              "keys": {
+                "color_scheme": {
+                  "repr": "-1",
+                  "type": "repr"
+                },
+                "dynamic_range": {
+                  "repr": "False",
+                  "type": "repr"
+                },
+                "max_range": {
+                  "repr": "10.0",
+                  "type": "repr"
+                },
+                "mouse_pub_topic": {
+                  "repr": "'/a201_0000/sensors/camera_0/color/compressed_mouse_left'",
+                  "type": "repr"
+                },
+                "num_gridlines": {
+                  "repr": "0",
+                  "type": "repr"
+                },
+                "publish_click_location": {
+                  "repr": "False",
+                  "type": "repr"
+                },
+                "rotate": {
+                  "repr": "0",
+                  "type": "repr"
+                },
+                "smooth_image": {
+                  "repr": "False",
+                  "type": "repr"
+                },
+                "toolbar_hidden": {
+                  "repr": "False",
+                  "type": "repr"
+                },
+                "topic": {
+                  "repr": "'/a201_0000/sensors/camera_0/color/compressed'",
+                  "type": "repr"
+                },
+                "zoom1": {
+                  "repr": "False",
+                  "type": "repr"
+                }
+              },
+              "groups": {}
+            }
+          }
+        },
         "plugin__rqt_topic__TopicPlugin__1": {
           "keys": {},
           "groups": {
@@ -270,9 +341,9 @@
             "plugin": {
               "keys": {
                 "tree_widget_header_state": {
-                  "repr(QByteArray.hex)": "QtCore.QByteArray(b'000000ff000000000000000100000000000000050100000000000000000000000620000000010000000500000064000003f1000000060101000100000000000000000600000064ffffffff000000810000000300000006000001790000000100000003000000d900000001000000030000006200000001000000030000002b0000000100000003000001120000000100000003000000000000000100000003000003e80000000064')",
+                  "repr(QByteArray.hex)": "QtCore.QByteArray(b'000000ff00000000000000010000000000000004010000000600000000000000020000000300000004000000010000000500000006000000000000000400000001000000020000000300000005000000062000000001000000050000006400000422000000060101000100000000000000000600000064ffffffff0000008100000003000000060000018e00000001000000030000005c00000001000000030000015f0000000100000003000000620000000100000003000000770000000100000003000000000000000100000003000003e8000000002b')",
                   "type": "repr(QByteArray.hex)",
-                  "pretty-print": "                      d                                                            d"
+                  "pretty-print": "                                              d \"                                                          +"
                 }
               },
               "groups": {}

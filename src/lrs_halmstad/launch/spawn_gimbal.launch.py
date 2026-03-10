@@ -22,7 +22,7 @@ def generate_launch_description():
     xacro_path = get_package_share_path('lrs_halmstad') / 'xacro'
     default_xacro_file = xacro_path / 'lrs_gimbal.xacro'
 
-    world_arg = DeclareLaunchArgument(name='world', default_value='orchard',
+    world_arg = DeclareLaunchArgument(name='world', default_value='warehouse',
                                       description='World to spawn in')
 
     name_arg = DeclareLaunchArgument(name='name', default_value='dji0',

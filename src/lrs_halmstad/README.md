@@ -30,8 +30,8 @@ Reference for the current 1-to-1 Gazebo/ROS 2 workflow.
 ### 1. Start Gazebo + Husky
 
 ```bash
-cd ~/halmstad_ws
-./run_gazebo_sim.sh orchard
+cd <workspace_root>
+./run_gazebo_sim.sh warehouse
 ```
 
 ### 2. Spawn one UAV
@@ -39,9 +39,9 @@ cd ~/halmstad_ws
 Use either the GUI spawn plugin or the dedicated detached-camera launch:
 
 ```bash
-cd ~/halmstad_ws
+cd <workspace_root>
 source /opt/ros/jazzy/setup.bash
-source ~/halmstad_ws/install/setup.bash
+source install/setup.bash
 ros2 launch lrs_halmstad spawn_uav_1to1.launch.py
 ```
 
@@ -50,9 +50,9 @@ ros2 launch lrs_halmstad spawn_uav_1to1.launch.py
 This starts the UAV simulator adapter plus the follow stack for `dji0` and `a201_0000`.
 
 ```bash
-cd ~/halmstad_ws
+cd <workspace_root>
 source /opt/ros/jazzy/setup.bash
-source ~/halmstad_ws/install/setup.bash
+source install/setup.bash
 ros2 launch lrs_halmstad run_1to1_follow.launch.py
 ```
 
@@ -72,14 +72,14 @@ If you want to test Nav2 goals from a separate node, use `ugv_mode:=external` in
 
 The Nav2 UGV driver now also auto-publishes `/a201_0000/initialpose` before sending goals. The `ugv_initial_pose_*` values are in the saved map frame, not Gazebo world coordinates.
 
-For `world:=orchard`, the launch defaults now auto-fill the current verified orchard map-frame initial pose, so you do not need to manually publish `/a201_0000/initialpose` for the normal Nav2 bring-up. The recommended orchard Nav2 map is `/home/ruben/halmstad_ws/maps/orchard_nav.yaml`, which keeps black occupied cells and frees gray terrain/unknown cells from the raw SLAM map. Other worlds still default to `0,0,0` unless overridden.
+For `world:=orchard`, the launch defaults now auto-fill the current verified orchard map-frame initial pose, so you do not need to manually publish `/a201_0000/initialpose` for the normal Nav2 bring-up. The recommended orchard Nav2 map is `maps/orchard_nav.yaml`, which keeps black occupied cells and frees gray terrain/unknown cells from the raw SLAM map. Other worlds still default to `0,0,0` unless overridden.
 
 For standalone Nav2 testing without RViz goals:
 
 ```bash
-cd ~/halmstad_ws
+cd <workspace_root>
 source /opt/ros/jazzy/setup.bash
-source ~/halmstad_ws/install/setup.bash
+source install/setup.bash
 ros2 run lrs_halmstad ugv_nav2_goal_tester --ros-args \
   -r __ns:=/a201_0000 \
   -p pattern:=square \
@@ -91,7 +91,7 @@ This waits for `/a201_0000/amcl_pose`, then sends a simple square of `NavigateTo
 ### 4. View the UAV camera
 
 ```bash
-cd ~/halmstad_ws
+cd <workspace_root>
 ./run_rqt_image_view.sh /dji0/camera0/image_raw
 ```
 
@@ -102,27 +102,27 @@ Use this when testing the legacy UAV control topics directly.
 ### Spawn only the UAV
 
 ```bash
-cd ~/halmstad_ws
+cd <workspace_root>
 source /opt/ros/jazzy/setup.bash
-source ~/halmstad_ws/install/setup.bash
+source install/setup.bash
 ros2 launch lrs_halmstad spawn_uav_1to1.launch.py
 ```
 
 ### Start the Gazebo adapter
 
 ```bash
-cd ~/halmstad_ws
+cd <workspace_root>
 source /opt/ros/jazzy/setup.bash
-source ~/halmstad_ws/install/setup.bash
+source install/setup.bash
 ros2 run lrs_halmstad simulator --ros-args -p uav_name:=dji0 -p camera_mode:=detached_model
 ```
 
 ### Publish manual test motion
 
 ```bash
-cd ~/halmstad_ws
+cd <workspace_root>
 source /opt/ros/jazzy/setup.bash
-source ~/halmstad_ws/install/setup.bash
+source install/setup.bash
 ros2 run lrs_halmstad controller --ros-args -p uav_name:=dji0
 ```
 
@@ -141,35 +141,35 @@ ros2 run lrs_halmstad controller --ros-args -p uav_name:=dji0
 Base Gazebo + UGV + UAV camera contract:
 
 ```bash
-cd ~/halmstad_ws
+cd <workspace_root>
 source /opt/ros/jazzy/setup.bash
-source ~/halmstad_ws/install/setup.bash
+source install/setup.bash
 ros2 run lrs_halmstad contract_check orchard dji0
 ```
 
 Include the UAV simulator adapter topics:
 
 ```bash
-cd ~/halmstad_ws
+cd <workspace_root>
 source /opt/ros/jazzy/setup.bash
-source ~/halmstad_ws/install/setup.bash
+source install/setup.bash
 REQUIRE_UAV_ADAPTER=1 ros2 run lrs_halmstad contract_check orchard dji0
 ```
 
 Include the follow-stack topics as well:
 
 ```bash
-cd ~/halmstad_ws
+cd <workspace_root>
 source /opt/ros/jazzy/setup.bash
-source ~/halmstad_ws/install/setup.bash
+source install/setup.bash
 REQUIRE_UAV_ADAPTER=1 REQUIRE_FOLLOW_STACK=1 ros2 run lrs_halmstad contract_check orchard dji0
 ```
 
 Include estimator topics too when running `leader_mode:=estimate`:
 
 ```bash
-cd ~/halmstad_ws
+cd <workspace_root>
 source /opt/ros/jazzy/setup.bash
-source ~/halmstad_ws/install/setup.bash
+source install/setup.bash
 REQUIRE_UAV_ADAPTER=1 REQUIRE_FOLLOW_STACK=1 REQUIRE_ESTIMATOR=1 ros2 run lrs_halmstad contract_check orchard dji0
 ```

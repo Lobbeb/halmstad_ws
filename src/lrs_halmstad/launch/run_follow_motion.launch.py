@@ -1,8 +1,9 @@
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument, LogInfo, TimerAction
+from launch.actions import DeclareLaunchArgument, LogInfo, OpaqueFunction, TimerAction
 from launch.conditions import IfCondition
 from launch.substitutions import LaunchConfiguration, PathJoinSubstitution, PythonExpression
 from launch_ros.actions import Node
+from launch_ros.parameter_descriptions import ParameterValue
 from launch_ros.substitutions import FindPackageShare
 
 
@@ -10,7 +11,7 @@ def _estimator_condition():
     start_arg = LaunchConfiguration('start_leader_estimator')
     leader_mode = LaunchConfiguration('leader_mode')
     perception = LaunchConfiguration('leader_perception_enable')
-    yolo_version = LaunchConfiguration('yolo_version')
+    yolo_weights = LaunchConfiguration('yolo_weights')
     return IfCondition(
         PythonExpression([
             "(",
@@ -21,7 +22,7 @@ def _estimator_condition():
             " or ",
             "'", perception, "'.lower() in ('1','true','yes','on')",
             " or ",
-            "'", yolo_version, "'.strip() != ''",
+            "'", yolo_weights, "'.strip() != ''",
             "))",
         ])
     )
@@ -34,6 +35,17 @@ def _nav2_ugv_condition():
             "'",
             ugv_mode,
             "'.lower() == 'nav2'",
+        ])
+    )
+
+
+def _external_ugv_condition():
+    ugv_mode = LaunchConfiguration('ugv_mode')
+    return IfCondition(
+        PythonExpression([
+            "'",
+            ugv_mode,
+            "'.lower() in ('external','none')",
         ])
     )
 
@@ -80,10 +92,59 @@ def _default_world_value(world_sub, orchard_value: str, walls_value: str, wareho
     ])
 
 
+def _bool_param(name: str) -> ParameterValue:
+    return ParameterValue(LaunchConfiguration(name), value_type=bool)
+
+
+def _optional_bool_from_launch(context, name: str):
+    raw = LaunchConfiguration(name).perform(context).strip().lower()
+    if raw == "":
+        return None
+    if raw in ("1", "true", "yes", "on"):
+        return True
+    if raw in ("0", "false", "no", "off"):
+        return False
+    raise ValueError(
+        f"{name} must be one of true/false/1/0/yes/no/on/off when provided; got {raw!r}"
+    )
+
+
+def _build_camera_tracker_node(context, *args, **kwargs):
+    camera_params = {
+        'uav_name': LaunchConfiguration('uav_name'),
+        'leader_input_type': LaunchConfiguration('leader_mode'),
+        'leader_odom_topic': LaunchConfiguration('ugv_odom_topic'),
+        'leader_pose_topic': LaunchConfiguration('leader_pose_topic'),
+        'leader_status_topic': '/coord/leader_estimate_status',
+        'uav_camera_mode': LaunchConfiguration('uav_camera_mode'),
+        'camera_mount_pitch_deg': LaunchConfiguration('camera_mount_pitch_deg'),
+        'default_tilt_deg': LaunchConfiguration('camera_default_tilt_deg'),
+        'camera_yaw_offset_deg': LaunchConfiguration('camera_yaw_offset_deg'),
+        'camera_pan_sign': LaunchConfiguration('camera_pan_sign'),
+    }
+    pan_enable = _optional_bool_from_launch(context, 'pan_enable')
+    if pan_enable is not None:
+        camera_params['pan_enable'] = pan_enable
+    tilt_enable = _optional_bool_from_launch(context, 'tilt_enable')
+    if tilt_enable is not None:
+        camera_params['tilt_enable'] = tilt_enable
+    return [
+        Node(
+            package='lrs_halmstad',
+            executable='camera_tracker',
+            name='camera_tracker',
+            output='screen',
+            parameters=[
+                LaunchConfiguration('params_file'),
+                camera_params,
+            ],
+        )
+    ]
+
+
 def generate_launch_description():
-    yolo_models_dir = '/home/ruben/halmstad_ws/models'
     params_default = PathJoinSubstitution(
-        [FindPackageShare('lrs_halmstad'), 'config', 'run_round_follow_defaults.yaml']
+        [FindPackageShare('lrs_halmstad'), 'config', 'run_follow_defaults.yaml']
     )
     warehouse_waypoints_default = PathJoinSubstitution(
         [FindPackageShare('lrs_halmstad'), 'config', 'warehouse_waypoints.yaml']
@@ -92,30 +153,35 @@ def generate_launch_description():
     params_file_arg = DeclareLaunchArgument(
         'params_file',
         default_value=params_default,
-        description='Parameter YAML for leader_estimator, follow_uav, and the selected UGV driver',
+        description='Parameter YAML for simulator, camera_tracker, leader_estimator, follow_uav, and ugv_nav2_driver',
     )
-    world_arg = DeclareLaunchArgument('world', default_value='orchard')
+    world_arg = DeclareLaunchArgument('world', default_value='warehouse')
     uav_name_arg = DeclareLaunchArgument('uav_name', default_value='dji0')
-    leader_mode_arg = DeclareLaunchArgument(
-        'leader_mode',
-        default_value='estimate',
-        description="Leader input for follow_uav: 'estimate' (via /coord topics), 'pose', or 'odom'",
-    )
-    leader_perception_enable_arg = DeclareLaunchArgument(
-        'leader_perception_enable',
-        default_value='true',
-        description='Enable perception/YOLO-oriented estimator startup in auto mode',
-    )
+    leader_mode_arg = DeclareLaunchArgument('leader_mode', default_value='odom')
+    leader_perception_enable_arg = DeclareLaunchArgument('leader_perception_enable', default_value='false')
     start_estimator_arg = DeclareLaunchArgument(
         'start_leader_estimator',
         default_value='auto',
-        description="auto|true|false; auto starts estimator for pose/estimate, perception mode, or when yolo_version is set",
+        description="auto|true|false; auto starts estimator for pose/estimate, perception mode, or when yolo_weights is set",
     )
-    uav_start_x_arg = DeclareLaunchArgument('uav_start_x', default_value='-2.0')
-    uav_start_y_arg = DeclareLaunchArgument('uav_start_y', default_value='0.0')
+    startup_reposition_enable_arg = DeclareLaunchArgument('startup_reposition_enable', default_value='false')
+    follow_yaw_arg = DeclareLaunchArgument('follow_yaw', default_value='false')
+    uav_start_x_arg = DeclareLaunchArgument(
+        'uav_start_x',
+        default_value='-2.0',
+    )
+    uav_start_y_arg = DeclareLaunchArgument(
+        'uav_start_y',
+        default_value='0.0',
+    )
     uav_start_z_arg = DeclareLaunchArgument('uav_start_z', default_value='7.0')
     uav_start_yaw_deg_arg = DeclareLaunchArgument('uav_start_yaw_deg', default_value='0.0')
     camera_mount_pitch_deg_arg = DeclareLaunchArgument('camera_mount_pitch_deg', default_value='45.0')
+    camera_default_tilt_deg_arg = DeclareLaunchArgument('camera_default_tilt_deg', default_value='-45.0')
+    pan_enable_arg = DeclareLaunchArgument('pan_enable', default_value='')
+    tilt_enable_arg = DeclareLaunchArgument('tilt_enable', default_value='')
+    camera_yaw_offset_deg_arg = DeclareLaunchArgument('camera_yaw_offset_deg', default_value='0.0')
+    camera_pan_sign_arg = DeclareLaunchArgument('camera_pan_sign', default_value='1.0')
     start_uav_simulator_arg = DeclareLaunchArgument('start_uav_simulator', default_value='true')
     uav_camera_mode_arg = DeclareLaunchArgument('uav_camera_mode', default_value='detached_model')
     ugv_namespace_arg = DeclareLaunchArgument('ugv_namespace', default_value='a201_0000')
@@ -157,6 +223,14 @@ def generate_launch_description():
         'ugv_odom_topic',
         default_value=['/', LaunchConfiguration('ugv_namespace'), '/amcl_pose_odom'],
     )
+    leader_actual_pose_topic_arg = DeclareLaunchArgument(
+        'leader_actual_pose_topic',
+        default_value=['/', LaunchConfiguration('ugv_namespace'), '/amcl_pose_odom'],
+    )
+    leader_actual_pose_enable_arg = DeclareLaunchArgument(
+        'leader_actual_pose_enable',
+        default_value='true',
+    )
     leader_image_topic_arg = DeclareLaunchArgument('leader_image_topic', default_value=['/', LaunchConfiguration('uav_name'), '/camera0/image_raw'])
     leader_camera_info_topic_arg = DeclareLaunchArgument('leader_camera_info_topic', default_value=['/', LaunchConfiguration('uav_name'), '/camera0/camera_info'])
     leader_depth_topic_arg = DeclareLaunchArgument('leader_depth_topic', default_value='')
@@ -165,15 +239,10 @@ def generate_launch_description():
     leader_constant_range_m_arg = DeclareLaunchArgument('leader_constant_range_m', default_value='5.0')
     target_class_name_arg = DeclareLaunchArgument('target_class_name', default_value='')
     target_class_id_arg = DeclareLaunchArgument('target_class_id', default_value='-1')
-    yolo_version_arg = DeclareLaunchArgument(
-        'yolo_version',
-        default_value='detection/yolo26/yolo26l.pt',
-        description=(
-            f"YOLO weights path relative to {yolo_models_dir} "
-            "(for example detection/yolo5/yolov5su.pt or detection/yolo26/yolo26l.pt)"
-        ),
+    yolo_weights_arg = DeclareLaunchArgument(
+        'yolo_weights',
+        default_value='',
     )
-    yolo_weights_path = PathJoinSubstitution([yolo_models_dir, LaunchConfiguration('yolo_version')])
     yolo_device_arg = DeclareLaunchArgument('yolo_device', default_value='cpu')
     event_topic_arg = DeclareLaunchArgument('event_topic', default_value='/coord/events')
     ugv_start_delay_arg = DeclareLaunchArgument('ugv_start_delay_s', default_value='0.0')
@@ -195,6 +264,8 @@ def generate_launch_description():
                 'start_z': LaunchConfiguration('uav_start_z'),
                 'start_yaw_deg': LaunchConfiguration('uav_start_yaw_deg'),
                 'camera_mount_pitch_deg': LaunchConfiguration('camera_mount_pitch_deg'),
+                'camera_yaw_offset_deg': LaunchConfiguration('camera_yaw_offset_deg'),
+                'camera_pan_sign': LaunchConfiguration('camera_pan_sign'),
             },
         ],
     )
@@ -215,11 +286,12 @@ def generate_launch_description():
                 'uav_pose_topic': LaunchConfiguration('leader_uav_pose_topic'),
                 'range_mode': LaunchConfiguration('leader_range_mode'),
                 'constant_range_m': LaunchConfiguration('leader_constant_range_m'),
+                'leader_actual_pose_topic': LaunchConfiguration('leader_actual_pose_topic'),
+                'leader_actual_pose_enable': _bool_param('leader_actual_pose_enable'),
                 'target_class_name': LaunchConfiguration('target_class_name'),
                 'target_class_id': LaunchConfiguration('target_class_id'),
                 'device': LaunchConfiguration('yolo_device'),
-                'yolo_weights': yolo_weights_path,
-                'yolo_backend': 'ultralytics',
+                'yolo_weights': LaunchConfiguration('yolo_weights'),
                 'event_topic': LaunchConfiguration('event_topic'),
             },
         ],
@@ -239,6 +311,7 @@ def generate_launch_description():
                 'leader_odom_topic': LaunchConfiguration('ugv_odom_topic'),
                 'z_alt': LaunchConfiguration('uav_start_z'),
                 'event_topic': LaunchConfiguration('event_topic'),
+                'follow_yaw': _bool_param('follow_yaw'),
             },
         ],
     )
@@ -257,27 +330,13 @@ def generate_launch_description():
                 'leader_input_type': LaunchConfiguration('leader_mode'),
                 'leader_pose_topic': LaunchConfiguration('leader_pose_topic'),
                 'z_alt': LaunchConfiguration('uav_start_z'),
+                'follow_yaw': _bool_param('follow_yaw'),
+                'startup_reposition_enable': _bool_param('startup_reposition_enable'),
             },
         ],
     )
 
-    camera_tracker_node = Node(
-        package='lrs_halmstad',
-        executable='camera_tracker',
-        name='camera_tracker',
-        output='screen',
-        parameters=[
-            LaunchConfiguration('params_file'),
-            {
-                'uav_name': LaunchConfiguration('uav_name'),
-                'leader_input_type': LaunchConfiguration('leader_mode'),
-                'leader_odom_topic': LaunchConfiguration('ugv_odom_topic'),
-                'leader_pose_topic': LaunchConfiguration('leader_pose_topic'),
-                'uav_camera_mode': LaunchConfiguration('uav_camera_mode'),
-                'camera_mount_pitch_deg': LaunchConfiguration('camera_mount_pitch_deg'),
-            },
-        ],
-    )
+    camera_tracker_node = OpaqueFunction(function=_build_camera_tracker_node)
 
     ugv_nav2_node = Node(
         package='lrs_halmstad',
@@ -290,7 +349,7 @@ def generate_launch_description():
             LaunchConfiguration('params_file'),
             {
                 'start_delay_s': LaunchConfiguration('ugv_start_delay_s'),
-                'set_initial_pose_enable': LaunchConfiguration('ugv_set_initial_pose'),
+                'set_initial_pose_enable': _bool_param('ugv_set_initial_pose'),
                 'initial_pose_x': LaunchConfiguration('ugv_initial_pose_x'),
                 'initial_pose_y': LaunchConfiguration('ugv_initial_pose_y'),
                 'initial_pose_yaw_deg': LaunchConfiguration('ugv_initial_pose_yaw_deg'),
@@ -321,10 +380,20 @@ def generate_launch_description():
         period=0.1,
         actions=[
             LogInfo(
-                msg='[run_round_follow_yolo] Starting Nav2-backed UGV motion driver',
+                msg='[run_follow_motion] Starting Nav2-backed UGV motion driver',
                 condition=_nav2_ugv_condition(),
             ),
             ugv_nav2_node,
+        ],
+    )
+
+    ugv_external_info = TimerAction(
+        period=0.1,
+        actions=[
+            LogInfo(
+                msg='[run_follow_motion] UGV mobility backend disabled; expecting external Nav2 goal source',
+                condition=_external_ugv_condition(),
+            ),
         ],
     )
 
@@ -335,11 +404,18 @@ def generate_launch_description():
         leader_mode_arg,
         leader_perception_enable_arg,
         start_estimator_arg,
+        startup_reposition_enable_arg,
+        follow_yaw_arg,
         uav_start_x_arg,
         uav_start_y_arg,
         uav_start_z_arg,
         uav_start_yaw_deg_arg,
         camera_mount_pitch_deg_arg,
+        camera_default_tilt_deg_arg,
+        pan_enable_arg,
+        tilt_enable_arg,
+        camera_yaw_offset_deg_arg,
+        camera_pan_sign_arg,
         start_uav_simulator_arg,
         uav_camera_mode_arg,
         ugv_namespace_arg,
@@ -352,6 +428,8 @@ def generate_launch_description():
         ugv_goal_sequence_file_arg,
         leader_pose_topic_arg,
         ugv_odom_topic_arg,
+        leader_actual_pose_topic_arg,
+        leader_actual_pose_enable_arg,
         leader_image_topic_arg,
         leader_camera_info_topic_arg,
         leader_depth_topic_arg,
@@ -360,7 +438,7 @@ def generate_launch_description():
         leader_constant_range_m_arg,
         target_class_name_arg,
         target_class_id_arg,
-        yolo_version_arg,
+        yolo_weights_arg,
         yolo_device_arg,
         event_topic_arg,
         ugv_start_delay_arg,
@@ -371,4 +449,5 @@ def generate_launch_description():
         follow_estimate_node,
         camera_tracker_node,
         ugv_nav2_delayed_start,
+        ugv_external_info,
     ])

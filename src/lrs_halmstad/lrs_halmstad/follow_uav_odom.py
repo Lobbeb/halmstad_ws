@@ -17,6 +17,7 @@ from lrs_halmstad.follow_math import (
     Pose2D,
     camera_xy_from_uav_pose,
     clamp_point_to_radius,
+    coerce_bool,
     compute_leader_look_target,
     solve_yaw_to_target,
     wrap_pi,
@@ -66,6 +67,7 @@ class FollowUavOdom(Node):
         self.declare_parameter("d_max", 100.0)
         self.declare_parameter("z_alt", 7.0, dyn_num)
         self.declare_parameter("d_euclidean", 0.0, dyn_num)
+        self.declare_parameter("manual_override_enable", False)
 
         self.declare_parameter("seed_uav_cmd_on_start", True)
         self.declare_parameter("uav_start_x", -2.0)
@@ -75,7 +77,7 @@ class FollowUavOdom(Node):
         self.declare_parameter("startup_nudge_dx_m", 0.30)
         self.declare_parameter("startup_nudge_dy_m", 0.0)
 
-        self.declare_parameter("follow_yaw", True)
+        self.declare_parameter("follow_yaw", False)
         self.declare_parameter("pose_timeout_s", 3.0)
         self.declare_parameter("min_cmd_period_s", 0.05)
         self.declare_parameter("smooth_alpha", 1.0)
@@ -108,16 +110,17 @@ class FollowUavOdom(Node):
         self.d_max = float(self.get_parameter("d_max").value)
         self.z_alt = float(self.get_parameter("z_alt").value)
         self.d_euclidean = float(self.get_parameter("d_euclidean").value)
+        self.manual_override_enable = coerce_bool(self.get_parameter("manual_override_enable").value)
 
-        self.seed_uav_cmd_on_start = bool(self.get_parameter("seed_uav_cmd_on_start").value)
+        self.seed_uav_cmd_on_start = coerce_bool(self.get_parameter("seed_uav_cmd_on_start").value)
         self.uav_start_x = float(self.get_parameter("uav_start_x").value)
         self.uav_start_y = float(self.get_parameter("uav_start_y").value)
         self.uav_start_yaw = math.radians(float(self.get_parameter("uav_start_yaw_deg").value))
-        self.startup_nudge_enable = bool(self.get_parameter("startup_nudge_enable").value)
+        self.startup_nudge_enable = coerce_bool(self.get_parameter("startup_nudge_enable").value)
         self.startup_nudge_dx_m = float(self.get_parameter("startup_nudge_dx_m").value)
         self.startup_nudge_dy_m = float(self.get_parameter("startup_nudge_dy_m").value)
 
-        self.follow_yaw = bool(self.get_parameter("follow_yaw").value)
+        self.follow_yaw = coerce_bool(self.get_parameter("follow_yaw").value)
         self.pose_timeout_s = float(self.get_parameter("pose_timeout_s").value)
         self.min_cmd_period_s = float(self.get_parameter("min_cmd_period_s").value)
         self.smooth_alpha = float(self.get_parameter("smooth_alpha").value)
@@ -132,8 +135,8 @@ class FollowUavOdom(Node):
         self.yaw_update_xy_gate_m = float(self.get_parameter("yaw_update_xy_gate_m").value)
 
         self.event_topic = str(self.get_parameter("event_topic").value)
-        self.publish_events = bool(self.get_parameter("publish_events").value)
-        self.publish_metrics = bool(self.get_parameter("publish_metrics").value)
+        self.publish_events = coerce_bool(self.get_parameter("publish_events").value)
+        self.publish_metrics = coerce_bool(self.get_parameter("publish_metrics").value)
         self.metrics_prefix = str(self.get_parameter("metrics_prefix").value).rstrip("/") or "/coord"
         self.camera_x_offset_m = float(self.get_parameter("camera_x_offset_m").value)
         self.camera_y_offset_m = float(self.get_parameter("camera_y_offset_m").value)
@@ -240,6 +243,7 @@ class FollowUavOdom(Node):
             f"leader_odom={self.leader_odom_topic}, tick={self.tick_hz}Hz, "
             f"d_target={self.d_target}, d_max={self.d_max}, z_alt={self.z_alt}, "
             f"d_euclidean={self.d_euclidean}, follow_speed_mps={self.follow_speed_mps}, "
+            f"manual_override_enable={self.manual_override_enable}, "
             f"follow_speed_gain={self.follow_speed_gain}, "
             f"follow_z_speed_mps={self.follow_z_speed_mps}, "
             f"follow_z_speed_gain={self.follow_z_speed_gain}, "
@@ -262,7 +266,11 @@ class FollowUavOdom(Node):
     def _on_set_parameters(self, params):
         updates = {}
         runtime_updates = {}
+        bool_updates = {}
         for param in params:
+            if param.name == "manual_override_enable":
+                bool_updates[param.name] = coerce_bool(param.value)
+                continue
             try:
                 value = float(param.value)
             except Exception as exc:
@@ -307,7 +315,7 @@ class FollowUavOdom(Node):
                     return SetParametersResult(successful=False, reason="smooth_alpha must be within [0, 1]")
                 runtime_updates[param.name] = value
 
-        if not updates and not runtime_updates:
+        if not updates and not runtime_updates and not bool_updates:
             return SetParametersResult(successful=True)
 
         if updates:
@@ -334,8 +342,15 @@ class FollowUavOdom(Node):
         if runtime_updates:
             for name, value in runtime_updates.items():
                 setattr(self, name, float(value))
-            updated_text = ", ".join(f"{name}={value}" for name, value in sorted(runtime_updates.items()))
-            self.get_logger().info(f"[follow_uav_odom] Runtime parameter update: {updated_text}")
+        if bool_updates:
+            self.manual_override_enable = bool_updates["manual_override_enable"]
+        update_parts = []
+        if runtime_updates:
+            update_parts.append(", ".join(f"{name}={value}" for name, value in sorted(runtime_updates.items())))
+        if bool_updates:
+            update_parts.append(f"manual_override_enable={self.manual_override_enable}")
+        if update_parts:
+            self.get_logger().info(f"[follow_uav_odom] Runtime parameter update: {', '.join(update_parts)}")
         return SetParametersResult(successful=True)
 
     def _current_uav_pose(self) -> Pose2D:
@@ -631,6 +646,8 @@ class FollowUavOdom(Node):
 
     def on_tick(self) -> None:
         now = self.get_clock().now()
+        if self.manual_override_enable:
+            return
         current_uav = self._control_uav_pose()
         current_uav_z = self._control_uav_z()
 

@@ -21,8 +21,11 @@ fi
 EXTRA_ARGS=()
 for arg in "$@"; do
   case "$arg" in
-    camera:=*)
+    camera:=*|camera_mode:=*)
       camera_mode="${arg#camera:=}"
+      if [[ "$arg" == camera_mode:=* ]]; then
+        camera_mode="${arg#camera_mode:=}"
+      fi
       case "$camera_mode" in
         attached|integrated|integrated_joint)
           EXTRA_ARGS+=("uav_camera_mode:=integrated_joint")
@@ -37,6 +40,15 @@ for arg in "$@"; do
       ;;
     height:=*)
       EXTRA_ARGS+=("uav_start_z:=${arg#height:=}")
+      ;;
+    pan_enable:=*)
+      EXTRA_ARGS+=("$arg")
+      ;;
+    use_tilt:=*)
+      EXTRA_ARGS+=("tilt_enable:=${arg#use_tilt:=}")
+      ;;
+    tilt_enable:=*)
+      EXTRA_ARGS+=("$arg")
       ;;
     mount_pitch_deg:=*)
       EXTRA_ARGS+=("camera_mount_pitch_deg:=${arg#mount_pitch_deg:=}")

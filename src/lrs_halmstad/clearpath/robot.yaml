@@ -11,7 +11,7 @@ system:
     namespace: a201_0000
     domain_id: 3
     rmw_implementation: rmw_fastrtps_cpp
-    workspaces: [/home/ruben/halmstad_ws/install, /home/ruben/halmstad_ws/src/lrs_halmstad/clearpath]
+    workspaces: []
 platform:
   controller: logitech
   battery:
@@ -35,13 +35,13 @@ platform:
     ros_parameters:
       platform_velocity_controller:
         cmd_vel_timeout: 5.0
-        linear.x.max_velocity": 1.0
+        linear.x.max_velocity": 1.5
         linear.x.min_velocity": -1.0
-        linear.x.max_acceleration": 3.0
+        linear.x.max_acceleration": 4.0
         linear.x.min_acceleration": -3.0
-        angular.z.max_velocity": 2.0
+        angular.z.max_velocity": 3.0
         angular.z.min_velocity": -2.0
-        angular.z.max_acceleration": 6.0
+        angular.z.max_acceleration": 8.0
         angular.z.min_acceleration": -6.0
 links:
   box: []

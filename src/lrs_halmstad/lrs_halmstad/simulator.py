@@ -10,12 +10,30 @@ from rclpy.node import Node
 from std_msgs.msg import Float32, Float64
 from geometry_msgs.msg import PoseStamped, Point, Vector3Stamped
 
-from tf_transformations import quaternion_from_euler
 from sensor_msgs.msg import Joy
 from ros_gz_interfaces.srv import SetEntityPose
 
 from lrs_halmstad.world_names import gazebo_world_name
 from lrs_halmstad.follow_math import rotate_body_offset, wrap_pi, yaw_from_quat
+
+
+def quaternion_from_euler(roll: float, pitch: float, yaw: float) -> tuple[float, float, float, float]:
+    half_roll = 0.5 * float(roll)
+    half_pitch = 0.5 * float(pitch)
+    half_yaw = 0.5 * float(yaw)
+
+    cr = math.cos(half_roll)
+    sr = math.sin(half_roll)
+    cp = math.cos(half_pitch)
+    sp = math.sin(half_pitch)
+    cy = math.cos(half_yaw)
+    sy = math.sin(half_yaw)
+
+    x = sr * cp * cy - cr * sp * sy
+    y = cr * sp * cy + sr * cp * sy
+    z = cr * cp * sy - sr * sp * cy
+    w = cr * cp * cy + sr * sp * sy
+    return (x, y, z, w)
 
 class Simulator(Node):
     def __init__(self):
@@ -208,10 +226,6 @@ class Simulator(Node):
         default_x = 0.0
         default_y = 0.0
         default_z = 7.0
-        if self.gz_world == "solar_farm":
-            default_x = -62.0
-            default_y = 8.0
-            default_z = 7.0
         match = re.match(r"^dji(\d+)$", uav_name)
         if match:
             index = int(match.group(1))

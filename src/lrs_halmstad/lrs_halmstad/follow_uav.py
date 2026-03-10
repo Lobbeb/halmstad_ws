@@ -3,10 +3,12 @@ import math
 from typing import Optional, Tuple
 
 import rclpy
+from rcl_interfaces.msg import ParameterDescriptor, SetParametersResult
 from rclpy.node import Node
 from rclpy.time import Time
 
 from geometry_msgs.msg import PoseStamped
+from nav_msgs.msg import Odometry
 from sensor_msgs.msg import Joy
 from std_msgs.msg import String
 
@@ -16,6 +18,7 @@ from lrs_halmstad.follow_math import (
     camera_xy_from_uav_pose,
     clamp_mag,
     clamp_point_to_radius,
+    coerce_bool,
     quat_from_yaw,
     solve_yaw_to_target,
     wrap_pi,
@@ -28,6 +31,7 @@ class FollowUav(Node):
 
     def __init__(self):
         super().__init__("follow_uav")
+        dyn_num = ParameterDescriptor(dynamic_typing=True)
 
         # ---------- Parameters ----------
         self.declare_parameter("world", "orchard")
@@ -36,15 +40,19 @@ class FollowUav(Node):
         self.declare_parameter("leader_pose_topic", "/coord/leader_estimate")
 
         self.declare_parameter("tick_hz", 10.0)
-        self.declare_parameter("d_target", 7.0)
+        self.declare_parameter("d_target", 7.0, dyn_num)
         self.declare_parameter("d_max", 15.0)
-        self.declare_parameter("z_alt", 7.0)
+        self.declare_parameter("z_alt", 7.0, dyn_num)
+        self.declare_parameter("d_euclidean", 0.0, dyn_num)
+        self.declare_parameter("manual_override_enable", False)
         self.declare_parameter("seed_uav_cmd_on_start", True)
+        self.declare_parameter("startup_reposition_enable", False)
+        self.declare_parameter("startup_reposition_tol_m", 0.25)
         self.declare_parameter("uav_start_x", -2.0)
         self.declare_parameter("uav_start_y", 0.0)
         self.declare_parameter("uav_start_yaw_deg", 0.0)
 
-        self.declare_parameter("follow_yaw", True)
+        self.declare_parameter("follow_yaw", False)
 
         # Freshness and service pacing
         self.declare_parameter("pose_timeout_s", 0.75)   # stale if odom older than this
@@ -85,24 +93,33 @@ class FollowUav(Node):
         # ---------- Read params ----------
         self.world = str(self.get_parameter("world").value)
         self.uav_name = str(self.get_parameter("uav_name").value)
-        self.leader_input_type = str(self.get_parameter("leader_input_type").value).strip().lower()
+        leader_input_type_raw = str(self.get_parameter("leader_input_type").value).strip().lower()
+        self.leader_input_type = leader_input_type_raw
         self.leader_pose_topic = str(self.get_parameter("leader_pose_topic").value)
 
         if self.leader_input_type == "estimate":
             self.leader_input_type = "pose"
         if self.leader_input_type != "pose":
-            raise ValueError("follow_uav only supports 'pose'/'estimate'; use follow_uav_odom for odom mode")
+            raise ValueError(
+                "follow_uav only supports 'pose'/'estimate'; "
+                f"got leader_input_type={leader_input_type_raw!r}; "
+                "use follow_uav_odom for odom mode"
+            )
 
         self.tick_hz = float(self.get_parameter("tick_hz").value)
         self.d_target = float(self.get_parameter("d_target").value)
         self.d_max = float(self.get_parameter("d_max").value)
         self.z_alt = float(self.get_parameter("z_alt").value)
-        self.seed_uav_cmd_on_start = bool(self.get_parameter("seed_uav_cmd_on_start").value)
+        self.d_euclidean = float(self.get_parameter("d_euclidean").value)
+        self.manual_override_enable = coerce_bool(self.get_parameter("manual_override_enable").value)
+        self.seed_uav_cmd_on_start = coerce_bool(self.get_parameter("seed_uav_cmd_on_start").value)
+        self.startup_reposition_enable = coerce_bool(self.get_parameter("startup_reposition_enable").value)
+        self.startup_reposition_tol_m = float(self.get_parameter("startup_reposition_tol_m").value)
         self.uav_start_x = float(self.get_parameter("uav_start_x").value)
         self.uav_start_y = float(self.get_parameter("uav_start_y").value)
         self.uav_start_yaw = math.radians(float(self.get_parameter("uav_start_yaw_deg").value))
 
-        self.follow_yaw = bool(self.get_parameter("follow_yaw").value)
+        self.follow_yaw = coerce_bool(self.get_parameter("follow_yaw").value)
 
         # Detached camera pitch should track the chosen follow geometry. These
         # offsets mirror the simulator camera mount so the same z_alt/d_target
@@ -130,7 +147,7 @@ class FollowUav(Node):
         self.base_follow_speed_mps = self.follow_speed_mps
         self.base_follow_yaw_gain = self.follow_yaw_gain
         self.leader_status_topic = str(self.get_parameter("leader_status_topic").value)
-        self.quality_scale_enable = bool(self.get_parameter("quality_scale_enable").value)
+        self.quality_scale_enable = coerce_bool(self.get_parameter("quality_scale_enable").value)
         self.quality_status_timeout_s = float(self.get_parameter("quality_status_timeout_s").value)
         self.quality_conf_min = float(self.get_parameter("quality_conf_min").value)
         self.quality_conf_good = float(self.get_parameter("quality_conf_good").value)
@@ -138,18 +155,18 @@ class FollowUav(Node):
         self.quality_min_step_scale = float(self.get_parameter("quality_min_step_scale").value)
         self.quality_hold_step_scale = float(self.get_parameter("quality_hold_step_scale").value)
         self.quality_deadband_boost_m = float(self.get_parameter("quality_deadband_boost_m").value)
-        self.state_machine_enable = bool(self.get_parameter("state_machine_enable").value)
+        self.state_machine_enable = coerce_bool(self.get_parameter("state_machine_enable").value)
         self.state_ok_debounce_ticks = int(self.get_parameter("state_ok_debounce_ticks").value)
         self.state_bad_debounce_ticks = int(self.get_parameter("state_bad_debounce_ticks").value)
-        self.traj_enable = bool(self.get_parameter("traj_enable").value)
-        self.traj_rel_frame_enable = bool(self.get_parameter("traj_rel_frame_enable").value)
+        self.traj_enable = coerce_bool(self.get_parameter("traj_enable").value)
+        self.traj_rel_frame_enable = coerce_bool(self.get_parameter("traj_rel_frame_enable").value)
         self.traj_rel_smooth_alpha = float(self.get_parameter("traj_rel_smooth_alpha").value)
         self.traj_pos_gain = float(self.get_parameter("traj_pos_gain").value)
         self.traj_max_speed_mps = float(self.get_parameter("traj_max_speed_mps").value)
         self.traj_max_accel_mps2 = float(self.get_parameter("traj_max_accel_mps2").value)
         self.traj_quality_min_scale = float(self.get_parameter("traj_quality_min_scale").value)
         self.traj_reset_on_yaw_jump_rad = float(self.get_parameter("traj_reset_on_yaw_jump_rad").value)
-        self.estimate_heading_from_motion_enable = bool(self.get_parameter("estimate_heading_from_motion_enable").value)
+        self.estimate_heading_from_motion_enable = coerce_bool(self.get_parameter("estimate_heading_from_motion_enable").value)
         self.estimate_heading_alpha = float(self.get_parameter("estimate_heading_alpha").value)
         self.estimate_heading_min_speed_mps = float(self.get_parameter("estimate_heading_min_speed_mps").value)
         self.estimate_heading_max_dt_s = float(self.get_parameter("estimate_heading_max_dt_s").value)
@@ -162,6 +179,13 @@ class FollowUav(Node):
                 f"d_max ({self.d_max}) <= d_target ({self.d_target}). "
                 f"Leash will trigger/clamp often. Recommend d_max > d_target."
             )
+        if self.startup_reposition_tol_m < 0.0:
+            raise ValueError("startup_reposition_tol_m must be >= 0")
+        if self.d_euclidean <= 0.0:
+            self.d_euclidean = math.hypot(self.d_target, self.z_alt)
+        self.d_euclidean = max(self.d_euclidean, 0.01)
+        self.d_euclidean_xy_ratio = self.d_target / self.d_euclidean
+        self.d_euclidean_z_ratio = self.z_alt / self.d_euclidean
         if not (0.0 <= self.smooth_alpha <= 1.0):
             raise ValueError("smooth_alpha must be in [0,1]")
         if self.follow_speed_mps < 0.0:
@@ -211,6 +235,7 @@ class FollowUav(Node):
 
         # ---------- State ----------
         self.have_ugv = False
+        self.have_seen_ugv_pose = False
         self.ugv_pose = Pose2D(0.0, 0.0, 0.0)
         self.last_ugv_stamp: Optional[Time] = None
 
@@ -277,14 +302,18 @@ class FollowUav(Node):
         )
 
         self.timer = self.create_timer(1.0 / self.tick_hz, self.on_tick)
+        self.add_on_set_parameters_callback(self._on_set_parameters)
 
         self.get_logger().info(
             f"[follow_uav] Started: world={self.world}, uav={self.uav_name}, "
             f"leader_input={leader_desc}, tick={self.tick_hz}Hz, "
             f"d_target={self.d_target}, d_max={self.d_max}, z={self.z_alt}, "
+            f"d_euclidean={self.d_euclidean}, "
+            f"manual_override_enable={self.manual_override_enable}, "
             f"pose_timeout_s={self.pose_timeout_s}, min_cmd_period_s={self.min_cmd_period_s}, "
             f"smooth_alpha={self.smooth_alpha}, follow_speed_mps={self.follow_speed_mps}, "
             f"seed_uav_cmd_on_start={self.seed_uav_cmd_on_start}, "
+            f"startup_reposition_enable={self.startup_reposition_enable}, "
             f"uav_start=({self.uav_start_x:.2f},{self.uav_start_y:.2f},{math.degrees(self.uav_start_yaw):.1f}deg), "
             f"cmd_xy_deadband_m={self.cmd_xy_deadband_m}, follow_yaw_gain={self.follow_yaw_gain}, "
             f"yaw_deadband_rad={self.yaw_deadband_rad}, yaw_update_xy_gate_m={self.yaw_update_xy_gate_m}, "
@@ -302,6 +331,59 @@ class FollowUav(Node):
             f"estimate_heading_max_dt_s={self.estimate_heading_max_dt_s}, "
             f"uav_cmd_topic=/{self.uav_name}/psdk_ros2/flight_control_setpoint_ENUposition_yaw"
         )
+
+    def _on_set_parameters(self, params):
+        updates = {}
+        bool_updates = {}
+        for param in params:
+            if param.name == "manual_override_enable":
+                bool_updates[param.name] = coerce_bool(param.value)
+                continue
+            if param.name not in ("d_euclidean", "d_target", "z_alt"):
+                continue
+            try:
+                value = float(param.value)
+            except Exception as exc:
+                return SetParametersResult(successful=False, reason=f"invalid {param.name}: {exc}")
+            if value <= 0.0:
+                return SetParametersResult(successful=False, reason=f"{param.name} must be > 0")
+            updates[param.name] = value
+
+        if not updates and not bool_updates:
+            return SetParametersResult(successful=True)
+
+        if updates:
+            if "d_target" in updates or "z_alt" in updates:
+                new_d_target = updates.get("d_target", self.d_target)
+                new_z_alt = updates.get("z_alt", self.z_alt)
+                new_d_euclidean = math.hypot(new_d_target, new_z_alt)
+            else:
+                new_d_euclidean = updates["d_euclidean"]
+                new_d_target = new_d_euclidean * self.d_euclidean_xy_ratio
+                new_z_alt = new_d_euclidean * self.d_euclidean_z_ratio
+
+            if new_d_target >= self.d_max:
+                return SetParametersResult(successful=False, reason="d_target must remain < d_max")
+
+            self.d_target = max(new_d_target, 0.01)
+            self.z_alt = max(new_z_alt, 0.01)
+            self.d_euclidean = max(new_d_euclidean, 0.01)
+            self.d_euclidean_xy_ratio = self.d_target / self.d_euclidean
+            self.d_euclidean_z_ratio = self.z_alt / self.d_euclidean
+
+        if bool_updates:
+            self.manual_override_enable = bool_updates["manual_override_enable"]
+
+        update_parts = []
+        if updates:
+            update_parts.append(
+                f"d_target={self.d_target:.2f}, z_alt={self.z_alt:.2f}, d_euclidean={self.d_euclidean:.2f}"
+            )
+        if bool_updates:
+            update_parts.append(f"manual_override_enable={self.manual_override_enable}")
+        if update_parts:
+            self.get_logger().info("[follow_uav] Runtime parameter update: " + ", ".join(update_parts))
+        return SetParametersResult(successful=True)
 
     def on_leader_status(self, msg: String):
         fields = {}
@@ -576,6 +658,7 @@ class FollowUav(Node):
         self.ugv_pose = Pose2D(float(p.x), float(p.y), float(yaw))
         self.ugv_z = float(p.z)
         self.have_ugv = True
+        self.have_seen_ugv_pose = True
 
         try:
             self.last_ugv_stamp = Time.from_msg(msg.header.stamp)
@@ -777,12 +860,36 @@ class FollowUav(Node):
 
         return Pose2D(xt, yt, yaw_cmd)
 
+    def _maybe_publish_startup_reposition(self, now: Time) -> bool:
+        if not self.startup_reposition_enable:
+            return False
+        if self.have_seen_ugv_pose:
+            return False
+        current_uav = self._current_uav_pose()
+        current_z = self._current_uav_z()
+        dx = self.uav_start_x - current_uav.x
+        dy = self.uav_start_y - current_uav.y
+        dz = self.z_alt - current_z
+        if math.hypot(dx, dy) <= self.startup_reposition_tol_m and abs(dz) <= self.startup_reposition_tol_m:
+            return False
+        self.publish_legacy_uav_command(self.uav_start_x, self.uav_start_y, self.z_alt, self.uav_start_yaw)
+        self.publish_pose_cmd(self.uav_start_x, self.uav_start_y, self.z_alt, self.uav_start_yaw)
+        self.publish_pose_cmd_odom(self.uav_start_x, self.uav_start_y, self.z_alt, self.uav_start_yaw)
+        self.uav_cmd = Pose2D(self.uav_start_x, self.uav_start_y, self.uav_start_yaw)
+        self.have_uav_cmd = True
+        self.last_cmd_time = now
+        return True
+
     def on_tick(self):
         now = self.get_clock().now()
+        if self.manual_override_enable:
+            self._set_follow_state("MANUAL")
+            return
         current_uav = self._current_uav_pose()
 
-        # Need fresh UGV pose
         if not self.ugv_pose_is_fresh(now):
+            if self.can_send_command_now(now) and self._maybe_publish_startup_reposition(now):
+                return
             self._update_follow_state("HOLD")
             return
 
@@ -815,9 +922,12 @@ class FollowUav(Node):
         # Confidence/latency-aware command shaping for estimate-mode: preserve follow+leash
         # semantics while reducing aggression on noisy/intermittent perception.
         effective_follow_speed_mps = self._effective_follow_speed_mps()
-        yaw_cmd = self._solve_yaw_to_target(
-            current_uav.x, current_uav.y, leader_for_follow.x, leader_for_follow.y
-        )
+        if self.follow_yaw:
+            yaw_cmd = self._solve_yaw_to_target(
+                current_uav.x, current_uav.y, leader_for_follow.x, leader_for_follow.y
+            )
+        else:
+            yaw_cmd = current_uav.yaw
         _, _, anchor_cross_error = self._anchor_errors(leader_for_follow, anchor_target, current_uav)
         yaw_error = wrap_pi(yaw_cmd - current_uav.yaw)
         effective_follow_yaw_gain = self._effective_follow_yaw_gain(anchor_cross_error, yaw_error)

@@ -8,17 +8,36 @@ from rclpy.time import Time
 
 from geometry_msgs.msg import PointStamped, PoseStamped
 from nav_msgs.msg import Odometry
-from std_msgs.msg import Float32, Float64
-from tf_transformations import quaternion_from_euler
+from std_msgs.msg import Float32, Float64, String
 
 from lrs_halmstad.follow_math import (
     Pose2D,
     camera_xy_from_uav_pose,
+    coerce_bool,
     compute_camera_tilt_deg,
     compute_leader_look_target,
     wrap_pi,
     yaw_from_quat,
 )
+
+
+def quaternion_from_euler(roll: float, pitch: float, yaw: float) -> tuple[float, float, float, float]:
+    half_roll = 0.5 * float(roll)
+    half_pitch = 0.5 * float(pitch)
+    half_yaw = 0.5 * float(yaw)
+
+    cr = math.cos(half_roll)
+    sr = math.sin(half_roll)
+    cp = math.cos(half_pitch)
+    sp = math.sin(half_pitch)
+    cy = math.cos(half_yaw)
+    sy = math.sin(half_yaw)
+
+    x = sr * cp * cy - cr * sp * sy
+    y = cr * sp * cy + sr * cp * sy
+    z = cr * cp * sy - sr * sp * cy
+    w = cr * cp * cy + sr * sp * sy
+    return (x, y, z, w)
 
 
 def should_prefer_command_pose(
@@ -52,6 +71,17 @@ def apply_deadband_command(
         return float(previous_value)
     return float(target_value)
 
+
+TRACKABLE_ESTIMATOR_STATES = frozenset({"OK"})
+
+
+def parse_status_field(status_line: str, key: str) -> Optional[str]:
+    prefix = f"{key}="
+    for token in status_line.split():
+        if token.startswith(prefix):
+            return token[len(prefix):]
+    return None
+
 class CameraTracker(Node):
     def __init__(self):
         super().__init__("camera_tracker")
@@ -60,6 +90,7 @@ class CameraTracker(Node):
         self.declare_parameter("leader_input_type", "odom")
         self.declare_parameter("leader_odom_topic", "/a201_0000/platform/odom/filtered")
         self.declare_parameter("leader_pose_topic", "/coord/leader_estimate")
+        self.declare_parameter("leader_status_topic", "/coord/leader_estimate_status")
         self.declare_parameter("uav_camera_mode", "integrated_joint")
         self.declare_parameter("camera_mount_pitch_deg", 45.0)
         self.declare_parameter("uav_pose_cmd_topic", "")
@@ -74,7 +105,7 @@ class CameraTracker(Node):
         self.declare_parameter("camera_yaw_offset_deg", 0.0)
         self.declare_parameter("camera_pan_sign", 1.0)
         self.declare_parameter("default_pan_deg", 0.0)
-        self.declare_parameter("pan_enable", False)
+        self.declare_parameter("pan_enable", True)
         self.declare_parameter("default_tilt_deg", 0.0)
         self.declare_parameter("tilt_enable", True)
         self.declare_parameter("tilt_deadband_deg", 0.0)
@@ -83,6 +114,7 @@ class CameraTracker(Node):
         self.leader_input_type = str(self.get_parameter("leader_input_type").value).strip().lower()
         self.leader_odom_topic = str(self.get_parameter("leader_odom_topic").value)
         self.leader_pose_topic = str(self.get_parameter("leader_pose_topic").value)
+        self.leader_status_topic = str(self.get_parameter("leader_status_topic").value).strip()
         self.uav_camera_mode = str(self.get_parameter("uav_camera_mode").value).strip().lower()
         self.camera_mount_pitch_deg = float(self.get_parameter("camera_mount_pitch_deg").value)
         self.uav_pose_cmd_topic = str(self.get_parameter("uav_pose_cmd_topic").value).strip()
@@ -97,9 +129,9 @@ class CameraTracker(Node):
         self.camera_yaw_offset_deg = float(self.get_parameter("camera_yaw_offset_deg").value)
         self.camera_pan_sign = float(self.get_parameter("camera_pan_sign").value)
         self.default_pan_deg = float(self.get_parameter("default_pan_deg").value)
-        self.pan_enable = bool(self.get_parameter("pan_enable").value)
+        self.pan_enable = coerce_bool(self.get_parameter("pan_enable").value)
         self.default_tilt_deg = float(self.get_parameter("default_tilt_deg").value)
-        self.tilt_enable = bool(self.get_parameter("tilt_enable").value)
+        self.tilt_enable = coerce_bool(self.get_parameter("tilt_enable").value)
         self.tilt_deadband_deg = max(0.0, float(self.get_parameter("tilt_deadband_deg").value))
 
         if self.leader_input_type == "estimate":
@@ -117,6 +149,10 @@ class CameraTracker(Node):
         self.leader_pose = Pose2D(0.0, 0.0, 0.0)
         self.leader_z = 0.0
         self.last_leader_stamp: Optional[Time] = None
+        self.last_leader_status_state: Optional[str] = None
+        self.last_leader_status_stamp: Optional[Time] = None
+        self.last_trackable_leader_pose: Optional[Pose2D] = None
+        self.last_trackable_leader_z: Optional[float] = None
 
         self.have_uav_actual = False
         self.uav_actual_pose = Pose2D(0.0, 0.0, 0.0)
@@ -128,6 +164,7 @@ class CameraTracker(Node):
         self.uav_cmd_z = 0.0
         self.last_uav_cmd_stamp: Optional[Time] = None
         self.last_tilt_cmd_deg: Optional[float] = None
+        self.last_pan_cmd_deg: Optional[float] = None
 
         if self.leader_input_type == "odom":
             self.leader_sub = self.create_subscription(
@@ -143,6 +180,12 @@ class CameraTracker(Node):
                 self.on_leader_pose,
                 10,
             )
+            self.leader_status_sub = self.create_subscription(
+                String,
+                self.leader_status_topic,
+                self.on_leader_status,
+                10,
+            ) if self.leader_status_topic else None
 
         self.uav_sub = self.create_subscription(
             PoseStamped,
@@ -237,11 +280,34 @@ class CameraTracker(Node):
         except Exception:
             self.last_uav_cmd_stamp = self.get_clock().now()
 
+    def on_leader_status(self, msg: String) -> None:
+        state = parse_status_field(msg.data, "state")
+        if not state:
+            return
+        self.last_leader_status_state = state.strip().upper()
+        self.last_leader_status_stamp = self.get_clock().now()
+
     def leader_pose_is_fresh(self, now: Time) -> bool:
         if not self.have_leader or self.last_leader_stamp is None:
             return False
         age_s = (now - self.last_leader_stamp).nanoseconds * 1e-9
         return age_s <= self.pose_timeout_s
+
+    def leader_status_is_fresh(self, now: Time) -> bool:
+        if self.last_leader_status_stamp is None:
+            return False
+        age_s = (now - self.last_leader_status_stamp).nanoseconds * 1e-9
+        return age_s <= self.pose_timeout_s
+
+    def leader_pose_is_trackable(self, now: Time) -> bool:
+        if not self.leader_pose_is_fresh(now):
+            return False
+        if self.leader_input_type != "pose":
+            return True
+        if self.leader_status_topic:
+            if self.last_leader_status_state is None or not self.leader_status_is_fresh(now):
+                return False
+        return self.last_leader_status_state in TRACKABLE_ESTIMATOR_STATES
 
     def _prefer_uav_cmd_pose(self, now: Time) -> bool:
         return should_prefer_command_pose(
@@ -277,19 +343,28 @@ class CameraTracker(Node):
             return self.uav_cmd_z
         return None
 
-    def _leader_look_target_xyz(self) -> tuple[float, float, float]:
+    def _leader_look_target_xyz_for(self, leader_pose: Pose2D, leader_z: float) -> tuple[float, float, float]:
         return compute_leader_look_target(
-            self.leader_pose.x,
-            self.leader_pose.y,
-            self.leader_pose.yaw,
-            self.leader_z,
+            leader_pose.x,
+            leader_pose.y,
+            leader_pose.yaw,
+            leader_z,
             self.leader_look_target_x_m,
             self.leader_look_target_y_m,
             self.camera_look_target_z_m,
         )
 
-    def _compute_tilt_deg(self, uav_pose: Pose2D, uav_z: float) -> float:
-        target_x, target_y, target_z = self._leader_look_target_xyz()
+    def _leader_look_target_xyz(self) -> tuple[float, float, float]:
+        return self._leader_look_target_xyz_for(self.leader_pose, self.leader_z)
+
+    def _compute_tilt_deg_for_target(
+        self,
+        uav_pose: Pose2D,
+        uav_z: float,
+        leader_pose: Pose2D,
+        leader_z: float,
+    ) -> float:
+        target_x, target_y, target_z = self._leader_look_target_xyz_for(leader_pose, leader_z)
         return compute_camera_tilt_deg(
             uav_pose.x,
             uav_pose.y,
@@ -304,6 +379,9 @@ class CameraTracker(Node):
             0.0,
         )
 
+    def _compute_tilt_deg(self, uav_pose: Pose2D, uav_z: float) -> float:
+        return self._compute_tilt_deg_for_target(uav_pose, uav_z, self.leader_pose, self.leader_z)
+
     def _command_tilt_deg(self, uav_pose: Pose2D, uav_z: float) -> float:
         if not self.tilt_enable:
             return self.default_tilt_deg
@@ -314,7 +392,12 @@ class CameraTracker(Node):
             return target_tilt_deg + self.camera_mount_pitch_deg
         return target_tilt_deg
 
-    def _compute_pan_deg(self, uav_pose: Pose2D) -> float:
+    def _compute_pan_deg_for_target(
+        self,
+        uav_pose: Pose2D,
+        leader_pose: Pose2D,
+        leader_z: float,
+    ) -> float:
         if not self.pan_enable:
             return self.default_pan_deg
         camera_x, camera_y = camera_xy_from_uav_pose(
@@ -324,7 +407,7 @@ class CameraTracker(Node):
             self.camera_x_offset_m,
             self.camera_y_offset_m,
         )
-        target_x, target_y, _ = self._leader_look_target_xyz()
+        target_x, target_y, _ = self._leader_look_target_xyz_for(leader_pose, leader_z)
         target_yaw = math.atan2(target_y - camera_y, target_x - camera_x)
         # Pan command is the raw residual from current UAV yaw to target yaw.
         # The simulator applies camera_pan_sign and camera_yaw_offset_deg when
@@ -332,7 +415,16 @@ class CameraTracker(Node):
         pan_rad = wrap_pi(target_yaw - uav_pose.yaw)
         return math.degrees(pan_rad)
 
-    def _publish_camera_debug(self, uav_pose: Pose2D, uav_z: float) -> None:
+    def _compute_pan_deg(self, uav_pose: Pose2D) -> float:
+        return self._compute_pan_deg_for_target(uav_pose, self.leader_pose, self.leader_z)
+
+    def _publish_camera_debug_for_target(
+        self,
+        uav_pose: Pose2D,
+        uav_z: float,
+        leader_pose: Pose2D,
+        leader_z: float,
+    ) -> None:
         camera_x, camera_y = camera_xy_from_uav_pose(
             uav_pose.x,
             uav_pose.y,
@@ -340,9 +432,9 @@ class CameraTracker(Node):
             self.camera_x_offset_m,
             self.camera_y_offset_m,
         )
-        target_x, target_y, target_z = self._leader_look_target_xyz()
+        target_x, target_y, target_z = self._leader_look_target_xyz_for(leader_pose, leader_z)
         target_yaw = math.atan2(target_y - camera_y, target_x - camera_x)
-        target_tilt = self._compute_tilt_deg(uav_pose, uav_z)
+        target_tilt = self._compute_tilt_deg_for_target(uav_pose, uav_z, leader_pose, leader_z)
         quat = quaternion_from_euler(0.0, -math.radians(target_tilt), target_yaw)
 
         pose_msg = PoseStamped()
@@ -369,35 +461,68 @@ class CameraTracker(Node):
         yaw_msg.data = float(target_yaw)
         self.target_camera_world_yaw_pub.publish(yaw_msg)
 
+    def _publish_camera_debug(self, uav_pose: Pose2D, uav_z: float) -> None:
+        self._publish_camera_debug_for_target(uav_pose, uav_z, self.leader_pose, self.leader_z)
+
     def on_tick(self) -> None:
         now = self.get_clock().now()
         uav_pose = self._tracking_uav_pose(now)
         uav_z = self._tracking_uav_z(now)
         if uav_pose is None or uav_z is None:
             return
-        leader_fresh = self.leader_pose_is_fresh(now)
-        if leader_fresh:
-            self._publish_camera_debug(uav_pose, uav_z)
+        leader_trackable = self.leader_pose_is_trackable(now)
+        tracked_leader_pose: Optional[Pose2D] = None
+        tracked_leader_z: Optional[float] = None
+        if leader_trackable:
+            self.last_trackable_leader_pose = Pose2D(
+                self.leader_pose.x,
+                self.leader_pose.y,
+                self.leader_pose.yaw,
+            )
+            self.last_trackable_leader_z = float(self.leader_z)
+            tracked_leader_pose = self.last_trackable_leader_pose
+            tracked_leader_z = self.last_trackable_leader_z
+
+        if tracked_leader_pose is not None and tracked_leader_z is not None:
+            self._publish_camera_debug_for_target(uav_pose, uav_z, tracked_leader_pose, tracked_leader_z)
 
         tilt_msg = Float64()
-        if self.tilt_enable and leader_fresh:
-            raw_tilt_cmd = self._command_tilt_deg(uav_pose, uav_z)
+        if self.tilt_enable and tracked_leader_pose is not None and tracked_leader_z is not None:
+            raw_tilt_cmd = self._compute_tilt_deg_for_target(
+                uav_pose,
+                uav_z,
+                tracked_leader_pose,
+                tracked_leader_z,
+            )
+            if self.uav_camera_mode == "integrated_joint":
+                raw_tilt_cmd += self.camera_mount_pitch_deg
             tilt_msg.data = apply_deadband_command(
                 raw_tilt_cmd,
                 self.last_tilt_cmd_deg,
                 self.tilt_deadband_deg,
             )
+        elif self.tilt_enable and self.last_tilt_cmd_deg is not None:
+            tilt_msg.data = float(self.last_tilt_cmd_deg)
         else:
             tilt_msg.data = float(self.default_tilt_deg)
         self.tilt_pub.publish(tilt_msg)
         self.last_tilt_cmd_deg = float(tilt_msg.data)
 
         pan_msg = Float64()
-        if self.pan_enable and leader_fresh:
-            pan_msg.data = float(self._compute_pan_deg(uav_pose))
+        if self.pan_enable and tracked_leader_pose is not None and tracked_leader_z is not None:
+            pan_msg.data = float(
+                self._compute_pan_deg_for_target(
+                    uav_pose,
+                    tracked_leader_pose,
+                    tracked_leader_z,
+                )
+            )
+        elif self.pan_enable and self.last_pan_cmd_deg is not None:
+            pan_msg.data = float(self.last_pan_cmd_deg)
         else:
             pan_msg.data = float(self.default_pan_deg)
         self.pan_pub.publish(pan_msg)
+        self.last_pan_cmd_deg = float(pan_msg.data)
 
 
 def main(args=None):

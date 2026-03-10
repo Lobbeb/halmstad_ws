@@ -1,4 +1,5 @@
 import os
+from pathlib import Path
 from ament_index_python.packages import get_package_prefix, get_package_share_directory
 
 from launch import LaunchDescription
@@ -20,18 +21,6 @@ def _gazebo_world_name(world_sub):
     ])
 
 
-def _default_world_pose(world_sub, solar_farm_value: str, default_value: str):
-    return PythonExpression([
-        "'",
-        solar_farm_value,
-        "' if '",
-        world_sub,
-        "' == 'solar_farm' else '",
-        default_value,
-        "'",
-    ])
-
-
 ARGUMENTS = [
     DeclareLaunchArgument(
         'rviz',
@@ -47,13 +36,8 @@ ARGUMENTS = [
     ),
     DeclareLaunchArgument(
         'world',
-        default_value='orchard',
+        default_value='warehouse',
         description='Gazebo World',
-    ),
-    DeclareLaunchArgument(
-        'setup_path',
-        default_value=[EnvironmentVariable('HOME'), '/clearpath/'],
-        description='Clearpath setup path',
     ),
     DeclareLaunchArgument(
         'use_sim_time',
@@ -71,10 +55,6 @@ ARGUMENTS = [
 
 for pose_element in ['x', 'y', 'yaw']:
     default_value = '0.0'
-    if pose_element == 'x':
-        default_value = _default_world_pose(LaunchConfiguration('world'), '-60.0', '0.0')
-    elif pose_element == 'y':
-        default_value = _default_world_pose(LaunchConfiguration('world'), '8.0', '0.0')
     ARGUMENTS.append(
         DeclareLaunchArgument(
             pose_element,
@@ -129,15 +109,26 @@ def _gz_launch(context, *args, **kwargs):
     return [gz_sim]
 
 
+def _default_clearpath_setup_path(pkg_lrs_halmstad: str) -> str:
+    configured_path = os.environ.get("LRS_CLEARPATH_SETUP_PATH", "").strip()
+    if configured_path:
+        return os.path.expanduser(configured_path)
+    share_path = Path(pkg_lrs_halmstad).resolve()
+    for parent in share_path.parents:
+        candidate = parent / "src" / "lrs_halmstad" / "clearpath"
+        if candidate.is_dir():
+            return str(candidate)
+    if len(share_path.parents) >= 4:
+        return str(share_path.parents[3] / "src" / "lrs_halmstad" / "clearpath")
+    return str((share_path.parent / "clearpath").resolve())
+
+
 def generate_launch_description():
     pkg_clearpath_gz = get_package_share_directory('clearpath_gz')
     pkg_lrs_halmstad = get_package_share_directory('lrs_halmstad')
     pkg_gui_plugins_prefix = get_package_prefix('lrs_halmstad_gui_plugins')
     robot_spawn_launch = PathJoinSubstitution([pkg_clearpath_gz, 'launch', 'robot_spawn.launch.py'])
     pkg_share_root = os.path.dirname(pkg_lrs_halmstad)
-    source_lrs_halmstad = os.path.join(os.path.expanduser('~'), 'halmstad_ws', 'src', 'lrs_halmstad')
-    source_models_dir = os.path.join(source_lrs_halmstad, 'models')
-    source_worlds_dir = os.path.join(source_lrs_halmstad, 'worlds')
     ament_prefix_path = os.getenv('AMENT_PREFIX_PATH', '')
     packages_paths = [
         os.path.join(prefix, 'share')
@@ -148,8 +139,6 @@ def generate_launch_description():
     gz_sim_resource_path = SetEnvironmentVariable(
         name='GZ_SIM_RESOURCE_PATH',
         value=[
-            source_models_dir + ':',
-            source_worlds_dir + ':',
             pkg_share_root + ':',
             os.path.join(pkg_lrs_halmstad, 'models') + ':',
             os.path.join(pkg_lrs_halmstad, 'worlds') + ':',
@@ -158,6 +147,14 @@ def generate_launch_description():
             ':' + ':'.join(packages_paths),
         ],
     )
+
+    arguments = ARGUMENTS + [
+        DeclareLaunchArgument(
+            'setup_path',
+            default_value=_default_clearpath_setup_path(pkg_lrs_halmstad),
+            description='Clearpath setup path',
+        ),
+    ]
 
     gz_gui_plugin_path = SetEnvironmentVariable(
         name='GZ_GUI_PLUGIN_PATH',
@@ -232,7 +229,7 @@ def generate_launch_description():
         ],
     )
 
-    ld = LaunchDescription(ARGUMENTS)
+    ld = LaunchDescription(arguments)
     ld.add_action(gz_sim_resource_path)
     ld.add_action(gz_gui_plugin_path)
     ld.add_action(gazebo_world_name)
