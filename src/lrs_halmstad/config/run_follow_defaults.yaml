@@ -70,21 +70,21 @@ follow_uav:
     leader_actual_heading_enable: false  # Use shared UGV body heading for anchor placement while still following estimator XY.
     leader_actual_heading_topic: /a201_0000/amcl_pose_odom  # Shared AMCL-derived UGV pose used to read the true chassis heading for the anchor.
     estimate_heading_from_motion_enable: true  # In estimate-follow, prefer leader motion heading over noisy pose yaw when actual heading is unavailable.
-    estimate_heading_alpha: 0.5  # EMA alpha for motion-derived heading/velocity.
-    estimate_heading_max_dt_s: 0.5  # Ignore heading inference updates if pose gaps exceed this.
+    estimate_heading_alpha: 1.0  # EMA alpha for motion-derived heading/velocity.
+    estimate_heading_max_dt_s: 1.0  # Ignore heading inference updates if pose gaps exceed this.
     estimate_heading_min_speed_mps: 0.15  # Minimum leader speed before motion-derived heading is trusted.
 
     #~~~~<< Trajectory shaping.
     traj_enable: true         # Enable velocity/acceleration-limited target shaping.
-    traj_max_accel_mps2: 5.0   # Max XY acceleration inside the trajectory shaper.
-    traj_max_speed_mps: 3.0     # Max XY speed inside the trajectory shaper.
-    traj_error_boost_ref_m: 1.5  # Relative anchor jump at which XY speed/accel boost reaches full strength.
-    traj_error_boost_max_scale: 2.0  # Max multiplier applied to XY speed/accel on large anchor jumps.
+    traj_max_accel_mps2: 8.0   # Max XY acceleration inside the trajectory shaper.
+    traj_max_speed_mps: 5.0     # Max XY speed inside the trajectory shaper.
+    traj_error_boost_ref_m: 1.0  # Relative anchor jump at which XY speed/accel boost reaches full strength.
+    traj_error_boost_max_scale: 3.0  # Max multiplier applied to XY speed/accel on large anchor jumps.
     traj_pos_gain: 1.6           # Position-to-velocity proportional gain in the trajectory shaper.
     traj_quality_min_scale: 0.40  # Lowest quality scale allowed inside trajectory shaping.
     traj_rel_frame_enable: true    # Shape the trajectory in the leader-relative frame instead of world frame.
-    traj_rel_smooth_alpha: 0.30     # EMA alpha on the relative target before velocity shaping.
-    traj_reset_on_yaw_jump_rad: 0.7  # Reset trajectory state if the leader yaw jumps more than this.
+    traj_rel_smooth_alpha: 1.0     # EMA alpha on the relative target before velocity shaping.
+    traj_reset_on_yaw_jump_rad: 1.0  # Reset trajectory state if the leader yaw jumps more than this.
     #--------------------------------------------------------------------------------------------------------------------
 
 #--------------<< Camera Tracker <<--------------------------------------------------------------------------------------
@@ -183,7 +183,7 @@ leader_estimator:
     depth_min_m: 0.2  # Minimum valid depth sample.
     depth_scale: 0.001  # Scale factor for 16UC1 depth images.
     ground_max_range_m: 50.0  # Maximum ground-plane intersection range accepted as valid.
-    ground_min_range_m: 2.0  # Minimum ground-plane intersection range accepted as valid.
+    ground_min_range_m: 0.25  # Minimum ground-plane intersection range accepted as valid; keep this low enough for the UGV to pass under the UAV without forcing const fallback.
     range_mode: auto  # Range source: auto, depth, ground, or const.
     target_ground_z_m: 0.0  # World Z of the target/ground plane used by ground-range projection.
     use_depth_range: true  # Allow depth to override constant range when available.

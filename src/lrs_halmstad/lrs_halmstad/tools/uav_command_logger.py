@@ -216,6 +216,19 @@ class UavCommandLogger(Node):
             return "na"
         return f"{value:+.{decimals}f}{unit}"
 
+    def _fmt_delta_with_value(
+        self,
+        delta: Optional[float],
+        value: Optional[float],
+        unit: str = "",
+        decimals: int = 2,
+        value_label: str = "cmd",
+    ) -> str:
+        return (
+            f"{self._fmt_signed(delta, unit, decimals)} "
+            f"{value_label}={self._fmt_signed(value, unit, decimals)}"
+        )
+
     def _body_summary_lines(self) -> list[str]:
         if self.body_cmd is None:
             return [
@@ -229,7 +242,6 @@ class UavCommandLogger(Node):
             step_dx = self.body_cmd.x - self.prev_body_cmd.x
             step_dy = self.body_cmd.y - self.prev_body_cmd.y
             step_dyaw_deg = math.degrees(wrap_pi(self.body_cmd.yaw - self.prev_body_cmd.yaw))
-
         if self.actual_uav_pose is None:
             dx = dy = dyaw_deg = None
         else:
@@ -240,9 +252,9 @@ class UavCommandLogger(Node):
         dt_ms = self._fmt_num(self.last_body_dt_ms, "ms", decimals=1)
         return [
             (
-                f"STEP: X={self._fmt_signed(step_dx, 'm')} "
-                f"Y={self._fmt_signed(step_dy, 'm')} "
-                f"Yaw={self._fmt_signed(step_dyaw_deg, 'deg')} "
+                f"STEP: X={self._fmt_delta_with_value(step_dx, self.body_cmd.x, 'm')} "
+                f"Y={self._fmt_delta_with_value(step_dy, self.body_cmd.y, 'm')} "
+                f"Yaw={self._fmt_delta_with_value(step_dyaw_deg, math.degrees(self.body_cmd.yaw), 'deg')} "
                 f"dt={dt_ms}"
             ),
             (
@@ -257,7 +269,7 @@ class UavCommandLogger(Node):
         delta = None
         if cmd_deg is not None and actual_deg is not None:
             delta = cmd_deg - actual_deg
-        return f"{name}: {self._fmt_signed(delta, ' deg')}"
+        return f"{name}: {self._fmt_delta_with_value(delta, cmd_deg, ' deg')}"
 
     def _direction_label(self, leader_pose: Optional[PoseState], heading_yaw: Optional[float]) -> str:
         if leader_pose is None or self.actual_uav_pose is None or heading_yaw is None:

@@ -187,6 +187,7 @@ ros2 launch lrs_halmstad run_follow.launch.py \
 - `leader_image_topic:=<topic>` (default `/<uav_name>/camera0/image_raw`)
 - `leader_camera_info_topic:=<topic>` (default `/<uav_name>/camera0/camera_info`)
 - `leader_depth_topic:=<topic>` (default empty / disabled)
+  Current limitation: the simulated UAV camera only bridges `/<uav_name>/camera0/image_raw` and `/<uav_name>/camera0/camera_info` today, so there is no UAV depth topic to wire here yet. Future implementation: add a UAV depth sensor/bridge before enabling estimator depth ranging from the UAV camera.
 - `leader_uav_pose_topic:=<topic>` (default `/<uav_name>/pose_cmd`)
 - `yolo_weights:=<weights.pt>` (relative paths resolve under `<workspace_root>/models`, for example `detection/yolo26/yolo26n.pt`)
 - `yolo_device:=cpu|cuda` (default `cpu`)

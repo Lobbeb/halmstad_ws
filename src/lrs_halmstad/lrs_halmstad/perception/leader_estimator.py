@@ -80,7 +80,7 @@ class LeaderEstimator(Node):
         self.declare_parameter("depth_min_m", 0.2, dyn_num)
         self.declare_parameter("depth_max_m", 100.0, dyn_num)
         self.declare_parameter("target_ground_z_m", 0.0, dyn_num)
-        self.declare_parameter("ground_min_range_m", 2.0, dyn_num)
+        self.declare_parameter("ground_min_range_m", 0.25, dyn_num)
         self.declare_parameter("ground_max_range_m", 50.0, dyn_num)
 
         self.declare_parameter("cam_yaw_offset_deg", 0.0, dyn_num)
@@ -718,7 +718,7 @@ class LeaderEstimator(Node):
                 lines = [
                     f"state={state} conf={self.last_det_conf:.2f} latency_ms={self.last_latency_ms:.1f}",
                     f"perception={(det.source or 'none') if det is not None else 'none'} track_id={(det.track_id if det is not None and det.track_id is not None else 'none')}",
-                    f"range={self.last_range_used_m:.2f}m src={self.last_range_source} bearing={self.last_bearing_used_deg:.1f}deg",
+                    f"est_range={self.last_range_used_m:.2f}m src={self.last_range_source} bearing={self.last_bearing_used_deg:.1f}deg",
                     f"heading_src={self.last_heading_source}",
                 ]
                 if self.last_estimate_pose is not None:
