@@ -9,7 +9,7 @@ TMUX_STATE_DIR="$STATE_DIR/tmux_sessions"
 WORLD="warehouse"
 SESSION="halmstad-1to1"
 MAP_PATH=""
-GUI=""
+GUI="false"
 TMUX_ATTACH=true
 DRY_RUN=false
 LAYOUT="panes"
@@ -22,6 +22,7 @@ NAV2_DELAY_OVERRIDE=""
 FOLLOW_DELAY_OVERRIDE=""
 SPAWN_ARGS=()
 FOLLOW_ARGS=()
+GAZEBO_ARGS=()
 
 if [ "$#" -gt 0 ] && [[ "$1" != *":="* ]] && [[ "$1" != *=* ]]; then
   WORLD="$1"
@@ -39,6 +40,9 @@ for arg in "$@"; do
       ;;
     gui:=*)
       GUI="${arg#gui:=}"
+      ;;
+    rtf:=*|real_time_factor:=*)
+      GAZEBO_ARGS+=("$arg")
       ;;
     tmux_attach:=*|attach:=*)
       TMUX_ATTACH="${arg#*:=}"
@@ -114,7 +118,7 @@ for arg in "$@"; do
       ;;
     *)
       echo "Unknown argument: $arg" >&2
-      echo "Usage: $0 [world] [mode:=follow|yolo] [camera:=detached|attached] [follow_yaw:=true|false] [pan_enable:=true|false] [use_tilt:=true|false] [use_actual_heading:=true|false] [leader_actual_pose_enable:=true|false] [publish_follow_debug_topics:=true|false] [publish_pose_cmd_topics:=true|false] [publish_camera_debug_topics:=true|false] [height:=7] [mount_pitch_deg:=45] [uav_name:=dji0] [weights:=...] [target:=...] [use_estimate:=true|false] [obb:=true|false] [tracker:=true|false] [external_detection_node:=detector|tracker] [tracker_config:=botsort.yaml] [folder:=...] [map:=/path/map.yaml] [gui:=true|false] [delay_s:=9] [spawn_delay_s:=9] [localization_delay_s:=11] [nav2_delay_s:=11] [follow_delay_s:=13] [session:=name] [tmux_attach:=true|false] [dry_run:=true|false] [layout:=windows|panes]" >&2
+      echo "Usage: $0 [world] [mode:=follow|yolo] [camera:=detached|attached] [follow_yaw:=true|false] [pan_enable:=true|false] [use_tilt:=true|false] [use_actual_heading:=true|false] [leader_actual_pose_enable:=true|false] [publish_follow_debug_topics:=true|false] [publish_pose_cmd_topics:=true|false] [publish_camera_debug_topics:=true|false] [height:=7] [mount_pitch_deg:=45] [uav_name:=dji0] [weights:=...] [target:=...] [use_estimate:=true|false] [obb:=true|false] [tracker:=true|false] [external_detection_node:=detector|tracker] [tracker_config:=botsort.yaml] [folder:=...] [map:=/path/map.yaml] [gui:=true|false] [rtf:=1.0] [delay_s:=9] [spawn_delay_s:=9] [localization_delay_s:=11] [nav2_delay_s:=11] [follow_delay_s:=13] [session:=name] [tmux_attach:=true|false] [dry_run:=true|false] [layout:=windows|panes]" >&2
       exit 2
       ;;
   esac
@@ -239,6 +243,9 @@ apply_default_delays
 GAZEBO_CMD=(./run.sh gazebo_sim "$WORLD")
 if [ -n "$GUI" ]; then
   GAZEBO_CMD+=("$GUI")
+fi
+if [ "${#GAZEBO_ARGS[@]}" -gt 0 ]; then
+  GAZEBO_CMD+=("${GAZEBO_ARGS[@]}")
 fi
 
 SPAWN_CMD=(./run.sh spawn_uav "$WORLD" "${SPAWN_ARGS[@]}")

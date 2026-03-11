@@ -11,7 +11,7 @@ follow_uav:
     use_sim_time: true  # Run this node on Gazebo/ROS simulation time.
 
     event_topic: /coord/events  # Topic for follow lifecycle/debug event strings.__________________
-                #<||  Leader input mode is selected by launch. The odom path runs the             ||:
+                #<||  Leader input mode is selected by launch. The odom path runs the            ||:
                 #<||  follow_uav_odom executable, and the estimate path runs follow_uav.         ||:
                 #<||  Keep this YAML mode-agnostic so estimate launches do not inherit odom.     ||:
     #<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<||:
@@ -22,13 +22,13 @@ follow_uav:
     z_alt: 7.0    # Commanded UAV altitude / map Z used by the follow controller.
     manual_override_enable: false  # Stop follow-generated UAV commands so an external manual controller can steer.
 
-    seed_uav_cmd_on_start: true  # Seed internal UAV command state from the startup pose before real pose arrives.
+    seed_uav_cmd_on_start: true      # Seed internal UAV command state from the startup pose before real pose arrives.
     startup_reposition_enable: false  # Before the first estimate arrives, move the UAV to the seeded startup pose.
-    startup_reposition_tol_m: 0.25  # Consider the startup reposition complete when XY/Z are within this tolerance.
-    startup_nudge_enable: false  # Send a one-shot XY nudge on startup to break deadlock if needed.
-    uav_start_x: -2.0           # Startup/seeded UAV X position in map frame.
-    uav_start_y: 0.0           # Startup/seeded UAV Y position in map frame.
-    uav_start_yaw_deg: 0.0    # Startup/seeded UAV yaw in degrees.
+    startup_reposition_tol_m: 0.25   # Consider the startup reposition complete when XY/Z are within this tolerance.
+    startup_nudge_enable: false     # Send a one-shot XY nudge on startup to break deadlock if needed.
+    uav_start_x: -2.0              # Startup/seeded UAV X position in map frame.
+    uav_start_y: 0.0              # Startup/seeded UAV Y position in map frame.
+    uav_start_yaw_deg: 0.0       # Startup/seeded UAV yaw in degrees.
 
     min_cmd_period_s: 0.05  # Minimum time between pose commands even if tick_hz is higher.
     pose_timeout_s: 3.0    # Treat leader/UAV pose data as stale after this many seconds.
@@ -40,12 +40,15 @@ follow_uav:
     follow_z_speed_mps: 8.0    # Hard cap on commanded vertical glide speed.
     follow_z_speed_gain: 3.0   # Proportional vertical speed gain from altitude error.
     follow_yaw_rate_rad_s: 3.0  # Max yaw rate cap; yaw_rate_rad_s / tick_hz = max rad step per tick.
-    follow_yaw_rate_gain: 2.0  # Proportional yaw-rate gain; min(gain * yaw_error, yaw_rate_rad_s).
+    follow_yaw_rate_gain: 3.0  # Proportional yaw-rate gain; min(gain * yaw_error, yaw_rate_rad_s).
+    follow_yaw_accel_rad_s2: 10.0  # Max yaw-rate acceleration so large heading jumps ramp quickly without jitter.
+    follow_yaw_accel_boost_ref_rad: 0.5  # Yaw error at which the yaw acceleration boost reaches full strength.
+    follow_yaw_accel_boost_max_scale: 2.0  # Max multiplier applied to yaw acceleration on large heading jumps.
     smooth_alpha: 1.0         # Target smoothing alpha; 1.0 = no XY smoothing.
     yaw_deadband_rad: 0.02    # DONT TOUCH! Hold yaw if the remaining yaw error is smaller than this.
     yaw_update_xy_gate_m: 0.0  # 0 disables it; otherwise yaw only updates when XY motion exceeds this.
-    publish_debug_topics: false  # Publish /<uav>/follow/{target,actual,error,debug} topics.
-    publish_pose_cmd_topics: false  # Publish legacy /<uav>/pose_cmd and /<uav>/pose_cmd/odom helper topics.
+    publish_debug_topics: true  # Publish /<uav>/follow/{target,actual,error,debug} topics.
+    publish_pose_cmd_topics: true  # Publish legacy /<uav>/pose_cmd and /<uav>/pose_cmd/odom helper topics.
     
     #--------------------------------------------------!!These are kept here for the non-odom follow path. !!------------
     #-----------------<< Estimate/YOLO-follow only <<--------------------------------------------------------------------
@@ -67,14 +70,16 @@ follow_uav:
     leader_actual_heading_enable: false  # Use shared UGV body heading for anchor placement while still following estimator XY.
     leader_actual_heading_topic: /a201_0000/amcl_pose_odom  # Shared AMCL-derived UGV pose used to read the true chassis heading for the anchor.
     estimate_heading_from_motion_enable: true  # In estimate-follow, prefer leader motion heading over noisy pose yaw when actual heading is unavailable.
-    estimate_heading_alpha: 1.0  # EMA alpha for motion-derived heading/velocity.
-    estimate_heading_max_dt_s: 1.0  # Ignore heading inference updates if pose gaps exceed this.
+    estimate_heading_alpha: 0.5  # EMA alpha for motion-derived heading/velocity.
+    estimate_heading_max_dt_s: 0.5  # Ignore heading inference updates if pose gaps exceed this.
     estimate_heading_min_speed_mps: 0.15  # Minimum leader speed before motion-derived heading is trusted.
 
     #~~~~<< Trajectory shaping.
     traj_enable: true         # Enable velocity/acceleration-limited target shaping.
     traj_max_accel_mps2: 5.0   # Max XY acceleration inside the trajectory shaper.
     traj_max_speed_mps: 3.0     # Max XY speed inside the trajectory shaper.
+    traj_error_boost_ref_m: 1.5  # Relative anchor jump at which XY speed/accel boost reaches full strength.
+    traj_error_boost_max_scale: 2.0  # Max multiplier applied to XY speed/accel on large anchor jumps.
     traj_pos_gain: 1.6           # Position-to-velocity proportional gain in the trajectory shaper.
     traj_quality_min_scale: 0.40  # Lowest quality scale allowed inside trajectory shaping.
     traj_rel_frame_enable: true    # Shape the trajectory in the leader-relative frame instead of world frame.
@@ -93,7 +98,14 @@ camera_tracker:
     pan_enable: true          # Publish tracked pan commands instead of holding default_pan_deg.
     tilt_enable: true        # Publish tracked tilt commands instead of holding default_tilt_deg.
     tilt_deadband_deg: 0.5  # DONT TOUCH! Hold the previous tilt if the target changes less than this.
-    publish_debug_topics: false  # Publish /<uav>/camera/target/* debug geometry topics.
+    image_center_correction_enable: true  # Add image-space centering correction on top of geometry-based pan/tilt.
+    image_center_correction_timeout_s: 0.5  # Ignore stale detector/tracker boxes when centering in the image.
+    image_center_deadband_deg: 0.5  # Ignore tiny image-angle errors to avoid camera chatter.
+    pan_image_center_gain: 0.5  # Scale horizontal image-angle error into extra pan correction.
+    pan_image_center_max_deg: 10.0  # Clamp image-based pan correction so it cannot dominate geometry pan.
+    tilt_image_center_gain: 0.8  # Scale vertical image-angle error into extra tilt correction.
+    tilt_image_center_max_deg: 10.0  # Clamp image-based tilt correction so it cannot dominate geometry tilt.
+    publish_debug_topics: true  # Publish /<uav>/camera/{target,debug}/* geometry and image-centering topics.
     pose_timeout_s: 3.0    # Treat leader/UAV pose data as stale after this many seconds.
     tick_hz: 20.0         # Camera pan/tilt update rate.
 

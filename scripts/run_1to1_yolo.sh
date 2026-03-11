@@ -10,7 +10,7 @@ EXTRA_ARGS=()
 USE_ESTIMATE="true"
 USE_ACTUAL_HEADING=""
 HAVE_LEADER_ACTUAL_HEADING_ENABLE="false"
-USE_OBB="false"
+USE_OBB="true"
 USE_TRACKER="false"
 EXTERNAL_DETECTION_NODE="detector"
 WEIGHTS_REL=""
@@ -25,6 +25,16 @@ HAVE_PUBLISH_CAMERA_DEBUG_TOPICS="false"
 DEFAULT_CUSTOM_WEIGHTS="detection/mymodels/warehouse_v1-v2-yolo26n.pt"
 DEFAULT_DETECTION_WEIGHTS="detection/mymodels/warehouse_v1-v2-yolo26n.pt"
 DEFAULT_OBB_WEIGHTS="obb/mymodels/warehouse-v1-yolo26n-obb.pt"
+MODELS_ROOT="${LRS_HALMSTAD_MODELS_ROOT:-$WS_ROOT/models}"
+
+case "$MODELS_ROOT" in
+  "~")
+    MODELS_ROOT="$HOME"
+    ;;
+  "~/"*)
+    MODELS_ROOT="$HOME/${MODELS_ROOT#\~/}"
+    ;;
+esac
 
 if [ -f "$SIM_WORLD_FILE" ]; then
   sim_world="$(cat "$SIM_WORLD_FILE" 2>/dev/null || true)"
@@ -187,6 +197,12 @@ case "$USE_TRACKER" in
     ;;
 esac
 
+if [ "$USE_TRACKER" = true ]; then
+  ARG_WEIGHTS_ROOT="obb"
+else
+  ARG_WEIGHTS_ROOT="detection"
+fi
+
 if [ "$USE_ESTIMATE" = true ]; then
   LEADER_MODE="estimate"
 else
@@ -210,14 +226,14 @@ if [ -z "$WEIGHTS_REL" ]; then
 elif [[ "$WEIGHTS_REL" != /* ]] && [ ! -e "$WS_ROOT/models/$WEIGHTS_REL" ]; then
   if [[ "$WEIGHTS_REL" == */* ]]; then
     if [[ "$WEIGHTS_REL" != detection/* && "$WEIGHTS_REL" != obb/* ]]; then
-      if [ "$USE_OBB" = true ]; then
+      if [ "$ARG_WEIGHTS_ROOT" = "obb" ]; then
         WEIGHTS_REL="obb/$WEIGHTS_REL"
       else
         WEIGHTS_REL="detection/$WEIGHTS_REL"
       fi
     fi
   else
-    if [ "$USE_OBB" = true ]; then
+    if [ "$ARG_WEIGHTS_ROOT" = "obb" ]; then
       if [ -n "$MODEL_SUBDIR" ]; then
         WEIGHTS_REL="obb/$MODEL_SUBDIR/$WEIGHTS_REL"
       else
@@ -231,6 +247,19 @@ elif [[ "$WEIGHTS_REL" != /* ]] && [ ! -e "$WS_ROOT/models/$WEIGHTS_REL" ]; then
       fi
     fi
   fi
+fi
+
+if [[ "$WEIGHTS_REL" = /* ]]; then
+  WEIGHTS_PATH="$WEIGHTS_REL"
+else
+  WEIGHTS_PATH="$MODELS_ROOT/$WEIGHTS_REL"
+fi
+
+if [ ! -f "$WEIGHTS_PATH" ]; then
+  echo "YOLO weights file not found: $WEIGHTS_PATH" >&2
+  echo "Resolved from weights:=${WEIGHTS_REL}" >&2
+  echo "Use an existing absolute path or a path relative to: $MODELS_ROOT" >&2
+  exit 2
 fi
 
 if [ "$USE_ESTIMATE" = true ]; then

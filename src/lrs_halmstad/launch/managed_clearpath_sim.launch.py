@@ -1,4 +1,6 @@
+import hashlib
 import os
+import re
 from pathlib import Path
 from ament_index_python.packages import get_package_prefix, get_package_share_directory
 
@@ -51,6 +53,16 @@ ARGUMENTS = [
         choices=['true', 'false'],
         description='Auto-start Gazebo simulation',
     ),
+    DeclareLaunchArgument(
+        'real_time_factor',
+        default_value='1.0',
+        description='Gazebo target real-time factor. >1.0 runs faster than real time if the machine can keep up.',
+    ),
+    DeclareLaunchArgument(
+        'rtf',
+        default_value='',
+        description='Alias for real_time_factor.',
+    ),
 ]
 
 for pose_element in ['x', 'y', 'yaw']:
@@ -76,6 +88,9 @@ def _gz_launch(context, *args, **kwargs):
     pkg_lrs_halmstad = get_package_share_directory('lrs_halmstad')
     pkg_ros_gz_sim = get_package_share_directory('ros_gz_sim')
     world_name = LaunchConfiguration('world').perform(context)
+    real_time_factor = _resolve_real_time_factor(context)
+    world_sdf_path = _resolve_world_sdf_path(pkg_lrs_halmstad, world_name)
+    world_launch_path = _prepare_world_launch_path(world_sdf_path, world_name, real_time_factor)
 
     gz_sim_launch = PathJoinSubstitution([pkg_ros_gz_sim, 'launch', 'gz_sim.launch.py'])
     gui_config_path = os.path.join(pkg_lrs_halmstad, 'config', 'gui.config')
@@ -85,8 +100,7 @@ def _gz_launch(context, *args, **kwargs):
         auto_start_option = ' -r'
 
     gz_args = [
-        LaunchConfiguration('world'),
-        '.sdf',
+        world_launch_path,
         auto_start_option,
         ' -v 4',
     ]
@@ -107,6 +121,60 @@ def _gz_launch(context, *args, **kwargs):
     )
 
     return [gz_sim]
+
+
+def _resolve_real_time_factor(context) -> float:
+    raw_alias = LaunchConfiguration('rtf').perform(context).strip()
+    raw_value = raw_alias or LaunchConfiguration('real_time_factor').perform(context).strip()
+    if not raw_value:
+        return 1.0
+    try:
+        value = float(raw_value)
+    except ValueError as exc:
+        raise RuntimeError(f"Invalid real_time_factor/rtf value: '{raw_value}'") from exc
+    if value <= 0.0:
+        raise RuntimeError(f"real_time_factor/rtf must be > 0, got {value}")
+    return value
+
+
+def _resolve_world_sdf_path(pkg_lrs_halmstad: str, world_name: str) -> Path:
+    candidate = Path(os.path.expanduser(world_name))
+    if candidate.is_absolute():
+        if not candidate.is_file():
+            raise RuntimeError(f"World file not found: {candidate}")
+        return candidate.resolve()
+
+    world_file = world_name if world_name.endswith('.sdf') else f"{world_name}.sdf"
+    candidate = (Path(pkg_lrs_halmstad) / 'worlds' / world_file).resolve()
+    if not candidate.is_file():
+        raise RuntimeError(f"World file not found: {candidate}")
+    return candidate
+
+
+def _prepare_world_launch_path(world_sdf_path: Path, world_name: str, real_time_factor: float) -> str:
+    if abs(real_time_factor - 1.0) <= 1e-9:
+        return str(world_sdf_path)
+
+    sdf_text = world_sdf_path.read_text(encoding='utf-8')
+    patched_text, count = re.subn(
+        r'(<real_time_factor>\s*)([^<]+)(\s*</real_time_factor>)',
+        rf'\g<1>{real_time_factor}\g<3>',
+        sdf_text,
+        count=1,
+    )
+    if count != 1:
+        raise RuntimeError(
+            f"Could not patch real_time_factor in world file: {world_sdf_path}"
+        )
+
+    tmp_dir = Path('/tmp/halmstad_ws/generated_worlds')
+    tmp_dir.mkdir(parents=True, exist_ok=True)
+    source_hash = hashlib.sha1(str(world_sdf_path.resolve()).encode('utf-8')).hexdigest()[:10]
+    rtf_token = f"{real_time_factor:g}".replace('.', 'p')
+    tmp_path = tmp_dir / f"{Path(world_name).stem}_{source_hash}_rtf_{rtf_token}.sdf"
+    if not tmp_path.is_file() or tmp_path.read_text(encoding='utf-8') != patched_text:
+        tmp_path.write_text(patched_text, encoding='utf-8')
+    return str(tmp_path)
 
 
 def _default_clearpath_setup_path(pkg_lrs_halmstad: str) -> str:

@@ -70,6 +70,9 @@ class FollowUav(Node):
         self.declare_parameter("cmd_xy_deadband_m", 0.0)
         self.declare_parameter("follow_yaw_rate_rad_s", 1.0)
         self.declare_parameter("follow_yaw_rate_gain", 2.0)
+        self.declare_parameter("follow_yaw_accel_rad_s2", 8.0)
+        self.declare_parameter("follow_yaw_accel_boost_ref_rad", 0.6)
+        self.declare_parameter("follow_yaw_accel_boost_max_scale", 2.0)
         self.declare_parameter("yaw_deadband_rad", 0.0)
         self.declare_parameter("yaw_update_xy_gate_m", 0.0)
         self.declare_parameter("camera_x_offset_m", 0.0)
@@ -97,6 +100,8 @@ class FollowUav(Node):
         self.declare_parameter("traj_pos_gain", 2.0)
         self.declare_parameter("traj_max_speed_mps", 1.5)
         self.declare_parameter("traj_max_accel_mps2", 3.0)
+        self.declare_parameter("traj_error_boost_ref_m", 2.5)
+        self.declare_parameter("traj_error_boost_max_scale", 1.8)
         self.declare_parameter("traj_quality_min_scale", 0.35)
         self.declare_parameter("traj_reset_on_yaw_jump_rad", 0.7)
         # Estimate-mode already receives a tracker-stabilized pose yaw from
@@ -154,6 +159,13 @@ class FollowUav(Node):
         self.cmd_xy_deadband_m = float(self.get_parameter("cmd_xy_deadband_m").value)
         self.follow_yaw_rate_rad_s = float(self.get_parameter("follow_yaw_rate_rad_s").value)
         self.follow_yaw_rate_gain = float(self.get_parameter("follow_yaw_rate_gain").value)
+        self.follow_yaw_accel_rad_s2 = float(self.get_parameter("follow_yaw_accel_rad_s2").value)
+        self.follow_yaw_accel_boost_ref_rad = float(
+            self.get_parameter("follow_yaw_accel_boost_ref_rad").value
+        )
+        self.follow_yaw_accel_boost_max_scale = float(
+            self.get_parameter("follow_yaw_accel_boost_max_scale").value
+        )
         self.yaw_deadband_rad = float(self.get_parameter("yaw_deadband_rad").value)
         self.yaw_update_xy_gate_m = float(self.get_parameter("yaw_update_xy_gate_m").value)
         self.camera_x_offset_m = float(self.get_parameter("camera_x_offset_m").value)
@@ -182,6 +194,8 @@ class FollowUav(Node):
         self.traj_pos_gain = float(self.get_parameter("traj_pos_gain").value)
         self.traj_max_speed_mps = float(self.get_parameter("traj_max_speed_mps").value)
         self.traj_max_accel_mps2 = float(self.get_parameter("traj_max_accel_mps2").value)
+        self.traj_error_boost_ref_m = float(self.get_parameter("traj_error_boost_ref_m").value)
+        self.traj_error_boost_max_scale = float(self.get_parameter("traj_error_boost_max_scale").value)
         self.traj_quality_min_scale = float(self.get_parameter("traj_quality_min_scale").value)
         self.traj_reset_on_yaw_jump_rad = float(self.get_parameter("traj_reset_on_yaw_jump_rad").value)
         self.estimate_heading_from_motion_enable = coerce_bool(self.get_parameter("estimate_heading_from_motion_enable").value)
@@ -232,6 +246,12 @@ class FollowUav(Node):
             raise ValueError("follow_yaw_rate_rad_s must be >= 0")
         if self.follow_yaw_rate_gain < 0.0:
             raise ValueError("follow_yaw_rate_gain must be >= 0")
+        if self.follow_yaw_accel_rad_s2 < 0.0:
+            raise ValueError("follow_yaw_accel_rad_s2 must be >= 0")
+        if self.follow_yaw_accel_boost_ref_rad < 0.0:
+            raise ValueError("follow_yaw_accel_boost_ref_rad must be >= 0")
+        if self.follow_yaw_accel_boost_max_scale < 1.0:
+            raise ValueError("follow_yaw_accel_boost_max_scale must be >= 1")
         if self.yaw_deadband_rad < 0.0:
             raise ValueError("yaw_deadband_rad must be >= 0")
         if self.yaw_update_xy_gate_m < 0.0:
@@ -260,6 +280,10 @@ class FollowUav(Node):
             raise ValueError("traj_max_speed_mps must be >= 0")
         if self.traj_max_accel_mps2 < 0.0:
             raise ValueError("traj_max_accel_mps2 must be >= 0")
+        if self.traj_error_boost_ref_m < 0.0:
+            raise ValueError("traj_error_boost_ref_m must be >= 0")
+        if self.traj_error_boost_max_scale < 1.0:
+            raise ValueError("traj_error_boost_max_scale must be >= 1")
         if not (0.0 <= self.traj_quality_min_scale <= 1.0):
             raise ValueError("traj_quality_min_scale must be in [0,1]")
         if self.traj_reset_on_yaw_jump_rad < 0.0:
@@ -298,6 +322,7 @@ class FollowUav(Node):
         self.traj_rel_vx = 0.0
         self.traj_rel_vy = 0.0
         self.traj_last_leader_yaw: Optional[float] = None
+        self.yaw_rate_cmd_rad_s = 0.0
         self.leader_motion_prev_xy: Optional[Tuple[float, float]] = None
         self.leader_motion_prev_stamp: Optional[Time] = None
         self.leader_motion_vx = 0.0
@@ -383,6 +408,9 @@ class FollowUav(Node):
             f"uav_start=({self.uav_start_x:.2f},{self.uav_start_y:.2f},{math.degrees(self.uav_start_yaw):.1f}deg), "
             f"cmd_xy_deadband_m={self.cmd_xy_deadband_m}, follow_yaw_rate_rad_s={self.follow_yaw_rate_rad_s}, "
             f"follow_yaw_rate_gain={self.follow_yaw_rate_gain}, "
+            f"follow_yaw_accel_rad_s2={self.follow_yaw_accel_rad_s2}, "
+            f"follow_yaw_accel_boost_ref_rad={self.follow_yaw_accel_boost_ref_rad}, "
+            f"follow_yaw_accel_boost_max_scale={self.follow_yaw_accel_boost_max_scale}, "
             f"yaw_deadband_rad={self.yaw_deadband_rad}, yaw_update_xy_gate_m={self.yaw_update_xy_gate_m}, "
             f"camera_offset_m=({self.camera_x_offset_m}, {self.camera_y_offset_m}, {self.camera_z_offset_m}), "
             f"leader_look_target_xy_m=({self.leader_look_target_x_m}, {self.leader_look_target_y_m}), "
@@ -395,6 +423,8 @@ class FollowUav(Node):
             f"traj_enable={self.traj_enable}, traj_rel_frame_enable={self.traj_rel_frame_enable}, "
             f"traj_rel_smooth_alpha={self.traj_rel_smooth_alpha}, traj_pos_gain={self.traj_pos_gain}, "
             f"traj_max_speed_mps={self.traj_max_speed_mps}, traj_max_accel_mps2={self.traj_max_accel_mps2}, "
+            f"traj_error_boost_ref_m={self.traj_error_boost_ref_m}, "
+            f"traj_error_boost_max_scale={self.traj_error_boost_max_scale}, "
             f"traj_quality_min_scale={self.traj_quality_min_scale}, traj_reset_on_yaw_jump_rad={self.traj_reset_on_yaw_jump_rad}, "
             f"estimate_heading_from_motion_enable={self.estimate_heading_from_motion_enable}, "
             f"leader_actual_heading_enable={self.leader_actual_heading_enable}, "
@@ -596,6 +626,22 @@ class FollowUav(Node):
         self.traj_rel_vy = 0.0
         self.traj_last_leader_yaw = None
 
+    def _reset_yaw_state(self) -> None:
+        self.yaw_rate_cmd_rad_s = 0.0
+
+    def _control_dt_s(self, now: Time) -> float:
+        dt = 1.0 / self.tick_hz
+        if self.last_cmd_time is not None:
+            dt = max(1e-3, (now - self.last_cmd_time).nanoseconds * 1e-9)
+        return min(dt, 1.0)
+
+    @staticmethod
+    def _error_boost_scale(error_mag: float, ref_mag: float, max_scale: float) -> float:
+        if ref_mag <= 1e-6 or max_scale <= 1.0:
+            return 1.0
+        alpha = max(0.0, min(1.0, error_mag / ref_mag))
+        return 1.0 + (max_scale - 1.0) * alpha
+
     def _update_leader_motion_model(self, pose: Pose2D, stamp: Optional[Time]) -> None:
         if stamp is None:
             return
@@ -670,10 +716,7 @@ class FollowUav(Node):
             self._reset_traj_state()
             return xt, yt
 
-        dt = 1.0 / self.tick_hz
-        if self.last_cmd_time is not None:
-            dt = max(1e-3, (now - self.last_cmd_time).nanoseconds * 1e-9)
-        dt = min(dt, 1.0)
+        dt = self._control_dt_s(now)
 
         if self.traj_last_leader_yaw is not None and self.traj_reset_on_yaw_jump_rad > 0.0:
             dyaw_leader = abs(wrap_pi(leader.yaw - self.traj_last_leader_yaw))
@@ -697,13 +740,19 @@ class FollowUav(Node):
 
         ex = ema_x - cur_rel_x
         ey = ema_y - cur_rel_y
+        err_mag = math.hypot(ex, ey)
 
         q_scale = 1.0
         if self.quality_scale_enable:
             q_scale = max(self.traj_quality_min_scale, quality_scale)
 
-        vmax = self.traj_max_speed_mps * q_scale
-        amax = self.traj_max_accel_mps2 * q_scale
+        jump_boost = self._error_boost_scale(
+            err_mag,
+            self.traj_error_boost_ref_m,
+            self.traj_error_boost_max_scale,
+        )
+        vmax = self.traj_max_speed_mps * q_scale * jump_boost
+        amax = self.traj_max_accel_mps2 * q_scale * jump_boost
 
         vdx = self.traj_pos_gain * ex
         vdy = self.traj_pos_gain * ey
@@ -1079,14 +1128,17 @@ class FollowUav(Node):
     def on_tick(self):
         now = self.get_clock().now()
         if self.manual_override_enable:
+            self._reset_yaw_state()
             self._set_follow_state("MANUAL")
             return
         current_uav = self._control_uav_pose()
         current_uav_z = self._control_uav_z()
+        control_dt = self._control_dt_s(now)
 
         if not self.ugv_pose_is_fresh(now):
             if self.can_send_command_now(now) and self._maybe_publish_startup_reposition(now):
                 return
+            self._reset_yaw_state()
             self._update_follow_state("HOLD")
             return
 
@@ -1104,6 +1156,7 @@ class FollowUav(Node):
 
         if self.follow_state == "HOLD":
             self._reset_traj_state()
+            self._reset_yaw_state()
             xt = current_uav.x
             yt = current_uav.y
         elif (self.have_uav_actual or self.have_uav_cmd) and self.smooth_alpha < 1.0:
@@ -1145,33 +1198,57 @@ class FollowUav(Node):
         self.last_debug_actual_yaw_unwrapped = yaw_actual_unwrapped
         yaw_target_unwrapped = yaw_actual_unwrapped + yaw_error
         yaw_wrap_correction = yaw_error_raw - yaw_error
-        yaw_rate_rad_s = min(
+        yaw_error_mag = abs(yaw_error)
+        yaw_rate_target = min(
             max(self.follow_yaw_rate_rad_s, 0.0),
-            max(self.follow_yaw_rate_gain, 0.0) * abs(yaw_error),
+            max(self.follow_yaw_rate_gain, 0.0) * yaw_error_mag,
         )
         if self.quality_scale_enable:
-            yaw_rate_rad_s *= max(0.0, min(1.0, quality_scale))
-        yaw_step_limit = yaw_rate_rad_s / self.tick_hz if yaw_rate_rad_s > 0.0 else 0.0
+            yaw_rate_target *= max(0.0, min(1.0, quality_scale))
+        yaw_rate_target = math.copysign(yaw_rate_target, yaw_error)
+        yaw_accel_scale = self._error_boost_scale(
+            yaw_error_mag,
+            self.follow_yaw_accel_boost_ref_rad,
+            self.follow_yaw_accel_boost_max_scale,
+        )
+        yaw_accel_rad_s2 = self.follow_yaw_accel_rad_s2 * yaw_accel_scale
+        if yaw_accel_rad_s2 > 0.0:
+            max_rate_delta = yaw_accel_rad_s2 * control_dt
+            rate_delta = yaw_rate_target - self.yaw_rate_cmd_rad_s
+            if rate_delta > max_rate_delta:
+                rate_delta = max_rate_delta
+            elif rate_delta < -max_rate_delta:
+                rate_delta = -max_rate_delta
+            self.yaw_rate_cmd_rad_s += rate_delta
+        else:
+            self.yaw_rate_cmd_rad_s = yaw_rate_target
+        yaw_step_limit = abs(self.yaw_rate_cmd_rad_s) * control_dt if abs(self.yaw_rate_cmd_rad_s) > 0.0 else 0.0
 
         if self.follow_state == "HOLD":
+            self._reset_yaw_state()
             yaw_cmd = current_uav.yaw
             yaw_mode = "hold_state"
         elif self._freeze_yaw_for_status():
+            self._reset_yaw_state()
             yaw_cmd = current_uav.yaw
             yaw_mode = "status_hold"
         elif not self.follow_yaw:
+            self._reset_yaw_state()
             yaw_cmd = current_uav.yaw
             yaw_mode = "follow_yaw_disabled"
         elif self.yaw_update_xy_gate_m > 0.0 and cmd_xy_delta < self.yaw_update_xy_gate_m:
+            self._reset_yaw_state()
             yaw_cmd = current_uav.yaw
             yaw_mode = "xy_gate_hold"
         elif self.yaw_deadband_rad > 0.0 and abs(yaw_error) < self.yaw_deadband_rad:
+            self._reset_yaw_state()
             yaw_cmd = current_uav.yaw
             yaw_mode = "deadband_hold"
         elif yaw_step_limit > 0.0 and abs(yaw_error) > yaw_step_limit:
             yaw_cmd = wrap_pi(current_uav.yaw + math.copysign(yaw_step_limit, yaw_error))
-            yaw_mode = "rate_limited"
+            yaw_mode = "accel_rate_limited"
         else:
+            self._reset_yaw_state()
             yaw_cmd = yaw_target
             yaw_mode = "direct_target"
 

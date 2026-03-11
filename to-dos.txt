@@ -10,3 +10,6 @@
 
 -   Fix the UAV movement when detecting and estimating given that estimations are good.
 
+-   Fix uav_command_logger so it prints everything in one block
+
+-   Merge with william_update and then main by creating tmp branch of this branch

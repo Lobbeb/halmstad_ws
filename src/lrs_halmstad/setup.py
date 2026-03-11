@@ -94,6 +94,7 @@ setup(
             "sim_dataset_capture = lrs_halmstad.dataset.sim_dataset_capture:main",
             "run_follow_control = lrs_halmstad.tools.follow_control:main",
             "run_follow_debug = lrs_halmstad.tools.follow_debug_cli:main",
+            "run_uav_command_logger = lrs_halmstad.tools.uav_command_logger:main",
             "run_dataset_make_obb = lrs_halmstad.dataset.make_obb:main",
             "run_dataset_sync_check = lrs_halmstad.dataset.sync_check:main",
             "ugv_nav2_driver = lrs_halmstad.nav.ugv_nav2_driver:main",
