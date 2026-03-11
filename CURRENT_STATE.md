@@ -2,17 +2,19 @@
 
 Assumption:
 - start in the workspace root
+- wrapper files now live under `scripts/`
+- user-facing entrypoints are `./run.sh <name>` and `./stop.sh <name>`
 
 ### Active Baseline
 
 Recommended start/stop flow:
-1. `./run_tmux_1to1.sh warehouse`
-2. `./stop_tmux_1to1.sh warehouse`
+1. `./run.sh tmux_1to1 warehouse`
+2. `./stop.sh tmux_1to1 warehouse`
 
 Recommended tmux variants:
-- normal follow: `./run_tmux_1to1.sh warehouse`
-- YOLO detection path: `./run_tmux_1to1.sh warehouse mode:=yolo`
-- YOLO tracker path: `./run_tmux_1to1.sh warehouse mode:=yolo tracker:=true`
+- normal follow: `./run.sh tmux_1to1 warehouse`
+- YOLO detection path: `./run.sh tmux_1to1 warehouse mode:=yolo`
+- YOLO tracker path: `./run.sh tmux_1to1 warehouse mode:=yolo tracker:=true`
 
 Current tmux default:
 - `layout:=panes`
@@ -31,24 +33,24 @@ Per-stage delay overrides now exist:
 - `follow_delay_s:=...`
 
 Equivalent manual run order:
-1. `./run_gazebo_sim.sh warehouse`
-2. `./run_spawn_uav.sh warehouse`
-3. `./run_localization.sh warehouse`
-4. `./run_nav2.sh`
-5. `./run_1to1_follow.sh warehouse`
+1. `./run.sh gazebo_sim warehouse`
+2. `./run.sh spawn_uav warehouse`
+3. `./run.sh localization warehouse`
+4. `./run.sh nav2`
+5. `./run.sh 1to1_follow warehouse`
 
 ### Main Runtime Chain
 
 Top-level wrapper chain:
-- `run_tmux_1to1.sh`
-  - runs `run_gazebo_sim.sh`
-  - runs `run_spawn_uav.sh`
-  - runs `run_localization.sh`
-  - runs `run_nav2.sh`
-  - runs `run_1to1_follow.sh` or `run_1to1_yolo.sh`
+- `scripts/run_tmux_1to1.sh`
+  - dispatches through `./run.sh gazebo_sim`
+  - dispatches through `./run.sh spawn_uav`
+  - dispatches through `./run.sh localization`
+  - dispatches through `./run.sh nav2`
+  - dispatches through `./run.sh 1to1_follow` or `./run.sh 1to1_yolo`
 
 Follow launch chain:
-- `run_1to1_follow.sh`
+- `scripts/run_1to1_follow.sh`
   - launches `src/lrs_halmstad/launch/run_1to1_follow.launch.py`
 - `run_1to1_follow.launch.py`
   - mostly forwards world/runtime arguments
@@ -64,7 +66,7 @@ Follow launch chain:
     - optional `leader_estimator`
 
 Spawn chain:
-- `run_spawn_uav.sh`
+- `scripts/run_spawn_uav.sh`
   - launches `spawn_uav_1to1.launch.py`
 - `spawn_uav_1to1.launch.py`
   - always spawns the UAV body
@@ -72,8 +74,8 @@ Spawn chain:
   - starts the pose bridge and delayed camera bridge
 
 Important separation:
-- `run_spawn_uav.sh` creates the Gazebo entities
-- `run_1to1_follow.sh` / `run_1to1_yolo.sh` start the runtime logic
+- `scripts/run_spawn_uav.sh` creates the Gazebo entities
+- `scripts/run_1to1_follow.sh` / `scripts/run_1to1_yolo.sh` start the runtime logic
 - nothing actually follows until the follow launch is running
 
 Current Python package layout under `src/lrs_halmstad/lrs_halmstad`:
@@ -165,15 +167,15 @@ Current selection logic:
   - starts `leader_detector`
 - `external_detection_node:=tracker`
   - starts `leader_tracker`
-- `run_1to1_yolo.sh tracker:=true`
+- `./run.sh 1to1_yolo tracker:=true`
   - sets `external_detection_node:=tracker`
 
 ### YOLO / Tracker Path
 
 Active YOLO wrapper:
-- `./run_1to1_yolo.sh warehouse`
+- `./run.sh 1to1_yolo warehouse`
 
-Current default behavior of `run_1to1_yolo.sh`:
+Current default behavior of `scripts/run_1to1_yolo.sh`:
 - `use_estimate:=true`
 - `leader_mode:=estimate`
 - `start_leader_estimator:=true`
@@ -188,13 +190,13 @@ Current default behavior of `run_1to1_yolo.sh`:
 
 Current test variants:
 - shared truth pose control instead of estimate:
-  - `./run_1to1_yolo.sh warehouse use_estimate:=false`
+  - `./run.sh 1to1_yolo warehouse use_estimate:=false`
 - tracker instead of plain detector:
-  - `./run_1to1_yolo.sh warehouse tracker:=true`
+  - `./run.sh 1to1_yolo warehouse tracker:=true`
 - explicit tracker config:
-  - `./run_1to1_yolo.sh warehouse tracker:=true tracker_config:=trackers/botsort.yaml`
+  - `./run.sh 1to1_yolo warehouse tracker:=true tracker_config:=botsort.yaml`
 - OBB weights:
-  - `./run_1to1_yolo.sh warehouse obb:=true`
+  - `./run.sh 1to1_yolo warehouse obb:=true`
 
 Current weights resolution:
 - detection default root: `models/detection/mymodels`
@@ -292,13 +294,17 @@ Detector:
 
 Tracker:
 - `predict_hz: 20.0`
-- `tracker_config: trackers/botsort.yaml`
+- `tracker_config: botsort.yaml`
 - `conf_threshold: 0.12`
 - `iou_threshold: 0.45`
 
 ### Runtime Helpers
 
-`run_follow_control.sh`
+Moved helper wrappers now live under `scripts/` and can be launched either
+directly as `./scripts/run_<name>.sh` or through the root dispatcher as
+`./run.sh <name>`.
+
+`scripts/run_follow_control.sh`
 - live tuning helper for follow parameters
 - wrapper now resolves the installed `run_follow_control` entrypoint from `lrs_halmstad.tools.follow_control`
 - current useful modes:
@@ -307,7 +313,7 @@ Tracker:
   - `--mode random`
 - the temporary direct manual pose-steering override path was removed
 
-`run_follow_debug.sh`
+`scripts/run_follow_debug.sh`
 - runtime analyzer for follow/camera behavior
 - wrapper now resolves the installed `run_follow_debug` entrypoint from `lrs_halmstad.tools.follow_debug_cli`
 - logs under:
@@ -322,10 +328,10 @@ Tracker:
 
 Current rule:
 - new dataset capture must use `/<ugv>/amcl_pose_odom`
-- `run_capture_dataset.sh` already enforces this
+- `./run.sh capture_dataset` already enforces this
 
 Current dataset additions:
-- `run_dataset_make_obb.sh`
+- `scripts/run_dataset_make_obb.sh`
   - wrapper for installed `run_dataset_make_obb` from `lrs_halmstad.dataset.make_obb`
   - creates `labels_obb/` from saved metadata/projected points
 - current generated OBB label dirs:
@@ -342,7 +348,7 @@ These old descriptions should not be trusted anymore:
 - `leader_estimator` as the monolithic YOLO + tracking + debounce + hold + reject node
 - notes about estimator hold/debounce reuse being the main active behavior
 - notes about the old direct YOLO path through `run_yolo.sh` / `run_follow_yolo.launch.py`
-- notes about manual pose-steering keyboard override in `run_follow_control.sh`
+- notes about manual pose-steering keyboard override in `scripts/run_follow_control.sh`
 - notes about the old `/home/ruben/clearpath` runtime path
 
 Also obsolete in the runbook:

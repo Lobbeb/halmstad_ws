@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-WS_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+WS_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 PERSPECTIVE_DIR="$WS_ROOT/perspectives"
 DEFAULT_PERSPECTIVE="$PERSPECTIVE_DIR/monitor_UGVUAV_with_YOLO"
 PERSPECTIVE="${1:-$DEFAULT_PERSPECTIVE}"

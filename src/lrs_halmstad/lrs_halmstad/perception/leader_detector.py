@@ -19,7 +19,6 @@ from lrs_halmstad.perception.yolo_common import (
     default_models_root,
     image_to_bgr,
     load_ultralytics_model,
-    load_yolov5_model,
     order_quad,
     resolve_yolo_weights_path,
     stamp_ns,
@@ -36,8 +35,6 @@ class LeaderDetector(Node):
         self.declare_parameter("out_topic", "/coord/leader_detection")
         self.declare_parameter("models_root", default_models_root(__file__))
         self.declare_parameter("yolo_weights", "")
-        self.declare_parameter("yolo_backend", "ultralytics")
-        self.declare_parameter("yolov5_repo_path", "")
         self.declare_parameter("device", "cpu")
         self.declare_parameter("conf_threshold", 0.05, dyn_num)
         self.declare_parameter("iou_threshold", 0.45, dyn_num)
@@ -59,8 +56,6 @@ class LeaderDetector(Node):
             str(self.get_parameter("yolo_weights").value).strip(),
             self.models_root,
         )
-        self.yolo_backend = str(self.get_parameter("yolo_backend").value).strip().lower()
-        self.yolov5_repo_path = str(self.get_parameter("yolov5_repo_path").value).strip()
         self.device = str(self.get_parameter("device").value)
         self.conf_threshold = float(self.get_parameter("conf_threshold").value)
         self.iou_threshold = float(self.get_parameter("iou_threshold").value)
@@ -76,8 +71,6 @@ class LeaderDetector(Node):
 
         if self.predict_hz <= 0.0:
             raise ValueError("predict_hz must be > 0")
-        if self.yolo_backend not in ("auto", "ultralytics", "yolov5"):
-            raise ValueError("yolo_backend must be one of: auto, ultralytics, yolov5")
 
         self.last_det_center: Optional[Tuple[float, float]] = None
         self.last_det_cls_id: Optional[int] = None
@@ -85,7 +78,6 @@ class LeaderDetector(Node):
         self.yolo_model = None
         self.yolo_ready = False
         self.yolo_error: Optional[str] = None
-        self.yolo_backend_active = "none"
         self._init_yolo()
 
         self.image_sub = self.create_subscription(Image, self.camera_topic, self.on_image, 10)
@@ -95,7 +87,7 @@ class LeaderDetector(Node):
         self.get_logger().info(
             "[leader_detector] Started: "
             f"image={self.camera_topic}, out={self.out_topic}, "
-            f"yolo_weights={self.yolo_weights or '<none>'}, backend={self.yolo_backend_active}, "
+            f"yolo_weights={self.yolo_weights or '<none>'}, "
             f"device={self.device}, predict_hz={self.predict_hz}"
         )
         self.emit_event("DETECTOR_NODE_START")
@@ -111,7 +103,6 @@ class LeaderDetector(Node):
         try:
             self.yolo_model = load_ultralytics_model(self.yolo_weights)
             self.yolo_ready = True
-            self.yolo_backend_active = "ultralytics"
             return True
         except RuntimeError as exc:
             self.yolo_error = str(exc)
@@ -119,20 +110,6 @@ class LeaderDetector(Node):
         except Exception as exc:
             self.yolo_error = f"yolo_load_failed_ultralytics:{exc}"
             self.get_logger().warn(f"[leader_detector] Failed to load ultralytics weights '{self.yolo_weights}': {exc}")
-            return False
-
-    def _init_yolo_yolov5(self) -> bool:
-        try:
-            self.yolo_model = load_yolov5_model(self.yolov5_repo_path, self.yolo_weights, self.device)
-            self.yolo_ready = True
-            self.yolo_backend_active = "yolov5"
-            return True
-        except RuntimeError as exc:
-            self.yolo_error = str(exc)
-            return False
-        except Exception as exc:
-            self.yolo_error = f"yolo_load_failed_yolov5:{exc}"
-            self.get_logger().warn(f"[leader_detector] Failed to load YOLOv5 weights '{self.yolo_weights}': {exc}")
             return False
 
     def _init_yolo(self) -> None:
@@ -143,15 +120,7 @@ class LeaderDetector(Node):
             self.yolo_error = f"file_not_found:{self.yolo_weights}"
             self.get_logger().warn(f"[leader_detector] YOLO weights file not found: {self.yolo_weights}")
             return
-        if self.yolo_backend == "ultralytics":
-            self._init_yolo_ultralytics()
-            return
-        if self.yolo_backend == "yolov5":
-            self._init_yolo_yolov5()
-            return
-        if self._init_yolo_ultralytics():
-            return
-        self._init_yolo_yolov5()
+        self._init_yolo_ultralytics()
 
     def _score_candidate(self, cand: Detection2D) -> float:
         score = cand.conf
@@ -203,6 +172,7 @@ class LeaderDetector(Node):
                 cls_id=cls_id,
                 cls_name=cls_name,
                 obb_corners=corners,
+                source="detector",
             )
             score = self._score_candidate(cand)
             if best is None or score > best_score:
@@ -257,62 +227,7 @@ class LeaderDetector(Node):
                 bbox=(x1, y1, x2, y2),
                 cls_id=cls_id,
                 cls_name=cls_name,
-            )
-            score = self._score_candidate(cand)
-            if best is None or score > best_score:
-                best = cand
-                best_score = score
-        return best
-
-    def _pick_detection_yolov5(self, img_bgr: np.ndarray) -> Optional[Detection2D]:
-        try:
-            if hasattr(self.yolo_model, "conf"):
-                self.yolo_model.conf = self.conf_threshold
-            if hasattr(self.yolo_model, "iou"):
-                self.yolo_model.iou = self.iou_threshold
-            results = self.yolo_model(img_bgr, size=self.imgsz)
-        except Exception as exc:
-            self.yolo_error = f"infer_failed_yolov5:{exc}"
-            self.get_logger().warn(f"[leader_detector] YOLO inference failed (yolov5): {exc}")
-            return None
-
-        preds = getattr(results, "xyxy", None)
-        if preds is None or len(preds) == 0:
-            return None
-        pred0 = preds[0]
-        try:
-            arr = pred0.detach().cpu().numpy() if hasattr(pred0, "detach") else pred0
-        except Exception:
-            try:
-                arr = pred0.cpu().numpy()
-            except Exception:
-                return None
-        if arr is None or len(arr) == 0:
-            return None
-
-        names = getattr(results, "names", None)
-        if names is None:
-            names = getattr(self.yolo_model, "names", {}) or {}
-
-        best: Optional[Detection2D] = None
-        best_score = -1e9
-        for row in arr:
-            try:
-                x1, y1, x2, y2 = [float(v) for v in row[:4]]
-                conf = float(row[4]) if len(row) > 4 else 0.0
-                cls_id = int(row[5]) if len(row) > 5 else None
-                cls_name = str(names.get(cls_id, "")) if cls_id is not None and hasattr(names, "get") else ""
-            except Exception:
-                continue
-            if not self._candidate_ok(cls_id, cls_name):
-                continue
-            cand = Detection2D(
-                u=0.5 * (x1 + x2),
-                v=0.5 * (y1 + y2),
-                conf=conf,
-                bbox=(x1, y1, x2, y2),
-                cls_id=cls_id,
-                cls_name=cls_name,
+                source="detector",
             )
             score = self._score_candidate(cand)
             if best is None or score > best_score:
@@ -323,8 +238,6 @@ class LeaderDetector(Node):
     def _pick_detection(self, img_bgr: np.ndarray) -> Optional[Detection2D]:
         if not self.yolo_ready or self.yolo_model is None:
             return None
-        if self.yolo_backend_active == "yolov5":
-            return self._pick_detection_yolov5(img_bgr)
         return self._pick_detection_ultralytics(img_bgr)
 
     def _publish_detection(self, msg: Image, det: Optional[Detection2D]) -> None:

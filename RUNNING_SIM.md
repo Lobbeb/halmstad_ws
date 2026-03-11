@@ -4,13 +4,17 @@ Default tested path: `warehouse`.
 
 Assumption:
 - you already start in the workspace root
+- wrapper files now live under `scripts/`
+- use `./run.sh <name>` and `./stop.sh <name>` from the workspace root
+- optional bash startup hook for completion:
+  - `source "$HOME/halmstad_ws/scripts/bashrc_halmstad_ws.bash"`
 
 Recommended tmux workflow:
-- start with `./run_tmux_1to1.sh warehouse`
-- start YOLO mode with `./run_tmux_1to1.sh warehouse mode:=yolo`
-- pass a custom YOLO weight with `./run_tmux_1to1.sh warehouse mode:=yolo weights:=yolo26v2.pt`
-- enable truth-assisted YOLO testing with `./run_tmux_1to1.sh warehouse mode:=yolo use_estimate:=false`
-- stop with `./stop_tmux_1to1.sh warehouse`
+- start with `./run.sh tmux_1to1 warehouse`
+- start YOLO mode with `./run.sh tmux_1to1 warehouse mode:=yolo`
+- pass a custom YOLO weight with `./run.sh tmux_1to1 warehouse mode:=yolo weights:=yolo26v2.pt`
+- enable truth-assisted YOLO testing with `./run.sh tmux_1to1 warehouse mode:=yolo use_estimate:=false`
+- stop with `./stop.sh tmux_1to1 warehouse`
 - default tmux layout is panes:
   - row 1: `gazebo | spawn`
   - row 2: `localization | nav2`
@@ -26,55 +30,55 @@ Run these in order in separate terminals:
 1. Start Gazebo:
 
 ```bash
-./run_gazebo_sim.sh warehouse
+./run.sh gazebo_sim warehouse
 ```
 
 Without GUI:
 
 ```bash
-./run_gazebo_sim.sh warehouse false
+./run.sh gazebo_sim warehouse false
 ```
 
 2. Spawn one UAV:
 
 ```bash
-./run_spawn_uav.sh warehouse uav_name:=dji0
+./run.sh spawn_uav warehouse uav_name:=dji0
 ```
 
 3. Start localization:
 
 ```bash
-./run_localization.sh warehouse
+./run.sh localization warehouse
 ```
 
 If you want a different saved map:
 
 ```bash
-./run_localization.sh warehouse maps/warehouse_manual.yaml
+./run.sh localization warehouse maps/warehouse_manual.yaml
 ```
 
 4. Start Nav2:
 
 ```bash
-./run_nav2.sh
+./run.sh nav2
 ```
 
 5. Start the AMCL-based odom follow stack:
 
 ```bash
-./run_1to1_follow.sh warehouse
+./run.sh 1to1_follow warehouse
 ```
 
 #### If you want the same stack started automatically in tmux, use:
 
 ```bash
-./run_tmux_1to1.sh warehouse
+./run.sh tmux_1to1 warehouse
 ```
 
 YOLO variant in tmux:
 
 ```bash
-./run_tmux_1to1.sh warehouse mode:=yolo
+./run.sh tmux_1to1 warehouse mode:=yolo
 ```
 
 Default tmux layout is panes:
@@ -87,14 +91,14 @@ Default tmux layout is panes:
 Useful overrides:
 
 ```bash
-./run_tmux_1to1.sh warehouse gui:=false
-./run_tmux_1to1.sh warehouse delay_s:=9
-./run_tmux_1to1.sh warehouse spawn_delay_s:=12 follow_delay_s:=18
-./run_tmux_1to1.sh warehouse layout:=windows
-./run_tmux_1to1.sh warehouse mode:=yolo
-./run_tmux_1to1.sh warehouse mode:=yolo follow_yaw:=false use_tilt:=false
-./run_tmux_1to1.sh warehouse tmux_attach:=false
-./run_tmux_1to1.sh warehouse dry_run:=true
+./run.sh tmux_1to1 warehouse gui:=false
+./run.sh tmux_1to1 warehouse delay_s:=9
+./run.sh tmux_1to1 warehouse spawn_delay_s:=12 follow_delay_s:=18
+./run.sh tmux_1to1 warehouse layout:=windows
+./run.sh tmux_1to1 warehouse mode:=yolo
+./run.sh tmux_1to1 warehouse mode:=yolo follow_yaw:=false use_tilt:=false
+./run.sh tmux_1to1 warehouse tmux_attach:=false
+./run.sh tmux_1to1 warehouse dry_run:=true
 ```
 
 Default startup is staggered with short delays so the later launches do not all fire at the same instant.
@@ -113,13 +117,13 @@ If your machine is slower, increase the delay args:
 If you want separate tmux windows instead of the default panes:
 
 ```bash
-./run_tmux_1to1.sh warehouse layout:=windows
+./run.sh tmux_1to1 warehouse layout:=windows
 ```
 
 Alias:
 
 ```bash
-./run_tmux_1to1.sh warehouse panes:=true
+./run.sh tmux_1to1 warehouse panes:=true
 ```
 
 Pane layout is:
@@ -130,7 +134,7 @@ Pane layout is:
 To stop the tmux-managed stack cleanly, use:
 
 ```bash
-./stop_tmux_1to1.sh warehouse
+./stop.sh tmux_1to1 warehouse
 ```
 
 This sends `Ctrl-c` in this order:
@@ -144,10 +148,10 @@ Then it waits a few seconds, kills the tmux session, performs a safety cleanup p
 Useful stop overrides:
 
 ```bash
-./stop_tmux_1to1.sh warehouse group_grace_s:=2
-./stop_tmux_1to1.sh warehouse final_grace_s:=8
-./stop_tmux_1to1.sh warehouse kill_session:=false
-./stop_tmux_1to1.sh session:=halmstad-warehouse-1to1
+./stop.sh tmux_1to1 warehouse group_grace_s:=2
+./stop.sh tmux_1to1 warehouse final_grace_s:=8
+./stop.sh tmux_1to1 warehouse kill_session:=false
+./stop.sh tmux_1to1 session:=halmstad-warehouse-1to1
 ```
 
 Current baseline:
@@ -160,15 +164,15 @@ Current baseline:
 - if you override the mount pitch for attached mode, pass the same value to follow:
 
 ```bash
-./run_spawn_uav.sh warehouse uav_name:=dji0 camera:=attached mount_pitch_deg:=35
-./run_1to1_follow.sh warehouse camera:=attached mount_pitch_deg:=35
+./run.sh spawn_uav warehouse uav_name:=dji0 camera:=attached mount_pitch_deg:=35
+./run.sh 1to1_follow warehouse camera:=attached mount_pitch_deg:=35
 ```
 
 To test the older attached camera path instead of the detached default:
 
 ```bash
-./run_spawn_uav.sh warehouse camera:=attached
-./run_1to1_follow.sh warehouse camera:=attached
+./run.sh spawn_uav warehouse camera:=attached
+./run.sh 1to1_follow warehouse camera:=attached
 ```
 
 Important:
@@ -186,7 +190,7 @@ Important runtime note:
 Saved multi-camera / debug layout:
 
 ```bash
-./run_rqt_perspective.sh
+./run.sh rqt_perspective
 ```
 
 Then under `Perspectives`, choose one from the `perspectives/` folder if needed.
@@ -202,7 +206,7 @@ Only use the YOLO debug image when you started the YOLO flow from the section be
 
 ## Control Height And Distance During Runtime
 
-These work while `run_1to1_follow.sh` or `run_1to1_yolo.sh` is running.
+These work while `./run.sh 1to1_follow` or `./run.sh 1to1_yolo` is running.
 
 Recommended live control:
 - change `d_euclidean` during runtime
@@ -228,8 +232,11 @@ Use `d_target` and `z_alt` only if you explicitly want to control horizontal dis
 
 Runtime follow control helper:
 
+The moved helper wrappers are available through `./run.sh <name>` and still
+exist under `./scripts/run_<name>.sh` if you want direct file completion.
+
 ```bash
-./run_follow_control.sh
+./run.sh follow_control
 ```
 
 Default keyboard mode:
@@ -254,14 +261,14 @@ Random sweep mode:
 Useful examples:
 
 ```bash
-./run_follow_control.sh
-./run_follow_control.sh --step-z-alt 2 --step-d-target 2
-./run_follow_control.sh --mode params --step-z-alt 2 --step-d-target 2
-./run_follow_control.sh --mode random --interval 8
-./run_follow_control.sh --mode random --count 20
-./run_follow_control.sh --mode random --seed 42
-./run_follow_control.sh --mode random --interval 8 --count 20 --seed 42
-./run_follow_control.sh --mode random --focus-weight 0.8
+./run.sh follow_control
+./run.sh follow_control --step-z-alt 2 --step-d-target 2
+./run.sh follow_control --mode params --step-z-alt 2 --step-d-target 2
+./run.sh follow_control --mode random --interval 8
+./run.sh follow_control --mode random --count 20
+./run.sh follow_control --mode random --seed 42
+./run.sh follow_control --mode random --interval 8 --count 20 --seed 42
+./run.sh follow_control --mode random --focus-weight 0.8
 ```
 
 ## Record Pose Alignment For AMCL Analysis
@@ -271,11 +278,11 @@ Use this when you want to measure how raw `platform/odom` differs from the AMCL-
 1. Start the normal sim stack:
 
 ```bash
-./run_gazebo_sim.sh warehouse
-./run_spawn_uav.sh warehouse
-./run_localization.sh warehouse
-./run_nav2.sh
-./run_1to1_follow.sh warehouse
+./run.sh gazebo_sim warehouse
+./run.sh spawn_uav warehouse
+./run.sh localization warehouse
+./run.sh nav2
+./run.sh 1to1_follow warehouse
 ```
 
 2. In one extra terminal, start recording:
@@ -341,7 +348,7 @@ This gives:
 Wrapper:
 
 ```bash
-./run_capture_dataset.sh warehouse
+./run.sh capture_dataset warehouse
 ```
 
 Current capture-topic baseline:
@@ -358,15 +365,15 @@ Important:
 Examples:
 
 ```bash
-./run_capture_dataset.sh warehouse class:=car
-./run_capture_dataset.sh warehouse hz:=1.0
-./run_capture_dataset.sh warehouse out:=datasets/warehouse_auto_v2
+./run.sh capture_dataset warehouse class:=car
+./run.sh capture_dataset warehouse hz:=1.0
+./run.sh capture_dataset warehouse out:=datasets/warehouse_auto_v2
 ```
 
 If you want to keep dataset campaigns separate:
 
 ```bash
-./run_capture_dataset.sh warehouse out:=datasets/warehouse_run2
+./run.sh capture_dataset warehouse out:=datasets/warehouse_run2
 ```
 
 ## Run The Sim With A YOLO Model
@@ -374,28 +381,28 @@ If you want to keep dataset campaigns separate:
 Start the normal sim first:
 
 ```bash
-./run_gazebo_sim.sh warehouse
-./run_spawn_uav.sh warehouse
-./run_localization.sh warehouse
-./run_nav2.sh
+./run.sh gazebo_sim warehouse
+./run.sh spawn_uav warehouse
+./run.sh localization warehouse
+./run.sh nav2
 ```
 
 Then start the YOLO follow flow:
 
 ```bash
-./run_1to1_yolo.sh warehouse
+./run.sh 1to1_yolo warehouse
 ```
 
 Live follow control works here too:
 
 ```bash
-./run_follow_control.sh
+./run.sh follow_control
 ```
 
 Runtime turn analysis:
 
 ```bash
-./run_follow_debug.sh
+./run.sh follow_debug
 ```
 
 This subscribes to the follow, estimator, and camera topics and prints an interpreted diagnosis such as:
@@ -405,17 +412,17 @@ This subscribes to the follow, estimator, and camera topics and prints an interp
 - suspicious motion while estimator state is `NO_DET` / `REJECT`
 - logs are also saved by default under `debug_logs/follow_debug/`
 
-Default `run_follow_control.sh` mode is keyboard tuning for `d_target` and `z_alt`. If you want the same parameter path explicitly, use:
+Default `run.sh follow_control` mode is keyboard tuning for `d_target` and `z_alt`. If you want the same parameter path explicitly, use:
 
 ```bash
-./run_follow_control.sh --mode params
+./run.sh follow_control --mode params
 ```
 
 Default behavior:
 - Nav2 still drives the UGV through the current `ugv_nav2_driver` path
 - the UAV/camera runtime uses `leader_estimate` rather than shared UGV pose
 - estimate-mode YOLO repositions the UAV to the seeded startup pose before the first estimate arrives
-- through `run_1to1_yolo.sh`, that startup pose defaults to `uav_start_x:=-7.0` and `uav_start_z:=7.0` in non-solar worlds
+- through `scripts/run_1to1_yolo.sh`, that startup pose defaults to `uav_start_x:=-7.0` and `uav_start_z:=7.0` in non-solar worlds
 - the shared follow/camera fallback tilt baseline stays at `-45.0`
 - held-estimate reuse is disabled by default, so rejected/missing detections now surface directly as `REJECT` / `NO_DET` instead of `*_HOLD`
 - estimator error is still computed against `/<ugv>/amcl_pose_odom` by default
@@ -424,7 +431,7 @@ Default behavior:
 Truth-assisted test mode:
 
 ```bash
-./run_1to1_yolo.sh warehouse use_estimate:=false
+./run.sh 1to1_yolo warehouse use_estimate:=false
 ```
 
 This keeps the YOLO estimator running, but switches the UAV/camera path back to shared UGV pose for comparison/testing.
@@ -432,31 +439,31 @@ This keeps the YOLO estimator running, but switches the UAV/camera path back to 
 Warehouse `car` filter:
 
 ```bash
-./run_1to1_yolo.sh warehouse target:=car
+./run.sh 1to1_yolo warehouse target:=car
 ```
 
 Different YOLO weights:
 
 ```bash
-./run_1to1_yolo.sh warehouse weights:=yolo26v2.pt
+./run.sh 1to1_yolo warehouse weights:=yolo26v2.pt
 ```
 
 Detection-family shorthand:
 
 ```bash
-./run_1to1_yolo.sh warehouse folder:=yolo26 weights:=yolo26s.pt
+./run.sh 1to1_yolo warehouse folder:=yolo26 weights:=yolo26s.pt
 ```
 
 OBB-family default:
 
 ```bash
-./run_1to1_yolo.sh warehouse obb:=true
+./run.sh 1to1_yolo warehouse obb:=true
 ```
 
 OBB-family with explicit subfolder:
 
 ```bash
-./run_1to1_yolo.sh warehouse obb:=true folder:=yolo26 weights:=yolo26s-obb.pt
+./run.sh 1to1_yolo warehouse obb:=true folder:=yolo26 weights:=yolo26s-obb.pt
 ```
 
 Estimate error topic:
@@ -489,12 +496,6 @@ OBB models:
 - `obb/yolo26/yolo26l-obb.pt`
 - `obb/yolo26/yolo26x-obb.pt`
 
-YOLOv5 models:
-- `detection/yolo5/yolov5n.pt`
-- `detection/yolo5/yolov5nu.pt`
-- `detection/yolo5/yolov5s.pt`
-- `detection/yolo5/yolov5su.pt`
-
 ## Scan A New Map With RViz
 
 Use this when the current world does not already have a good Nav2 map.
@@ -502,13 +503,13 @@ Use this when the current world does not already have a good Nav2 map.
 1. Start Gazebo:
 
 ```bash
-./run_gazebo_sim.sh warehouse
+./run.sh gazebo_sim warehouse
 ```
 
 2. Start SLAM:
 
 ```bash
-./run_slam.sh
+./run.sh slam
 ```
 
 3. Drive the UGV:
@@ -528,7 +529,7 @@ ros2 run teleop_twist_keyboard teleop_twist_keyboard \
 4. Start RViz:
 
 ```bash
-./run_nav2_rviz.sh
+./run.sh nav2_rviz
 ```
 
 5. Save the map:
@@ -548,7 +549,7 @@ This creates:
 
 ## Available Arguments And Values
 
-### `./run_gazebo_sim.sh`
+### `./run.sh gazebo_sim`
 
 - `WORLD`
   - any world name resolvable through Gazebo resource paths
@@ -565,7 +566,7 @@ This creates:
   - `auto_start:=true|false`
   - `use_sim_time:=true|false`
 
-### `./run_spawn_uav.sh`
+### `./run.sh spawn_uav`
 
 - positional `WORLD`
   - common example: `warehouse`
@@ -589,7 +590,7 @@ This creates:
 - extra forwarded launch arguments
   - anything else is passed through to `spawn_uav_1to1.launch.py`
 
-### `./run_localization.sh`
+### `./run.sh localization`
 
 - positional `WORLD`
   - current tested example: `warehouse`
@@ -599,12 +600,12 @@ This creates:
 - extra forwarded launch arguments
   - anything else is passed through to `localization.launch.py`
 
-### `./run_nav2.sh`
+### `./run.sh nav2`
 
 - extra forwarded launch arguments
   - anything else is passed through to `nav2.launch.py`
 
-### `./run_1to1_follow.sh`
+### `./run.sh 1to1_follow`
 
 - positional `WORLD`
   - current tested example: `warehouse`
@@ -647,7 +648,7 @@ This creates:
   - `uav_start_y:=...`
   - `uav_start_yaw_deg:=...`
 
-### `./run_1to1_yolo.sh`
+### `./run.sh 1to1_yolo`
 
 - positional `WORLD`
   - current tested example: `warehouse`
@@ -685,7 +686,7 @@ This creates:
   - anything else is passed through to `run_1to1_follow.launch.py`
 
 
-### `./run_capture_dataset.sh`
+### `./run.sh capture_dataset`
 
 - `WORLD`
   - current tested example: `warehouse`
@@ -712,11 +713,11 @@ Extra useful commands:
 - inspect the map or set your own initial pose / Nav2 goal:
 
 ```bash
-./run_nav2_rviz.sh
+./run.sh nav2_rviz
 ```
 
 - open the saved multi-camera / debug `rqt` layout:
 
 ```bash
-./run_rqt_perspective.sh
+./run.sh rqt_perspective
 ```

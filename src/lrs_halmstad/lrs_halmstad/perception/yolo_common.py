@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import os
-import sys
 from pathlib import Path
 from typing import Optional
 
@@ -62,8 +61,8 @@ def resolve_tracker_config(raw_path: str, module_file: str) -> str:
     if expanded.is_absolute():
         return str(expanded)
     candidates = [
-        config_root / expanded,
         config_root / "trackers" / expanded,
+        config_root / expanded,
     ]
     for candidate in candidates:
         if candidate.is_file():
@@ -75,26 +74,6 @@ def load_ultralytics_model(weights_path: str):
     if YOLO is None:
         raise RuntimeError("ultralytics_not_installed")
     return YOLO(weights_path)
-
-
-def load_yolov5_model(repo_path: str, weights_path: str, device: str):
-    if not repo_path:
-        raise RuntimeError("yolov5_repo_path_not_set")
-    repo = os.path.expanduser(repo_path)
-    if not os.path.isdir(repo):
-        raise RuntimeError(f"yolov5_repo_not_found:{repo}")
-    if repo not in sys.path:
-        sys.path.insert(0, repo)
-    try:
-        import torch  # type: ignore
-    except Exception as exc:
-        raise RuntimeError(f"torch_not_installed:{exc}") from exc
-    model = torch.hub.load(repo, "custom", path=weights_path, source="local")
-    try:
-        model.to(device)
-    except Exception:
-        pass
-    return model
 
 
 def image_to_bgr(msg: Image) -> Optional[np.ndarray]:

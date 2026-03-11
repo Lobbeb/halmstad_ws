@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-WS_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+WS_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 STATE_DIR="/tmp/halmstad_ws"
 SIM_PID_FILE="$STATE_DIR/gazebo_sim.pid"
 TMUX_STATE_DIR="$STATE_DIR/tmux_sessions"
@@ -13,7 +14,7 @@ TMUX_ATTACH=true
 DRY_RUN=false
 LAYOUT="panes"
 MODE="follow"
-BASE_DELAY_S=9
+BASE_DELAY_S=8
 BASE_DELAY_SET=false
 SPAWN_DELAY_OVERRIDE=""
 LOCALIZATION_DELAY_OVERRIDE=""
@@ -113,7 +114,7 @@ for arg in "$@"; do
       ;;
     *)
       echo "Unknown argument: $arg" >&2
-      echo "Usage: $0 [world] [mode:=follow|yolo] [camera:=detached|attached] [follow_yaw:=true|false] [pan_enable:=true|false] [use_tilt:=true|false] [use_actual_heading:=true|false] [height:=7] [mount_pitch_deg:=45] [uav_name:=dji0] [weights:=...] [target:=...] [use_estimate:=true|false] [obb:=true|false] [tracker:=true|false] [external_detection_node:=detector|tracker] [tracker_config:=trackers/botsort.yaml] [folder:=...] [map:=/path/map.yaml] [gui:=true|false] [delay_s:=9] [spawn_delay_s:=9] [localization_delay_s:=11] [nav2_delay_s:=11] [follow_delay_s:=13] [session:=name] [tmux_attach:=true|false] [dry_run:=true|false] [layout:=windows|panes]" >&2
+      echo "Usage: $0 [world] [mode:=follow|yolo] [camera:=detached|attached] [follow_yaw:=true|false] [pan_enable:=true|false] [use_tilt:=true|false] [use_actual_heading:=true|false] [height:=7] [mount_pitch_deg:=45] [uav_name:=dji0] [weights:=...] [target:=...] [use_estimate:=true|false] [obb:=true|false] [tracker:=true|false] [external_detection_node:=detector|tracker] [tracker_config:=botsort.yaml] [folder:=...] [map:=/path/map.yaml] [gui:=true|false] [delay_s:=9] [spawn_delay_s:=9] [localization_delay_s:=11] [nav2_delay_s:=11] [follow_delay_s:=13] [session:=name] [tmux_attach:=true|false] [dry_run:=true|false] [layout:=windows|panes]" >&2
       exit 2
       ;;
   esac
@@ -235,21 +236,21 @@ write_session_state() {
 
 apply_default_delays
 
-GAZEBO_CMD=(./run_gazebo_sim.sh "$WORLD")
+GAZEBO_CMD=(./run.sh gazebo_sim "$WORLD")
 if [ -n "$GUI" ]; then
   GAZEBO_CMD+=("$GUI")
 fi
 
-SPAWN_CMD=(./run_spawn_uav.sh "$WORLD" "${SPAWN_ARGS[@]}")
-LOCALIZATION_CMD=(./run_localization.sh "$WORLD")
+SPAWN_CMD=(./run.sh spawn_uav "$WORLD" "${SPAWN_ARGS[@]}")
+LOCALIZATION_CMD=(./run.sh localization "$WORLD")
 if [ -n "$MAP_PATH" ]; then
   LOCALIZATION_CMD+=("$MAP_PATH")
 fi
-NAV2_CMD=(./run_nav2.sh)
+NAV2_CMD=(./run.sh nav2)
 if [ "$MODE" = "yolo" ]; then
-  FOLLOW_CMD=(./run_1to1_yolo.sh "$WORLD" "${FOLLOW_ARGS[@]}")
+  FOLLOW_CMD=(./run.sh 1to1_yolo "$WORLD" "${FOLLOW_ARGS[@]}")
 else
-  FOLLOW_CMD=(./run_1to1_follow.sh "$WORLD" "${FOLLOW_ARGS[@]}")
+  FOLLOW_CMD=(./run.sh 1to1_follow "$WORLD" "${FOLLOW_ARGS[@]}")
 fi
 
 GAZEBO_LINE="$(build_line 0 false "${GAZEBO_CMD[@]}")"

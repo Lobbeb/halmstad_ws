@@ -586,9 +586,16 @@ class LeaderEstimator(Node):
         err_dx = "na" if self.last_estimate_error_dx_m is None else f"{self.last_estimate_error_dx_m:.2f}"
         err_dy = "na" if self.last_estimate_error_dy_m is None else f"{self.last_estimate_error_dy_m:.2f}"
         err_planar = "na" if self.last_estimate_error_m is None else f"{self.last_estimate_error_m:.2f}"
+        perception = "none"
+        track_id = "none"
+        if self.last_external_det is not None:
+            perception = self.last_external_det.source or "external"
+            if self.last_external_det.track_id is not None:
+                track_id = str(self.last_external_det.track_id)
         return (
             f"state={state} reason={reason} "
-            f"detector=external detector_reason={self._detector_reason(now)} detector_age_ms={self._detector_age_ms(now):.1f} "
+            f"perception={perception} detector_reason={self._detector_reason(now)} detector_age_ms={self._detector_age_ms(now):.1f} "
+            f"track_id={track_id} "
             f"conf={self.last_det_conf:.3f} latency_ms={self.last_latency_ms:.1f} "
             f"range_src={self.last_range_source} range_mode={self.range_mode} range_m={self.last_range_used_m:.2f} "
             f"bearing_deg={self.last_bearing_used_deg:.1f} reject_reason={self.last_reject_reason} "
@@ -640,6 +647,7 @@ class LeaderEstimator(Node):
                     cv2.circle(out, (int(round(det.u)), int(round(det.v))), 3, color, -1)
                 lines = [
                     f"state={state} conf={self.last_det_conf:.2f} latency_ms={self.last_latency_ms:.1f}",
+                    f"perception={(det.source or 'none') if det is not None else 'none'} track_id={(det.track_id if det is not None and det.track_id is not None else 'none')}",
                     f"range={self.last_range_used_m:.2f}m src={self.last_range_source} bearing={self.last_bearing_used_deg:.1f}deg",
                     f"heading_src={self.last_heading_source}",
                 ]

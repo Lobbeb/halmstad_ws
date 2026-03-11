@@ -19,6 +19,7 @@ class Detection2D:
     track_id: Optional[int] = None
     obb_corners: Optional[Corners2D] = None
     obb_heading_yaw: Optional[float] = None
+    source: str = ""
 
 
 @dataclass
@@ -40,6 +41,7 @@ def encode_detection_payload(stamp_ns: int, det: Optional[Detection2D]) -> str:
         "track_id": None if det is None else det.track_id,
         "obb_corners": [] if det is None or det.obb_corners is None else [[float(x), float(y)] for x, y in det.obb_corners],
         "obb_heading_yaw": None if det is None or det.obb_heading_yaw is None else float(det.obb_heading_yaw),
+        "source": "" if det is None else str(det.source),
     }
     return json.dumps(payload, separators=(",", ":"), ensure_ascii=True)
 
@@ -74,5 +76,6 @@ def decode_detection_payload(data: str) -> DetectionMessage:
         track_id=None if payload.get("track_id") is None else int(payload.get("track_id")),
         obb_corners=obb_corners,
         obb_heading_yaw=None if obb_heading_yaw is None else float(obb_heading_yaw),
+        source=str(payload.get("source", "")),
     )
     return DetectionMessage(stamp_ns=stamp_ns, detection=det)

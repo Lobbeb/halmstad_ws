@@ -5,22 +5,32 @@ Current source of truth
 - `RUNNING_SIM.md`
 
 Current tested baseline:
-1. `./run_gazebo_sim.sh warehouse`
-2. `./run_spawn_uav.sh warehouse uav_name:=dji0`
-3. `./run_localization.sh warehouse`
-4. `./run_nav2.sh`
-5. `./run_1to1_follow.sh warehouse`
+1. `./run.sh gazebo_sim warehouse`
+2. `./run.sh spawn_uav warehouse uav_name:=dji0`
+3. `./run.sh localization warehouse`
+4. `./run.sh nav2`
+5. `./run.sh 1to1_follow warehouse`
+
+Wrappers now live under `scripts/`. Use `./run.sh <name>` and `./stop.sh <name>`
+from the workspace root for the supported helper flow.
+
+For bash completion of `./run.sh` and `./stop.sh`, add this to your own
+`~/.bashrc`:
+
+```bash
+source "$HOME/halmstad_ws/scripts/bashrc_halmstad_ws.bash"
+```
 
 Recommended tmux workflow:
-- start the full stack with `./run_tmux_1to1.sh warehouse`
+- start the full stack with `./run.sh tmux_1to1 warehouse`
 - current default tmux layout is panes:
   - row 1: `gazebo | spawn`
   - row 2: `localization | nav2`
   - row 3: `follow`
 - current default delays:
-  - `gui:=false` -> `spawn=9`, `localization/nav2=11`, `follow=13`
-  - `gui:=true` -> `spawn=7`, `localization/nav2=9`, `follow=11`
-- stop the tmux-managed stack with `./stop_tmux_1to1.sh warehouse`
+  - `gui:=false` -> `spawn=9`, `localization/nav2=11`, `follow=15`
+  - `gui:=true` -> `spawn=7`, `localization/nav2=9`, `follow=13`
+- stop the tmux-managed stack with `./stop.sh tmux_1to1 warehouse`
 
 Current important notes:
 - the 1-to-1 odom-follow path now uses AMCL-derived `/<ugv>/amcl_pose_odom`, not raw UGV odom
@@ -156,7 +166,7 @@ YOLO estimate mode (UAV follows UGV estimate from camera detections):
 ```bash
 ros2 launch lrs_halmstad run_follow_motion.launch.py \
   world:=warehouse uav_name:=dji0 leader_mode:=estimate \
-  yolo_weights:=detection/yolo5/yolov5n.pt yolo_device:=cpu
+  yolo_weights:=detection/yolo26/yolo26n.pt yolo_device:=cpu
 ```
 
 `run_follow_motion.launch.py` arguments:
@@ -172,7 +182,7 @@ ros2 launch lrs_halmstad run_follow_motion.launch.py \
 - `leader_camera_info_topic:=<topic>` (default `/<uav_name>/camera0/camera_info`)
 - `leader_depth_topic:=<topic>` (default empty / disabled)
 - `leader_uav_pose_topic:=<topic>` (default `/<uav_name>/pose_cmd`)
-- `yolo_weights:=<weights.pt>` (relative paths resolve under `<workspace_root>/models`, for example `detection/yolo5/yolov5n.pt`)
+- `yolo_weights:=<weights.pt>` (relative paths resolve under `<workspace_root>/models`, for example `detection/yolo26/yolo26n.pt`)
 - `yolo_device:=cpu|cuda` (default `cpu`)
 - `event_topic:=<topic>` (default `/coord/events`)
 - `ugv_start_delay_s:=<seconds>` (default `0.0`; readiness gate handles startup)

@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-WS_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+WS_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 TOPIC="${1:-}"
 
 if [ "$#" -gt 0 ]; then

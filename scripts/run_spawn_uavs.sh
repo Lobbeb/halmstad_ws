@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-WS_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+WS_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 STATE_DIR="/tmp/halmstad_ws"
 SIM_PID_FILE="$STATE_DIR/gazebo_sim.pid"
 SIM_WORLD_FILE="$STATE_DIR/gazebo_sim.world"
@@ -92,7 +93,7 @@ trap cleanup INT TERM EXIT
 
 if sim_helper_running; then
   FOLLOW_SIM=true
-  echo "[run_spawn_uav] Gazebo helper detected; stopping this launcher when the sim helper exits."
+  echo "[run_spawn_uavs] Gazebo helper detected; stopping this launcher when the sim helper exits."
 fi
 
 DEFAULT_WORLD="warehouse"
@@ -109,47 +110,6 @@ if [ "$#" -gt 0 ] && [[ "$1" != *":="* ]] && [[ "$1" != *=* ]]; then
   shift
 fi
 
-ARGS=()
-for arg in "$@"; do
-  case "$arg" in
-    camera:=*)
-      camera_mode="${arg#camera:=}"
-      case "$camera_mode" in
-        attached|integrated|integrated_joint)
-          ARGS+=("uav_camera_mode:=integrated_joint")
-          ;;
-        detached|detached_model)
-          ARGS+=("uav_camera_mode:=detached_model")
-          ;;
-        *)
-          ARGS+=("uav_camera_mode:=$camera_mode")
-          ;;
-      esac
-      ;;
-    name:=*)
-      ARGS+=("uav_name:=${arg#name:=}")
-      ;;
-    height:=*)
-      ARGS+=("z:=${arg#height:=}")
-      ;;
-    mount_pitch_deg:=*)
-      ARGS+=("camera_pitch_offset_deg:=${arg#mount_pitch_deg:=}")
-      ;;
-    sensor_roll_deg:=*)
-      ARGS+=("camera_sensor_roll_deg:=${arg#sensor_roll_deg:=}")
-      ;;
-    sensor_pitch_deg:=*)
-      ARGS+=("camera_sensor_pitch_deg:=${arg#sensor_pitch_deg:=}")
-      ;;
-    sensor_yaw_deg:=*)
-      ARGS+=("camera_sensor_yaw_deg:=${arg#sensor_yaw_deg:=}")
-      ;;
-    *)
-      ARGS+=("$arg")
-      ;;
-  esac
-done
-
 set +u
 # ROS setup scripts may read unset variables while initializing the environment.
 source /opt/ros/jazzy/setup.bash
@@ -157,18 +117,19 @@ source "$WS_ROOT/install/setup.bash"
 source "$WS_ROOT/src/lrs_halmstad/clearpath/setup.bash"
 set -u
 
-setsid ros2 launch lrs_halmstad spawn_uav_1to1.launch.py world:="$WORLD" "${ARGS[@]}" &
+UAV_MODE="${UAV_MODE:-teleport}"
+setsid ros2 launch lrs_halmstad spawn_uavs.launch.py world:="$WORLD" uav_mode:="$UAV_MODE" "$@" &
 LAUNCH_PID=$!
 
 if [ "$FOLLOW_SIM" = true ]; then
   (
     while launch_running; do
       if ! sim_helper_running; then
-        echo "[run_spawn_uav] Gazebo helper exited; stopping UAV launcher."
+        echo "[run_spawn_uavs] Gazebo helper exited; stopping UAV launcher."
         stop_launch_group INT 5
         stop_launch_group TERM 3
         if launch_running; then
-          echo "[run_spawn_uav] UAV launcher ignored shutdown signals; forcing exit."
+          echo "[run_spawn_uavs] UAV launcher ignored shutdown signals; forcing exit."
           stop_launch_group KILL 0
         fi
         exit 0

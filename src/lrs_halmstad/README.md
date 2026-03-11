@@ -31,7 +31,7 @@ Reference for the current 1-to-1 Gazebo/ROS 2 workflow.
 
 ```bash
 cd <workspace_root>
-./run_gazebo_sim.sh warehouse
+./run.sh gazebo_sim warehouse
 ```
 
 ### 2. Spawn one UAV
@@ -92,7 +92,7 @@ This waits for `/a201_0000/amcl_pose`, then sends a simple square of `NavigateTo
 
 ```bash
 cd <workspace_root>
-./run_rqt_image_view.sh /dji0/camera0/image_raw
+./run.sh rqt_image_view /dji0/camera0/image_raw
 ```
 
 ## Manual smoke test path
@@ -138,7 +138,7 @@ ros2 run lrs_halmstad controller --ros-args -p uav_name:=dji0
 
 ## Contract checks
 
-Base Gazebo + UGV + UAV camera contract:
+Base Gazebo + AMCL-derived UGV pose + UAV camera contract:
 
 ```bash
 cd <workspace_root>
@@ -147,7 +147,7 @@ source install/setup.bash
 ros2 run lrs_halmstad contract_check orchard dji0
 ```
 
-Include the UAV simulator adapter topics:
+Include the UAV simulator topics:
 
 ```bash
 cd <workspace_root>
@@ -156,7 +156,7 @@ source install/setup.bash
 REQUIRE_UAV_ADAPTER=1 ros2 run lrs_halmstad contract_check orchard dji0
 ```
 
-Include the follow-stack topics as well:
+Include the odom-follow outputs as well:
 
 ```bash
 cd <workspace_root>
@@ -165,11 +165,23 @@ source install/setup.bash
 REQUIRE_UAV_ADAPTER=1 REQUIRE_FOLLOW_STACK=1 ros2 run lrs_halmstad contract_check orchard dji0
 ```
 
-Include estimator topics too when running `leader_mode:=estimate`:
+Include detector plus estimator topics when running the YOLO estimate path:
 
 ```bash
 cd <workspace_root>
 source /opt/ros/jazzy/setup.bash
 source install/setup.bash
-REQUIRE_UAV_ADAPTER=1 REQUIRE_FOLLOW_STACK=1 REQUIRE_ESTIMATOR=1 ros2 run lrs_halmstad contract_check orchard dji0
+REQUIRE_UAV_ADAPTER=1 REQUIRE_FOLLOW_STACK=1 REQUIRE_DETECTION=1 REQUIRE_ESTIMATOR=1 ros2 run lrs_halmstad contract_check orchard dji0
 ```
+
+Useful overrides:
+
+- `UGV_NAMESPACE=<name>` changes the default UGV namespace from `a201_0000`
+- `REQUIRED_FLOW_TOPICS=<csv>` overrides the default flow check topic list
+- `UGV_CMD_TOPICS=<csv>` overrides the cmd-vel subscriber check topics
+
+Current defaults:
+
+- base UGV odom flow check uses `/<ugv>/amcl_pose_odom`
+- follow-stack checks no longer require `/<uav>/pose_cmd/odom`
+- detector and estimator are checked separately with `REQUIRE_DETECTION=1` and `REQUIRE_ESTIMATOR=1`

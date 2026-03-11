@@ -282,7 +282,7 @@ def generate_launch_description():
         default_value='',
     )
     yolo_device_arg = DeclareLaunchArgument('yolo_device', default_value='cpu')
-    tracker_config_arg = DeclareLaunchArgument('tracker_config', default_value='trackers/botsort.yaml')
+    tracker_config_arg = DeclareLaunchArgument('tracker_config', default_value='botsort.yaml')
     event_topic_arg = DeclareLaunchArgument('event_topic', default_value='/coord/events')
     ugv_start_delay_arg = DeclareLaunchArgument('ugv_start_delay_s', default_value='0.0')
 

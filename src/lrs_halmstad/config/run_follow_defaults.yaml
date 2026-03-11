@@ -125,7 +125,7 @@ leader_tracker:
     device: cpu             # Ultralytics tracking device, e.g. cpu or cuda.
     imgsz: 640              # Tracking inference image size.
     predict_hz: 20.0        # Max tracking publish rate; incoming images above this are skipped.
-    tracker_config: trackers/botsort.yaml  # Tracker config under config/trackers or an absolute path.
+    tracker_config: botsort.yaml  # Tracker config filename under config/trackers or an absolute path.
 
     conf_threshold: 0.12  # Minimum detection confidence accepted by the tracker.
     iou_threshold: 0.45   # IOU threshold passed into Ultralytics track().

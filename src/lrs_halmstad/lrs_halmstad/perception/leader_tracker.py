@@ -44,7 +44,7 @@ class LeaderTracker(Node):
         self.declare_parameter("target_class_id", -1)
         self.declare_parameter("target_class_name", "")
         self.declare_parameter("predict_hz", 20.0, dyn_num)
-        self.declare_parameter("tracker_config", "trackers/botsort.yaml")
+        self.declare_parameter("tracker_config", "botsort.yaml")
         self.declare_parameter("event_topic", "/coord/events")
         self.declare_parameter("publish_events", False)
 
@@ -154,6 +154,7 @@ class LeaderTracker(Node):
                     cls_name=cls_name,
                     track_id=track_id,
                     obb_corners=corners,
+                    source="tracker",
                 )
             )
         return candidates
@@ -185,6 +186,7 @@ class LeaderTracker(Node):
                     cls_id=cls_id,
                     cls_name=cls_name,
                     track_id=track_id,
+                    source="tracker",
                 )
             )
         return candidates
