@@ -115,7 +115,7 @@ def generate_launch_description():
                 LaunchConfiguration('uav_name'),
                 '/',
                 LaunchConfiguration('camera_name'),
-                '/image_raw@sensor_msgs/msg/Image@ignition.msgs.Image',
+                '/image@sensor_msgs/msg/Image@ignition.msgs.Image',
             ],
             [
                 '/',
@@ -124,6 +124,19 @@ def generate_launch_description():
                 LaunchConfiguration('camera_name'),
                 '/camera_info@sensor_msgs/msg/CameraInfo@ignition.msgs.CameraInfo',
             ],
+            [
+                '/',
+                LaunchConfiguration('uav_name'),
+                '/',
+                LaunchConfiguration('camera_name'),
+                '/depth_image@sensor_msgs/msg/Image@ignition.msgs.Image',
+            ],
+        ],
+        remappings=[
+            (
+                ['/', LaunchConfiguration('uav_name'), '/', LaunchConfiguration('camera_name'), '/image'],
+                ['/', LaunchConfiguration('uav_name'), '/', LaunchConfiguration('camera_name'), '/image_raw'],
+            ),
         ],
         output='screen',
     )

@@ -311,6 +311,12 @@ Important current assumption:
 
 Current validated baseline:
 - detached camera model
+- spawned UAV camera is now RGBD-capable by default
+- existing RGB topics remain:
+  - `/<uav>/camera0/image_raw`
+  - `/<uav>/camera0/camera_info`
+- additional UAV depth topic is now available:
+  - `/<uav>/camera0/depth_image`
 - `uav_camera_mode:=detached_model`
 - `pan_enable: true`
 - `tilt_enable: true`

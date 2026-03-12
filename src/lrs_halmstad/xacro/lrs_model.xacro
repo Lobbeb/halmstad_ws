@@ -59,7 +59,6 @@
     <xacro:arg name="camera_update_rate" default="30"/>
     <xacro:arg name="camera_hfov" default="94"/>
     <xacro:arg name="camera_far_clip" default="100"/>
-    <xacro:arg name="camera_topic" default="image_raw"/>
     <xacro:arg name="camera_pitch_offset" default="+60.0"/>
 
     <xacro:property name="prop_type" value="$(arg robot_type)"/>    
@@ -110,7 +109,6 @@
     <xacro:if value="$(arg with_camera)">
 
         <xacro:property name="camera_prefix" value="/${base_name}/$(arg camera_name)"/>
-        <xacro:property name="camera_topic" value="$(arg camera_topic)"/>
         <xacro:property name="camera_link_name" value="$(arg camera_name)_link"/>
 
         <xacro:include filename="$(find lrs_halmstad)/xacro/lrs_camera_gimbal.sdf.xacro"/>
@@ -118,8 +116,7 @@
                                  parent_link="$(arg base_link_frame)"
                                  link_name="${camera_link_name}"
                                  hfov_deg="$(arg camera_hfov)"
-                                 camera_info_topic="${camera_prefix}/camera_info"
-                                 image_topic="${camera_prefix}/${camera_topic}"
+                                 topic_base="${camera_prefix}"
                                  frame_id="${camera_prefix}/image_frame"
                                  im_width="$(arg camera_image_width)"
                                  im_height="$(arg camera_image_height)"

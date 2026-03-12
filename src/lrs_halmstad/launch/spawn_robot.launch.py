@@ -52,7 +52,7 @@ def generate_launch_description():
     bridge_camera_arg = DeclareLaunchArgument(
         name='bridge_camera',
         default_value="false",
-        description='Bridge /<name>/<camera_name> image + camera_info topics to ROS'
+        description='Bridge /<name>/<camera_name> RGB image, camera_info, and depth_image topics to ROS'
     )
     bridge_gimbal_arg = DeclareLaunchArgument(
         name='bridge_gimbal',
@@ -130,9 +130,17 @@ def generate_launch_description():
         executable='parameter_bridge',
         arguments=[
             ['/', LaunchConfiguration('name'), '/', LaunchConfiguration('camera_name'),
-             '/image_raw@sensor_msgs/msg/Image@ignition.msgs.Image'],
+             '/image@sensor_msgs/msg/Image@ignition.msgs.Image'],
             ['/', LaunchConfiguration('name'), '/', LaunchConfiguration('camera_name'),
              '/camera_info@sensor_msgs/msg/CameraInfo@ignition.msgs.CameraInfo'],
+            ['/', LaunchConfiguration('name'), '/', LaunchConfiguration('camera_name'),
+             '/depth_image@sensor_msgs/msg/Image@ignition.msgs.Image'],
+        ],
+        remappings=[
+            (
+                ['/', LaunchConfiguration('name'), '/', LaunchConfiguration('camera_name'), '/image'],
+                ['/', LaunchConfiguration('name'), '/', LaunchConfiguration('camera_name'), '/image_raw'],
+            ),
         ],
         output='screen',
         condition=IfCondition(PythonExpression([

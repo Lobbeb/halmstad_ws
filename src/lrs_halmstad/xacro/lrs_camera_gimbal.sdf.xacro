@@ -6,7 +6,7 @@
 
 
     <xacro:macro name="lrs_camera_gimbal"
-                 params="name parent_link link_name image_topic camera_info_topic frame_id update_rate im_width im_height im_format hfov_deg far_clip robot_type robot_name x_offset:=0.0 y_offset:=0.0 z_offset:=0.0 pitch_offset:=0.0 yaw_offset:=0.0 sensor_roll_offset:=0.0 sensor_pitch_offset:=0.0 sensor_yaw_offset:=0.0">
+                 params="name parent_link link_name topic_base frame_id update_rate im_width im_height im_format hfov_deg far_clip robot_type robot_name x_offset:=0.0 y_offset:=0.0 z_offset:=0.0 pitch_offset:=0.0 yaw_offset:=0.0 sensor_roll_offset:=0.0 sensor_pitch_offset:=0.0 sensor_yaw_offset:=0.0">
 
       <link name="${link_name}">
          <pose rotation_format="euler_rpy" degrees="true">${x_offset} ${y_offset} ${z_offset} 0 ${pitch_offset} ${yaw_offset}</pose>
@@ -59,7 +59,7 @@
             <child link="camera_optical_frame"/>
         </joint -->
 
-            <sensor type="camera" name="${robot_name}_camera_sensor">
+            <sensor type="rgbd_camera" name="${robot_name}_camera_sensor">
                 <camera>
                     <!-- <pose>0.027 0 -0.027 0 1.57 0</pose> -->
                     <!-- <pose>0.027 0 -0.027 0 1.57 0</pose> -->
@@ -74,11 +74,13 @@
                         <near>0.01</near>
                         <far>${far_clip}</far>
                     </clip>
+                    <optical_frame_id>${frame_id}</optical_frame_id>
                 </camera>
                 <update_rate>${update_rate}</update_rate>
                 <always_on>1</always_on>
                 <visualize>true</visualize>
-                <topic>${image_topic}</topic>
+                <gz_frame_id>${frame_id}</gz_frame_id>
+                <topic>${topic_base}</topic>
             </sensor>
         </link>
             

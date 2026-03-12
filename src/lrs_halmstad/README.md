@@ -22,6 +22,7 @@ Current real follow launch:
 
 - `/dji0/camera0/image_raw`
 - `/dji0/camera0/camera_info`
+- `/dji0/camera0/depth_image`
 - `/dji0/psdk_ros2/flight_control_setpoint_ENUposition_yaw`
 - `/dji0/update_pan`
 - `/dji0/update_tilt`

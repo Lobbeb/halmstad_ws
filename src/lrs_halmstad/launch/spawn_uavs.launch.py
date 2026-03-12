@@ -163,12 +163,20 @@ def generate_launch_description():
         package='ros_gz_bridge',
         executable='parameter_bridge',
         arguments=[
-            '/dji0/camera0/image_raw@sensor_msgs/msg/Image@ignition.msgs.Image',
+            '/dji0/camera0/image@sensor_msgs/msg/Image@ignition.msgs.Image',
             '/dji0/camera0/camera_info@sensor_msgs/msg/CameraInfo@ignition.msgs.CameraInfo',
-            '/dji1/camera0/image_raw@sensor_msgs/msg/Image@ignition.msgs.Image',
+            '/dji0/camera0/depth_image@sensor_msgs/msg/Image@ignition.msgs.Image',
+            '/dji1/camera0/image@sensor_msgs/msg/Image@ignition.msgs.Image',
             '/dji1/camera0/camera_info@sensor_msgs/msg/CameraInfo@ignition.msgs.CameraInfo',
-            '/dji2/camera0/image_raw@sensor_msgs/msg/Image@ignition.msgs.Image',
+            '/dji1/camera0/depth_image@sensor_msgs/msg/Image@ignition.msgs.Image',
+            '/dji2/camera0/image@sensor_msgs/msg/Image@ignition.msgs.Image',
             '/dji2/camera0/camera_info@sensor_msgs/msg/CameraInfo@ignition.msgs.CameraInfo',
+            '/dji2/camera0/depth_image@sensor_msgs/msg/Image@ignition.msgs.Image',
+        ],
+        remappings=[
+            ('/dji0/camera0/image', '/dji0/camera0/image_raw'),
+            ('/dji1/camera0/image', '/dji1/camera0/image_raw'),
+            ('/dji2/camera0/image', '/dji2/camera0/image_raw'),
         ],
         output='screen',
     )

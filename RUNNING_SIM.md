@@ -169,6 +169,8 @@ Current baseline:
 - `/<ugv>/amcl_pose_odom` is synthesized from `/<ugv>/amcl_pose` by [pose_cov_to_odom.py](src/lrs_halmstad/lrs_halmstad/sim/pose_cov_to_odom.py)
 - launch `leader_odom_topic` / `ugv_odom_topic` defaults are intentionally pointed at that AMCL-derived topic
 - current UAV camera mode is detached: `uav_camera_mode:=detached_model`
+- spawned UAV camera is now RGBD-capable while keeping the existing RGB ROS topics
+- additional UAV depth topic is available at `/<uav>/camera0/depth_image`
 - current camera defaults are `pan_enable: true` and `tilt_enable: true`
 - attached mode is still available as an override with `camera:=attached`
 - if you override the mount pitch for attached mode, pass the same value to follow:
@@ -206,6 +208,8 @@ Saved multi-camera / debug layout:
 Then under `Perspectives`, choose one from the `perspectives/` folder if needed.
 
 UAV camera: ``/dji0/camera0/image_raw``
+
+UAV depth image: ``/dji0/camera0/depth_image``
 
 UGV camera: ``/a201_0000/sensors/camera_0/color/image``
 
