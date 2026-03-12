@@ -35,22 +35,17 @@ follow_uav:
     pose_timeout_s: 3.0    # Treat leader/UAV pose data as stale after this many seconds.
     tick_hz: 20.0         # Main odom-follow control loop rate.
 
-    cmd_xy_deadband_m: 0.02       # DONT TOUCH! Hold XY if the commanded move is smaller than this.
     follow_speed_mps: 5.0          # Hard cap on commanded XY follow speed.
-    follow_speed_gain: 2.0          # Proportional XY speed gain from anchor-position error.
+    follow_speed_gain: 1.2          # Proportional XY speed gain from anchor-position error.
     follow_z_speed_mps: 5.0          # Hard cap on commanded vertical glide speed.
-    follow_z_speed_gain: 2.0          # Proportional vertical speed gain from altitude error.
+    follow_z_speed_gain: 1.0          # Proportional vertical speed gain from altitude error.
     search_z_speed_scale: 0.25       # In estimate-mode search climb, scale the normal Z speed cap to keep ascent smooth.
     search_z_gain_scale: 0.05         # In estimate-mode search climb, scale the normal Z gain to soften upward response.
     search_min_motion_scale: 0.05      # Minimum XY motion scale while searching after NO_DET so climb/search does not stall laterally.
-    follow_yaw_rate_rad_s: 3.0         # Max yaw rate cap; yaw_rate_rad_s / tick_hz = max rad step per tick.
-    follow_yaw_rate_gain: 2.0           # Proportional yaw-rate gain; min(gain * yaw_error, yaw_rate_rad_s).
-    follow_yaw_accel_rad_s2: 8.0        # Max yaw-rate acceleration so large heading jumps ramp quickly without jitter.
-    follow_yaw_accel_boost_ref_rad: 0.5   # Yaw error at which the yaw acceleration boost reaches full strength.
-    follow_yaw_accel_boost_max_scale: 1.5  # Max multiplier applied to yaw acceleration on large heading jumps.
-    smooth_alpha: 1.0                     # Target smoothing alpha; 1.0 = no XY smoothing.
-    yaw_deadband_rad: 0.02               # DONT TOUCH! Hold yaw if the remaining yaw error is smaller than this.
-    yaw_update_xy_gate_m: 0.0           # 0 disables it; otherwise yaw only updates when XY motion exceeds this.
+    search_delay_s: 0.75              # Require NO_DET/STALE to persist this long before switching into search climb.
+    follow_yaw_rate_rad_s: 4.0         # Max yaw rate cap; yaw_rate_rad_s / tick_hz = max rad step per tick.
+    follow_yaw_rate_gain: 3.0           # Proportional yaw-rate gain; min(gain * yaw_error, yaw_rate_rad_s).
+    follow_yaw_accel_rad_s2: 12.0        # Max yaw-rate acceleration so yaw can catch sharp turns/reversing.
     publish_debug_topics: true         # Publish /<uav>/follow/{target,actual,error,debug} topics.
     publish_pose_cmd_topics: true     # Publish legacy /<uav>/pose_cmd and /<uav>/pose_cmd/odom helper topics.
     publish_metrics: false           # Odom-follow-only legacy metrics publishers.
@@ -60,7 +55,6 @@ follow_uav:
     #-----------------<< YOLO-follow only <<--------------------------------------------------------------------
     quality_conf_good: 0.7        # Confidence treated as "good" for full-quality response scaling.
     quality_conf_min: 0.4         # Confidence floor; at or below this the quality scale collapses.
-    quality_deadband_boost_m: 0.04  # Extra XY deadband added as estimate quality drops.
     quality_hold_step_scale: 0.08  # Hold motion/yaw when quality scale falls to or below this.
     quality_latency_ref_ms: 500.0  # Reference latency used when reducing response for stale estimates.
     quality_min_motion_scale: 0.35  # Shared minimum nonzero motion scale used by both direct motion and trajectory shaping.
@@ -74,19 +68,15 @@ follow_uav:
     leader_actual_heading_enable: false  # Use shared UGV body heading for anchor placement while still following estimator XY.
     leader_actual_heading_topic: /a201_0000/amcl_pose_odom  # Shared AMCL-derived UGV pose used to read the true chassis heading for the anchor.
     estimate_heading_from_motion_enable: true  # In estimate-follow, prefer leader motion heading over noisy pose yaw when actual heading is unavailable.
-    estimate_heading_alpha: 1.0  # EMA alpha for motion-derived heading/velocity.
-    estimate_heading_max_dt_s: 1.0  # Ignore heading inference updates if pose gaps exceed this.
+    estimate_heading_max_dt_s: 2.0  # Ignore heading inference updates if pose gaps exceed this.
     estimate_heading_min_speed_mps: 0.15  # Minimum leader speed before motion-derived heading is trusted.
 
     #~~~~<< Trajectory shaping.
     traj_enable: true         # Enable velocity/acceleration-limited target shaping.
-    traj_max_accel_mps2: 8.0   # Max XY acceleration inside the trajectory shaper.
+    traj_max_accel_mps2: 4.0   # Max XY acceleration inside the trajectory shaper.
     traj_max_speed_mps: 5.0     # Max XY speed inside the trajectory shaper.
-    traj_error_boost_ref_m: 1.0  # Relative anchor jump at which XY speed/accel boost reaches full strength.
-    traj_error_boost_max_scale: 3.0  # Max multiplier applied to XY speed/accel on large anchor jumps.
-    traj_pos_gain: 1.6           # Position-to-velocity proportional gain in the trajectory shaper.
+    traj_pos_gain: 1.0           # Position-to-velocity proportional gain in the trajectory shaper.
     traj_rel_frame_enable: true    # Shape the trajectory in the leader-relative frame instead of world frame.
-    traj_rel_smooth_alpha: 1.0     # EMA alpha on the relative target before velocity shaping.
     traj_reset_on_yaw_jump_rad: 1.0  # Reset trajectory state if the leader yaw jumps more than this.
     #--------------------------------------------------------------------------------------------------------------------
 
@@ -98,18 +88,15 @@ camera_tracker:
     default_tilt_deg: -45.0    # Fallback tilt command when tracking is disabled or stale.
     pan_enable: true          # Publish tracked pan commands instead of holding default_pan_deg.
     tilt_enable: true        # Publish tracked tilt commands instead of holding default_tilt_deg.
-    pan_deadband_deg: 0.25   # Hold the previous pan if the target changes less than this to reduce image-jitter chatter.
-    tilt_deadband_deg: 0.5  # DONT TOUCH! Hold the previous tilt if the target changes less than this.
     image_center_correction_enable: true  # Add image-space centering correction on top of geometry-based pan/tilt.
     image_center_correction_timeout_s: 0.25  # Ignore stale detector/tracker boxes when centering in the image.
-    image_center_deadband_deg: 0.5  # Ignore tiny image-angle errors to avoid camera chatter.
-    pan_image_center_gain: 0.5  # Scale horizontal image-angle error into extra pan correction.
-    pan_image_center_max_deg: 5.0  # Clamp image-based pan correction so it cannot dominate geometry pan.
-    tilt_image_center_gain: 0.8  # Scale vertical image-angle error into extra tilt correction.
-    tilt_image_center_max_deg: 20.0  # Clamp image-based tilt correction so it cannot dominate geometry tilt.
+    pan_image_center_gain: 0.25  # Scale horizontal image-angle error into extra pan correction.
+    pan_image_center_max_deg: 3.0  # Clamp image-based pan correction so it cannot dominate geometry pan.
+    tilt_image_center_gain: 0.5  # Scale vertical image-angle error into extra tilt correction.
+    tilt_image_center_max_deg: 12.0  # Clamp image-based tilt correction so it cannot dominate geometry tilt.
     publish_debug_topics: true  # Publish /<uav>/camera/{target,debug}/* geometry and image-centering topics.
     pose_timeout_s: 3.0    # Treat leader/UAV pose data as stale after this many seconds.
-    tick_hz: 20.0         # Camera pan/tilt update rate.
+    tick_hz: 30.0         # Camera pan/tilt update rate.
 
 leader_detector:
   ros__parameters:
@@ -120,7 +107,7 @@ leader_detector:
 
     device: cpu             # YOLO inference device, e.g. cpu or cuda.
     imgsz: 640               # YOLO inference image size.
-    predict_hz: 20.0         # Max detector publish rate; incoming images above this are skipped.
+    predict_hz: 60.0         # Max detector publish rate; incoming images above this are skipped.
 
     conf_threshold: 0.4  # Minimum YOLO detection confidence to consider.
     iou_threshold: 0.5   # IOU threshold passed into Ultralytics predict/NMS.
@@ -140,7 +127,7 @@ leader_tracker:
 
     device: cpu             # Ultralytics tracking device, e.g. cpu or cuda.
     imgsz: 640              # Tracking inference image size.
-    predict_hz: 20.0        # Max tracking publish rate; incoming images above this are skipped.
+    predict_hz: 60.0        # Max tracking publish rate; incoming images above this are skipped.
     tracker_config: bytetrack.yaml  # Tracker config filename under config/trackers or an absolute path.
 
     conf_threshold: 0.4  # Minimum detection confidence accepted by the tracker.

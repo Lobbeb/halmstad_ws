@@ -212,14 +212,29 @@ UGV camera: ``/a201_0000/sensors/camera_0/color/image``
 YOLO debug image: ``/coord/leader_debug_image``
 
 Overlay fields:
-- `det_state=<state> reason=<reason> src=<detector|tracker|none> conf=<...> cls=<...>`
-- `track_id=<id|none> state=<raw|reacquire|tracked|na> hits=<...> age_s=<...> switched=<...>`
-- `est_range=<...> src=<depth|ground|const|none> bearing=<...>`
-- `heading_src=<...>`
-- `est=(x,y,yaw)`
-- `err=(dx,dy,planar)`
-
-If truth comparison is disabled or stale, `err` shows `na`.
+- left block:
+  - `est: (...)`
+  - `actual: (...)`
+  - `est_d: ...`
+  - `est_xy: ...`
+  - `real_d: ...`
+  - `real_xy: ...`
+  - `real_z: ...`
+  - `range_src: ...`
+  - `bearing: ...`
+  - `est_heading: forward|reverse|left|right`
+  - `heading_src: ...`
+- right block:
+  - `task: detection|obb`
+  - `state: ...`
+  - `reason: ...`
+  - `conf: ...`
+  - `src: detector|tracker|none`
+  - `id: ...`
+  - `hits: ...`
+  - `age: ...s`
+- bottom-left:
+  - `latency_ms: ...`
 
 
 Only use the YOLO debug image when you started the YOLO flow from the section below.
@@ -422,18 +437,13 @@ Live follow control works here too:
 ./run.sh follow_control
 ```
 
-Runtime turn analysis:
+Runtime command logger:
 
 ```bash
-./run.sh follow_debug
+./run.sh uav_command_logger
 ```
 
-This subscribes to the follow, estimator, and camera topics and prints an interpreted diagnosis such as:
-- camera-only pan is moving
-- UAV body yaw command is moving
-- both camera and body are moving
-- suspicious motion while estimator state is `NO_DET` / `REJECT`
-- logs are also saved by default under `debug_logs/follow_debug/`
+This is now the preferred live logger for follow/camera behavior. It prints the actual published UAV body commands, camera pan/tilt deltas, speed, and direction labels, and logs under `debug_logs/uav_commands/`.
 
 For YOLO mode, detailed follow-debug topics are now muted by default. Re-enable them if needed:
 
@@ -473,13 +483,14 @@ Default behavior:
   - `tracker:=true` -> under `models/obb/...`
 
 Current live issue under investigation:
-- estimate-follow is much better than before, but the close-range case is still the active problem
-- when the UGV tries to pass underneath or cross the UAV path, the estimator/follow stack can still hold the wrong range or recover too slowly
-- camera/body centering and target-distance recovery are the main things to watch
+- distance holding is much better than before
+- the active problems are body yaw on sharp turns / reversing and jumpy camera pan/tilt
+- detector / tracker stability is better than the body/camera behavior right now
 
 First topics to watch during that event:
 - `/coord/leader_estimate_status`
 - `/coord/leader_debug_image`
+- `/<uav>/pose`
 - `/<uav>/psdk_ros2/flight_control_setpoint_ENUposition_yaw`
 - `/<uav>/update_pan`
 - `/<uav>/update_tilt`

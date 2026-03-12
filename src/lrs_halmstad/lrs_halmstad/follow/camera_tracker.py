@@ -25,43 +25,7 @@ from lrs_halmstad.follow.follow_math import (
 )
 from lrs_halmstad.perception.detection_protocol import Detection2D, decode_detection_payload
 
-
-def should_prefer_command_pose(
-    *,
-    have_cmd: bool,
-    cmd_stamp_ns: Optional[int],
-    have_actual: bool,
-    actual_stamp_ns: Optional[int],
-    now_ns: int,
-    pose_timeout_s: float,
-) -> bool:
-    if not have_cmd or cmd_stamp_ns is None:
-        return False
-    if now_ns - cmd_stamp_ns > pose_timeout_s * 1e9:
-        return False
-    if not have_actual or actual_stamp_ns is None:
-        return True
-    if now_ns - actual_stamp_ns > pose_timeout_s * 1e9:
-        return True
-    return cmd_stamp_ns >= actual_stamp_ns
-
-
-def apply_deadband_command(
-    target_value: float,
-    previous_value: Optional[float],
-    deadband_value: float,
-) -> float:
-    if previous_value is None or deadband_value <= 0.0:
-        return float(target_value)
-    if abs(float(target_value) - float(previous_value)) < deadband_value:
-        return float(previous_value)
-    return float(target_value)
-
-
 TRACKABLE_ESTIMATOR_STATES = frozenset({"OK"})
-CMD_POSE_PREFER_XY_GAP_M = 0.05
-CMD_POSE_PREFER_Z_GAP_M = 0.02
-CMD_POSE_PREFER_YAW_GAP_RAD = 0.02
 
 
 def parse_status_field(status_line: str, key: str) -> Optional[str]:
@@ -102,11 +66,8 @@ class CameraTracker(Node):
         self.pan_enable = coerce_bool(yaml_param(self, "pan_enable"))
         self.default_tilt_deg = float(yaml_param(self, "default_tilt_deg"))
         self.tilt_enable = coerce_bool(yaml_param(self, "tilt_enable"))
-        self.pan_deadband_deg = max(0.0, float(yaml_param(self, "pan_deadband_deg")))
-        self.tilt_deadband_deg = max(0.0, float(yaml_param(self, "tilt_deadband_deg")))
         self.image_center_correction_enable = coerce_bool(yaml_param(self, "image_center_correction_enable"))
         self.image_center_correction_timeout_s = max(0.0, float(yaml_param(self, "image_center_correction_timeout_s")))
-        self.image_center_deadband_deg = max(0.0, float(yaml_param(self, "image_center_deadband_deg")))
         self.pan_image_center_gain = float(yaml_param(self, "pan_image_center_gain"))
         self.pan_image_center_max_deg = max(0.0, float(yaml_param(self, "pan_image_center_max_deg")))
         self.tilt_image_center_gain = float(yaml_param(self, "tilt_image_center_gain"))
@@ -350,9 +311,7 @@ class CameraTracker(Node):
         self.get_logger().info(
             f"[camera_tracker] Started: uav={self.uav_name}, leader_input={self.leader_input_type}, "
             f"pan_enable={self.pan_enable}, default_pan_deg={self.default_pan_deg}, "
-            f"pan_deadband_deg={self.pan_deadband_deg}, "
             f"tilt_enable={self.tilt_enable}, default_tilt_deg={self.default_tilt_deg}, "
-            f"tilt_deadband_deg={self.tilt_deadband_deg}, "
             f"image_center_correction_enable={self.image_center_correction_enable}, "
             f"publish_debug_topics={self.publish_debug_topics}, "
             f"leader_look_target_m=({self.leader_look_target_x_m}, "
@@ -488,49 +447,7 @@ class CameraTracker(Node):
         age_s = (now - self.last_trackable_leader_stamp).nanoseconds * 1e-9
         return age_s <= self.pose_timeout_s
 
-    def _prefer_uav_cmd_pose(self, now: Time) -> bool:
-        prefer_by_freshness = should_prefer_command_pose(
-            have_cmd=self.have_uav_cmd,
-            cmd_stamp_ns=(
-                None if self.last_uav_cmd_stamp is None else int(self.last_uav_cmd_stamp.nanoseconds)
-            ),
-            have_actual=self.have_uav_actual,
-            actual_stamp_ns=(
-                None
-                if self.last_uav_actual_stamp is None
-                else int(self.last_uav_actual_stamp.nanoseconds)
-            ),
-            now_ns=int(now.nanoseconds),
-            pose_timeout_s=self.pose_timeout_s,
-        )
-        if prefer_by_freshness:
-            return True
-        if (
-            not self.have_uav_cmd
-            or not self.have_uav_actual
-            or self.last_uav_cmd_stamp is None
-            or self.last_uav_actual_stamp is None
-        ):
-            return False
-        cmd_age_s = (now - self.last_uav_cmd_stamp).nanoseconds * 1e-9
-        actual_age_s = (now - self.last_uav_actual_stamp).nanoseconds * 1e-9
-        if cmd_age_s > self.pose_timeout_s or actual_age_s > self.pose_timeout_s:
-            return False
-        xy_gap = math.hypot(
-            self.uav_cmd_pose.x - self.uav_actual_pose.x,
-            self.uav_cmd_pose.y - self.uav_actual_pose.y,
-        )
-        z_gap = abs(self.uav_cmd_z - self.uav_actual_z)
-        yaw_gap = abs(wrap_pi(self.uav_cmd_pose.yaw - self.uav_actual_pose.yaw))
-        return (
-            xy_gap > CMD_POSE_PREFER_XY_GAP_M
-            or z_gap > CMD_POSE_PREFER_Z_GAP_M
-            or yaw_gap > CMD_POSE_PREFER_YAW_GAP_RAD
-        )
-
     def _tracking_uav_pose(self, now: Time) -> Optional[Pose2D]:
-        if self._prefer_uav_cmd_pose(now):
-            return self.uav_cmd_pose
         if self.have_uav_actual:
             return self.uav_actual_pose
         if self.have_uav_cmd:
@@ -538,8 +455,6 @@ class CameraTracker(Node):
         return None
 
     def _tracking_uav_z(self, now: Time) -> Optional[float]:
-        if self._prefer_uav_cmd_pose(now):
-            return self.uav_cmd_z
         if self.have_uav_actual:
             return self.uav_actual_z
         if self.have_uav_cmd:
@@ -547,8 +462,6 @@ class CameraTracker(Node):
         return None
 
     def _tracking_uav_pose_source(self, now: Time) -> str:
-        if self._prefer_uav_cmd_pose(now):
-            return "cmd_pose"
         if self.have_uav_actual:
             return "actual_pose"
         if self.have_uav_cmd:
@@ -582,10 +495,6 @@ class CameraTracker(Node):
         det = self.last_detection
         err_x_deg = math.degrees(math.atan2((det.u - self.camera_cx) / self.camera_fx, 1.0))
         err_y_deg = math.degrees(math.atan2((det.v - self.camera_cy) / self.camera_fy, 1.0))
-        if abs(err_x_deg) < self.image_center_deadband_deg:
-            err_x_deg = 0.0
-        if abs(err_y_deg) < self.image_center_deadband_deg:
-            err_y_deg = 0.0
 
         pan_corr_deg = self._clamp_symmetric(
             -self.pan_image_center_gain * err_x_deg,
@@ -865,17 +774,7 @@ class CameraTracker(Node):
             raw_tilt_cmd += tilt_image_correction_deg
             target_tilt_cmd_deg = float(raw_tilt_cmd)
             tilt_mode = "track"
-            if (
-                self.last_tilt_cmd_deg is not None
-                and self.tilt_deadband_deg > 0.0
-                and abs(raw_tilt_cmd - self.last_tilt_cmd_deg) < self.tilt_deadband_deg
-            ):
-                tilt_mode = "track_deadband_hold"
-            tilt_msg.data = apply_deadband_command(
-                raw_tilt_cmd,
-                self.last_tilt_cmd_deg,
-                self.tilt_deadband_deg,
-            )
+            tilt_msg.data = float(raw_tilt_cmd)
         elif self.tilt_enable and self.last_tilt_cmd_deg is not None:
             tilt_mode = "hold_last"
             target_tilt_cmd_deg = float(self.last_tilt_cmd_deg)
@@ -911,11 +810,7 @@ class CameraTracker(Node):
                 )
                 + pan_image_correction_deg
             )
-            pan_msg.data = apply_deadband_command(
-                raw_pan_cmd,
-                self.last_pan_cmd_deg,
-                self.pan_deadband_deg,
-            )
+            pan_msg.data = float(raw_pan_cmd)
         elif self.pan_enable and self.last_pan_cmd_deg is not None:
             pan_msg.data = float(self.last_pan_cmd_deg)
         else:

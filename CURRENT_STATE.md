@@ -285,7 +285,7 @@ Current live focus in YOLO detect/track follow:
 - estimator/follow behavior is much better than earlier, but close-range behavior is still the main problem
 - the UAV can struggle when the UGV passes underneath or tries to cross the UAV path
 - the estimator can still end up holding the fallback/const range at the wrong moment
-- camera/body centering and target-distance recovery are the active runtime tuning/debug areas
+- body yaw on sharp turns / reversing and jumpy camera pan/tilt are the active runtime tuning/debug areas
 
 Where to start:
 - `follow/follow_uav.py`
@@ -326,50 +326,56 @@ Important consequence:
 From `run_follow_defaults.yaml`:
 
 Follow controller:
-- `d_target: 7.0`
-- `z_min: 7.0`
+- `d_target: 10.0`
+- `xy_min: 1.0`
+- `z_min: 5.0`
 - `tick_hz: 20.0`
 - `follow_speed_mps: 5.0`
-- `follow_speed_gain: 2.0`
-- `follow_z_speed_mps: 8.0`
-- `follow_z_speed_gain: 3.0`
-- `follow_yaw_rate_rad_s: 3.0`
+- `follow_speed_gain: 1.2`
+- `follow_z_speed_mps: 5.0`
+- `follow_z_speed_gain: 1.0`
+- `follow_yaw_rate_rad_s: 4.0`
 - `follow_yaw_rate_gain: 3.0`
-- `yaw_deadband_rad: 0.02`
-- `yaw_update_xy_gate_m: 0.0`
+- `follow_yaw_accel_rad_s2: 12.0`
 - `leader_actual_heading_enable: false` in YAML
 - `estimate_heading_from_motion_enable: true`
 - `traj_max_speed_mps: 5.0`
-- `traj_max_accel_mps2: 8.0`
+- `traj_max_accel_mps2: 4.0`
+- `traj_pos_gain: 1.0`
 
 Camera tracker:
-- `tick_hz: 20.0`
+- `tick_hz: 30.0`
 - `default_pan_deg: 0.0`
 - `default_tilt_deg: -45.0`
 - `pan_enable: true`
 - `tilt_enable: true`
 - `image_center_correction_enable: true`
-- `pan_image_center_gain: 0.5`
-- `tilt_image_center_gain: 0.8`
+- `pan_image_center_gain: 0.25`
+- `pan_image_center_max_deg: 3.0`
+- `tilt_image_center_gain: 0.5`
+- `tilt_image_center_max_deg: 12.0`
+- tracks from actual UAV pose consistently; the older cmd-pose/actual-pose switching path was removed
 
 Estimator:
 - `est_hz: 20.0`
-- `range_mode: const`
-- `d_target` now seeds the estimator const-range target too; the old explicit `constant_range_m` launch override is no longer part of the normal run path
+- `range_mode: auto`
+- `d_target` now seeds the estimator const-mode target too; the old explicit `constant_range_m` launch override is no longer part of the normal run path
 - `use_depth_range: false`
-- `external_detection_timeout_s: 1.0`
+- `external_detection_timeout_s: 2.0`
+- const fallback now uses a recomputed target-based range (`const_target`), not the old shrinking `const_hold` XY reuse
 
 Detector:
-- `predict_hz: 20.0`
-- `conf_threshold: 0.3`
+- `predict_hz: 60.0`
+- `conf_threshold: 0.4`
 - `bbox_continuity_weight: 0.10`
 - `bbox_continuity_max_px: 180.0`
 
 Tracker:
-- `predict_hz: 20.0`
-- `tracker_config: bytetrack.yaml`
-- `conf_threshold: 0.12`
-- `iou_threshold: 0.45`
+- `predict_hz: 60.0`
+- `tracker_config: bytetrack.yaml` in YAML
+- launch default still overrides tracker config to `botsort.yaml` unless you pass your own override
+- `conf_threshold: 0.4`
+- `iou_threshold: 0.5`
 
 Important effective-runtime nuance:
 - `run_follow.launch.py` still sets launch-default `tracker_config:=botsort.yaml`

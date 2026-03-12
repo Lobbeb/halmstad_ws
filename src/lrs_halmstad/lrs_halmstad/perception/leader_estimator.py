@@ -63,6 +63,7 @@ class LeaderEstimator(Node):
         self.external_detection_status_topic = str(yaml_param(self, "external_detection_status_topic")).strip()
         self.out_topic = str(yaml_param(self, "out_topic")).strip()
         self.status_topic = str(yaml_param(self, "status_topic")).strip()
+        self.distance_status_topic = "/coord/leader_distance_debug"
         self.fault_status_topic = str(yaml_param(self, "fault_status_topic")).strip()
         self.estimate_error_topic = str(yaml_param(self, "estimate_error_topic")).strip()
         self.event_topic = str(yaml_param(self, "event_topic")).strip()
@@ -137,8 +138,6 @@ class LeaderEstimator(Node):
         self.last_estimate_pose: Optional[Pose2D] = None
         self.last_estimate_stamp: Optional[Time] = None
         self.last_estimate_track_id: Optional[int] = None
-        self.last_measured_range_m: Optional[float] = None
-
         self.last_estimate_error_dx_m: Optional[float] = None
         self.last_estimate_error_dy_m: Optional[float] = None
         self.last_estimate_error_m: Optional[float] = None
@@ -188,6 +187,7 @@ class LeaderEstimator(Node):
 
         self.pub = self.create_publisher(PoseStamped, self.out_topic, 10)
         self.status_pub = self.create_publisher(String, self.status_topic, 10)
+        self.distance_status_pub = self.create_publisher(String, self.distance_status_topic, 10)
         self.events_pub = self.create_publisher(String, self.event_topic, 10)
         self.debug_image_pub = self.create_publisher(Image, self.debug_image_topic, 2) if self.publish_debug_image else None
         self.estimate_error_pub = (
@@ -214,7 +214,8 @@ class LeaderEstimator(Node):
             f"image={self.camera_topic}, camera_info={self.camera_info_topic}, depth={self.depth_topic or 'disabled'}, "
             f"uav_pose={self.uav_pose_topic}, detection={self.external_detection_topic}, "
             f"detection_status={self.external_detection_status_topic}, out={self.out_topic}, "
-            f"est_hz={self.est_hz}Hz, range_mode={self.range_mode}, const_target_m={self._constant_target_range()[0]:.2f}"
+            f"est_hz={self.est_hz}Hz, range_mode={self.range_mode}, const_target_m={self._constant_target_range()[0]:.2f}, "
+            f"distance_status={self.distance_status_topic}"
         )
         self.publish_fault_status_msg(self._fault_line("none", "none", self.get_clock().now()))
         self.emit_event("ESTIMATOR_NODE_START")
@@ -232,6 +233,11 @@ class LeaderEstimator(Node):
         msg = String()
         msg.data = text
         self.status_pub.publish(msg)
+
+    def publish_distance_status_msg(self, now: Time) -> None:
+        msg = String()
+        msg.data = self._distance_status_line(now)
+        self.distance_status_pub.publish(msg)
 
     def publish_fault_status_msg(self, text: str) -> None:
         if not self.publish_fault_status or self.fault_status_pub is None:
@@ -534,30 +540,13 @@ class LeaderEstimator(Node):
             return "ground_jump"
         return "none"
 
-    def _held_estimate_range_m(self) -> Optional[float]:
-        if self.last_estimate_pose is None or self.uav_pose is None:
-            return None
-        cam_world_x, cam_world_y = self._cam_world_xy()
-        held = math.hypot(
-            self.last_estimate_pose.x - cam_world_x,
-            self.last_estimate_pose.y - cam_world_y,
-        )
-        if not math.isfinite(held) or held <= 0.0:
-            return None
-        return float(held)
-
     def _constant_target_range(self) -> tuple[float, str]:
-        if self.last_measured_range_m is not None and self.last_measured_range_m > 0.0:
-            return float(self.last_measured_range_m), "const_hold"
-        held = self._held_estimate_range_m()
-        if held is not None:
-            return held, "const_hold"
         if self.d_target > 0.0:
             vertical_delta = 0.0
             if self.uav_pose is not None:
                 vertical_delta = self.uav_pose.z - self.target_ground_z_m
-            return float(horizontal_distance_for_euclidean(self.d_target, vertical_delta)), "const_seed"
-        return float(self.constant_range_m), "const_seed"
+            return float(horizontal_distance_for_euclidean(self.d_target, vertical_delta)), "const_target"
+        return float(self.constant_range_m), "const_fallback"
 
     def _estimate_from_detection(self, det: Detection2D, cam: CameraModel, now: Time) -> Tuple[Pose2D, str]:
         assert self.uav_pose is not None
@@ -622,8 +611,6 @@ class LeaderEstimator(Node):
                 heading_source = "obb"
 
         self.last_det_conf = float(det.conf)
-        if range_source in {"depth", "ground"}:
-            self.last_measured_range_m = float(range_m)
         self.last_range_source = range_source
         self.last_range_used_m = float(range_m)
         self.last_bearing_used_deg = math.degrees(bearing)
@@ -680,6 +667,13 @@ class LeaderEstimator(Node):
         err_dx = "na" if self.last_estimate_error_dx_m is None else f"{self.last_estimate_error_dx_m:.2f}"
         err_dy = "na" if self.last_estimate_error_dy_m is None else f"{self.last_estimate_error_dy_m:.2f}"
         err_planar = "na" if self.last_estimate_error_m is None else f"{self.last_estimate_error_m:.2f}"
+        est_d, est_xy = self._estimated_distance_values(now)
+        real_d, real_xy, real_z = self._actual_distance_values(now)
+        est_d_text = "na" if est_d is None else f"{est_d:.2f}"
+        est_xy_text = "na" if est_xy is None else f"{est_xy:.2f}"
+        real_d_text = "na" if real_d is None else f"{real_d:.2f}"
+        real_xy_text = "na" if real_xy is None else f"{real_xy:.2f}"
+        real_z_text = "na" if real_z is None else f"{real_z:.2f}"
         return (
             f"state={state} reason={reason} "
             f"detector_reason={self._detector_reason(now)} detector_age_ms={self._detector_age_ms(now):.1f} "
@@ -687,7 +681,23 @@ class LeaderEstimator(Node):
             f"range_src={self.last_range_source} range_mode={self.range_mode} range_m={self.last_range_used_m:.2f} "
             f"bearing_deg={self.last_bearing_used_deg:.1f} reject_reason={self.last_reject_reason} "
             f"heading_src={self.last_heading_source} "
+            f"est_d_m={est_d_text} est_xy_m={est_xy_text} "
+            f"real_d_m={real_d_text} real_xy_m={real_xy_text} real_z_m={real_z_text} "
             f"err_dx_m={err_dx} err_dy_m={err_dy} err_planar_m={err_planar}"
+        )
+
+    def _distance_status_line(self, now: Time) -> str:
+        est_d, est_xy = self._estimated_distance_values(now)
+        real_d, real_xy, real_z = self._actual_distance_values(now)
+        est_d_text = "na" if est_d is None else f"{est_d:.2f}"
+        est_xy_text = "na" if est_xy is None else f"{est_xy:.2f}"
+        real_d_text = "na" if real_d is None else f"{real_d:.2f}"
+        real_xy_text = "na" if real_xy is None else f"{real_xy:.2f}"
+        real_z_text = "na" if real_z is None else f"{real_z:.2f}"
+        return (
+            f"range_src={self.last_range_source} "
+            f"est_d_m={est_d_text} est_xy_m={est_xy_text} "
+            f"real_d_m={real_d_text} real_xy_m={real_xy_text} real_z_m={real_z_text}"
         )
 
     def _detection_status_overlay_lines(self, now: Time) -> list[str]:
@@ -770,32 +780,44 @@ class LeaderEstimator(Node):
             f"{self.last_actual_leader_pose.yaw:.2f})"
         )
 
-    def _estimated_distance_lines(self, now: Time) -> list[str]:
+    def _estimated_distance_values(self, now: Time) -> tuple[Optional[float], Optional[float]]:
         if self.uav_pose is None or not self.uav_pose_fresh(now):
-            return ["est_d: na", "est_xy: na"]
+            return None, None
         if self.last_estimate_pose is None:
-            return ["est_d: na", "est_xy: na"]
+            return None, None
         dx = self.last_estimate_pose.x - self.uav_pose.x
         dy = self.last_estimate_pose.y - self.uav_pose.y
         dz = self.last_estimate_pose.z - self.uav_pose.z
         est_xy = math.hypot(dx, dy)
         est_d = math.sqrt(dx * dx + dy * dy + dz * dz)
+        return est_d, est_xy
+
+    def _estimated_distance_lines(self, now: Time) -> list[str]:
+        est_d, est_xy = self._estimated_distance_values(now)
+        if est_d is None or est_xy is None:
+            return ["est_d: na", "est_xy: na"]
         return [
             f"est_d: {est_d:.2f}m",
             f"est_xy: {est_xy:.2f}m",
         ]
 
-    def _actual_range_lines(self, now: Time) -> list[str]:
+    def _actual_distance_values(self, now: Time) -> tuple[Optional[float], Optional[float], Optional[float]]:
         if self.uav_pose is None or not self.uav_pose_fresh(now):
-            return ["real_d: na", "real_xy: na", "real_z: na"]
+            return None, None, None
         if self.last_actual_leader_pose is None or not self.actual_leader_pose_fresh(now):
-            return ["real_d: na", "real_xy: na", "real_z: na"]
+            return None, None, None
         dx = self.last_actual_leader_pose.x - self.uav_pose.x
         dy = self.last_actual_leader_pose.y - self.uav_pose.y
         dz = self.last_actual_leader_pose.z - self.uav_pose.z
         real_xy = math.hypot(dx, dy)
         real_z = abs(dz)
         real_d = math.sqrt(dx * dx + dy * dy + dz * dz)
+        return real_d, real_xy, real_z
+
+    def _actual_range_lines(self, now: Time) -> list[str]:
+        real_d, real_xy, real_z = self._actual_distance_values(now)
+        if real_d is None or real_xy is None or real_z is None:
+            return ["real_d: na", "real_xy: na", "real_z: na"]
         return [
             f"real_d: {real_d:.2f}m",
             f"real_xy: {real_xy:.2f}m",
@@ -899,6 +921,7 @@ class LeaderEstimator(Node):
             self.last_range_used_m = -1.0
             self.last_heading_source = "none"
             self.publish_status_msg(self._status_line("STALE", "camera_info_missing", now))
+            self.publish_distance_status_msg(now)
             self._record_fault("STALE", "camera_info_missing", now)
             self._publish_debug_image("STALE", "camera_info_missing", det)
             return
@@ -908,6 +931,7 @@ class LeaderEstimator(Node):
             self.last_range_used_m = -1.0
             self.last_heading_source = "none"
             self.publish_status_msg(self._status_line("STALE", "image_stale", now))
+            self.publish_distance_status_msg(now)
             self._record_fault("STALE", "image_stale", now)
             self._publish_debug_image("STALE", "image_stale", det)
             return
@@ -917,6 +941,7 @@ class LeaderEstimator(Node):
             self.last_range_used_m = -1.0
             self.last_heading_source = "none"
             self.publish_status_msg(self._status_line("STALE", "uav_pose_stale", now))
+            self.publish_distance_status_msg(now)
             self._record_fault("STALE", "uav_pose_stale", now)
             self._publish_debug_image("STALE", "uav_pose_stale", det)
             return
@@ -927,6 +952,7 @@ class LeaderEstimator(Node):
             self.last_heading_source = "none"
             reason = "no_detection" if self.last_external_det_stamp is not None else "detection_missing"
             self.publish_status_msg(self._status_line("NO_DET", reason, now))
+            self.publish_distance_status_msg(now)
             self._record_fault("NO_DET", reason, now)
             self._publish_debug_image("NO_DET", reason, None)
             return
@@ -937,6 +963,7 @@ class LeaderEstimator(Node):
             reason = str(exc) or "estimate_failed"
             self.last_heading_source = "none"
             self.publish_status_msg(self._status_line("STALE", reason, now))
+            self.publish_distance_status_msg(now)
             self._record_fault("STALE", reason, now)
             self._publish_debug_image("STALE", reason, det)
             return
@@ -944,12 +971,14 @@ class LeaderEstimator(Node):
             reason = f"estimate_failed:{exc}"
             self.last_heading_source = "none"
             self.publish_status_msg(self._status_line("STALE", reason, now))
+            self.publish_distance_status_msg(now)
             self._record_fault("STALE", reason, now)
             self._publish_debug_image("STALE", reason, det)
             return
 
         self._publish_estimate(pose, now, det.track_id)
         self.publish_status_msg(self._status_line("OK", "none", now))
+        self.publish_distance_status_msg(now)
         self.last_debug_state = "OK"
         self.last_debug_det = det
         self._publish_debug_image("OK", "none", det)

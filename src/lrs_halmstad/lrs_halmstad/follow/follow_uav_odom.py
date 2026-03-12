@@ -55,16 +55,12 @@ class FollowUavOdom(FollowControllerCoreMixin, Node):
         declare_yaml_param(self, "follow_yaw")
         declare_yaml_param(self, "pose_timeout_s")
         declare_yaml_param(self, "min_cmd_period_s")
-        declare_yaml_param(self, "smooth_alpha")
         declare_yaml_param(self, "follow_speed_mps")
         declare_yaml_param(self, "follow_speed_gain")
         declare_yaml_param(self, "follow_z_speed_mps")
         declare_yaml_param(self, "follow_z_speed_gain")
-        declare_yaml_param(self, "cmd_xy_deadband_m")
         declare_yaml_param(self, "follow_yaw_rate_rad_s")
         declare_yaml_param(self, "follow_yaw_rate_gain")
-        declare_yaml_param(self, "yaw_deadband_rad")
-        declare_yaml_param(self, "yaw_update_xy_gate_m")
 
         declare_yaml_param(self, "event_topic")
         declare_yaml_param(self, "publish_events")
@@ -105,16 +101,12 @@ class FollowUavOdom(FollowControllerCoreMixin, Node):
         self.follow_yaw = coerce_bool(required_param_value(self, "follow_yaw"))
         self.pose_timeout_s = float(required_param_value(self, "pose_timeout_s"))
         self.min_cmd_period_s = float(required_param_value(self, "min_cmd_period_s"))
-        self.smooth_alpha = float(required_param_value(self, "smooth_alpha"))
         self.follow_speed_mps = float(required_param_value(self, "follow_speed_mps"))
         self.follow_speed_gain = float(required_param_value(self, "follow_speed_gain"))
         self.follow_z_speed_mps = float(required_param_value(self, "follow_z_speed_mps"))
         self.follow_z_speed_gain = float(required_param_value(self, "follow_z_speed_gain"))
-        self.cmd_xy_deadband_m = float(required_param_value(self, "cmd_xy_deadband_m"))
         self.follow_yaw_rate_rad_s = float(required_param_value(self, "follow_yaw_rate_rad_s"))
         self.follow_yaw_rate_gain = float(required_param_value(self, "follow_yaw_rate_gain"))
-        self.yaw_deadband_rad = float(required_param_value(self, "yaw_deadband_rad"))
-        self.yaw_update_xy_gate_m = float(required_param_value(self, "yaw_update_xy_gate_m"))
 
         self.event_topic = str(required_param_value(self, "event_topic"))
         self.publish_events = coerce_bool(required_param_value(self, "publish_events"))
@@ -127,7 +119,6 @@ class FollowUavOdom(FollowControllerCoreMixin, Node):
         self.camera_z_offset_m = float(required_param_value(self, "camera_z_offset_m"))
         self.leader_look_target_x_m = float(required_param_value(self, "leader_look_target_x_m"))
         self.leader_look_target_y_m = float(required_param_value(self, "leader_look_target_y_m"))
-
         if self.tick_hz <= 0.0:
             raise ValueError("tick_hz must be > 0")
         if self.z_min < 0.0:
@@ -157,8 +148,6 @@ class FollowUavOdom(FollowControllerCoreMixin, Node):
             )
 
         self._refresh_xy_target()
-        self.base_follow_speed_mps = self.follow_speed_mps
-
         self.have_ugv = False
         self.ugv_pose = Pose2D(0.0, 0.0, 0.0)
         self.ugv_z = 0.0
@@ -245,7 +234,6 @@ class FollowUavOdom(FollowControllerCoreMixin, Node):
             f"follow_z_speed_gain={self.follow_z_speed_gain}, "
             f"follow_yaw_rate_rad_s={self.follow_yaw_rate_rad_s}, "
             f"follow_yaw_rate_gain={self.follow_yaw_rate_gain}, "
-            f"smooth_alpha={self.smooth_alpha}, "
             f"publish_debug_topics={self.publish_debug_topics}, publish_pose_cmd_topics={self.publish_pose_cmd_topics}, "
             f"camera_offset_m=({self.camera_x_offset_m}, {self.camera_y_offset_m}, {self.camera_z_offset_m}), "
             f"leader_look_target_xy_m=({self.leader_look_target_x_m}, {self.leader_look_target_y_m}), "
@@ -280,10 +268,6 @@ class FollowUavOdom(FollowControllerCoreMixin, Node):
                     "follow_z_speed_gain",
                     "follow_yaw_rate_rad_s",
                     "follow_yaw_rate_gain",
-                    "cmd_xy_deadband_m",
-                    "yaw_deadband_rad",
-                    "yaw_update_xy_gate_m",
-                    "smooth_alpha",
                 ):
                     return SetParametersResult(successful=False, reason=f"invalid {param.name}: {exc}")
                 continue
@@ -302,16 +286,9 @@ class FollowUavOdom(FollowControllerCoreMixin, Node):
                 "follow_z_speed_gain",
                 "follow_yaw_rate_rad_s",
                 "follow_yaw_rate_gain",
-                "cmd_xy_deadband_m",
-                "yaw_deadband_rad",
-                "yaw_update_xy_gate_m",
             ):
                 if value < 0.0:
                     return SetParametersResult(successful=False, reason=f"{param.name} must be >= 0")
-                runtime_updates[param.name] = value
-            elif param.name == "smooth_alpha":
-                if not 0.0 <= value <= 1.0:
-                    return SetParametersResult(successful=False, reason="smooth_alpha must be within [0, 1]")
                 runtime_updates[param.name] = value
 
         if not updates and not runtime_updates:
@@ -371,7 +348,6 @@ class FollowUavOdom(FollowControllerCoreMixin, Node):
             self.xy_min = max(new_xy_min, 0.0)
             self.xy_max = max(new_xy_max, 0.0)
             self._refresh_xy_target()
-            self._update_follow_response_from_distance()
             self._apply_runtime_distance_update()
 
         if runtime_updates:
@@ -461,8 +437,7 @@ class FollowUavOdom(FollowControllerCoreMixin, Node):
         )
         return target_x, target_y
 
-    def _distance_targets_for_geometry(self, horizontal_distance: float, leader_z: float) -> tuple[float, float]:
-        _ = horizontal_distance
+    def _distance_targets_for_geometry(self, leader_z: float) -> tuple[float, float]:
         return self._nominal_target_pair(leader_z)
 
     def _compute_anchor_target(self, target_horizontal_distance: float) -> Pose2D:
@@ -502,10 +477,6 @@ class FollowUavOdom(FollowControllerCoreMixin, Node):
             actual_rel_x - target_rel_x,
             actual_rel_y - target_rel_y,
         )
-
-    def _update_follow_response_from_distance(self) -> None:
-        # Yaw response is intentionally independent of follow-distance retargeting.
-        return
 
     def _effective_follow_speed_mps(self, anchor_distance_error: float) -> float:
         return min(
@@ -585,7 +556,7 @@ class FollowUavOdom(FollowControllerCoreMixin, Node):
             self.camera_x_offset_m,
             self.camera_y_offset_m,
         )
-        _target_horizontal_distance, z_target = self._distance_targets_for_geometry(horizontal_distance, self.ugv_z)
+        _target_horizontal_distance, z_target = self._distance_targets_for_geometry(self.ugv_z)
         z_cmd = self._compute_command_z(
             current_uav_z,
             z_target,
@@ -601,10 +572,7 @@ class FollowUavOdom(FollowControllerCoreMixin, Node):
         if not self.publish_metrics:
             return
         d_cmd = math.hypot(cmd_x - leader.x, cmd_y - leader.y)
-        target_horizontal_distance, _target_z = self._distance_targets_for_geometry(
-            self.current_leader_distance_xy_m,
-            self.ugv_z,
-        )
+        target_horizontal_distance, _target_z = self._distance_targets_for_geometry(self.ugv_z)
         err = abs(d_cmd - target_horizontal_distance)
         msg1 = Float32()
         msg1.data = float(d_cmd)
@@ -624,17 +592,9 @@ class FollowUavOdom(FollowControllerCoreMixin, Node):
         if not self.can_send_command_now(now):
             return
 
-        target_horizontal_distance, z_target = self._distance_targets_for_geometry(
-            current_horizontal_distance,
-            self.ugv_z,
-        )
+        target_horizontal_distance, z_target = self._distance_targets_for_geometry(self.ugv_z)
         anchor_target = self._compute_anchor_target(target_horizontal_distance)
         xt, yt = anchor_target.x, anchor_target.y
-
-        if (self.have_uav_actual or self.have_uav_cmd) and self.smooth_alpha < 1.0:
-            a = self.smooth_alpha
-            xt = a * xt + (1.0 - a) * current_uav.x
-            yt = a * yt + (1.0 - a) * current_uav.y
 
         anchor_distance_error, _, _ = self._anchor_errors(anchor_target, current_uav)
         effective_follow_speed_mps = self._effective_follow_speed_mps(anchor_distance_error)
@@ -676,13 +636,7 @@ class FollowUavOdom(FollowControllerCoreMixin, Node):
         )
         yaw_step_limit = yaw_rate_rad_s / self.tick_hz if yaw_rate_rad_s > 0.0 else 0.0
 
-        if self.yaw_update_xy_gate_m > 0.0 and cmd_xy_delta < self.yaw_update_xy_gate_m:
-            yaw_cmd = current_uav.yaw
-            yaw_mode = "xy_gate_hold"
-        elif self.yaw_deadband_rad > 0.0 and abs(yaw_error) < self.yaw_deadband_rad:
-            yaw_cmd = current_uav.yaw
-            yaw_mode = "deadband_hold"
-        elif yaw_step_limit > 0.0 and abs(yaw_error) > yaw_step_limit:
+        if yaw_step_limit > 0.0 and abs(yaw_error) > yaw_step_limit:
             yaw_cmd = wrap_pi(current_uav.yaw + math.copysign(yaw_step_limit, yaw_error))
             yaw_mode = "rate_limited"
         else:
@@ -690,10 +644,6 @@ class FollowUavOdom(FollowControllerCoreMixin, Node):
             yaw_mode = "direct_target"
 
         yaw_cmd_delta = wrap_pi(yaw_cmd - current_uav.yaw)
-
-        if self.cmd_xy_deadband_m > 0.0 and cmd_xy_delta < self.cmd_xy_deadband_m:
-            xt = current_uav.x
-            yt = current_uav.y
 
         z_cmd = self._compute_command_z(
             current_uav_z,

@@ -139,10 +139,10 @@ Do not make estimator logic control the vehicle directly.
 The current open issue is not the package split anymore.
 
 The current debugging focus is the live YOLO follow behavior:
-- estimate-follow works much better than before, but it still struggles when the UGV passes under the UAV
-- the estimator can still fall back to `const` range at the wrong time
-- camera/body centering and close-range behavior are the active runtime tuning/debug area
-- the older camera-snap / forward-surge failure is still relevant context, but it is no longer the only symptom to watch
+- distance holding is much better than before
+- the current main issues are body yaw on sharp turns / reversing and jumpy camera pan/tilt
+- detector / tracker stability is better than the body/camera behavior right now
+- prefer simplifying or removing over-restrictive logic before adding new control features
 
 Start investigation from:
 - `lrs_halmstad/follow/follow_uav.py`
@@ -159,6 +159,7 @@ Relevant runtime topics:
 - `/<uav>/psdk_ros2/flight_control_setpoint_ENUposition_yaw`
 - `/<uav>/update_pan`
 - `/<uav>/update_tilt`
+- `/<uav>/pose`
 
 Do not start a new refactor before understanding that runtime behavior.
 
