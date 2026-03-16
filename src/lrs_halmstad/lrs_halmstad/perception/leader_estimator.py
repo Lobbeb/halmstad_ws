@@ -15,10 +15,12 @@ from rclpy.node import Node
 from rclpy.qos import QoSDurabilityPolicy, QoSHistoryPolicy, QoSProfile, QoSReliabilityPolicy
 from rclpy.time import Time
 from sensor_msgs.msg import CameraInfo, Image
-from std_msgs.msg import Float32, String
+from std_msgs.msg import Float32, Float64, String
 
+from lrs_halmstad.common.node_mixins import EventEmitterMixin
 from lrs_halmstad.common.ros_params import yaml_param
 from lrs_halmstad.follow.follow_math import (
+    Pose3D,
     coerce_bool,
     horizontal_distance_for_euclidean,
     quat_from_yaw,
@@ -28,13 +30,6 @@ from lrs_halmstad.follow.follow_math import (
 from lrs_halmstad.perception.detection_protocol import Detection2D, decode_detection_payload
 from lrs_halmstad.perception.detection_status import overlay_lines_from_status, parse_status_line
 from lrs_halmstad.perception.yolo_common import cv2, image_to_bgr, order_quad
-
-@dataclass
-class Pose2D:
-    x: float
-    y: float
-    z: float
-    yaw: float
 
 
 @dataclass
@@ -47,7 +42,7 @@ class CameraModel:
     height: int
 
 
-class LeaderEstimator(Node):
+class LeaderEstimator(EventEmitterMixin, Node):
     """Estimator-only node that turns external detections into a world-frame leader pose."""
 
     def __init__(self):
@@ -93,6 +88,8 @@ class LeaderEstimator(Node):
         self.depth_max_m = float(yaml_param(self, "depth_max_m", descriptor=dyn_num))
         self.depth_max_estimate_jump_m = float(yaml_param(self, "depth_max_estimate_jump_m", descriptor=dyn_num))
         self.target_ground_z_m = float(yaml_param(self, "target_ground_z_m", descriptor=dyn_num))
+        self.radio_range_topic = str(self.declare_parameter("radio_range_topic", "/omnet/radio_distance").value).strip()
+        self.radio_range_timeout_s = float(self.declare_parameter("radio_range_timeout_s", 0.5).value)
 
         self.cam_yaw_offset_rad = math.radians(float(yaml_param(self, "cam_yaw_offset_deg", descriptor=dyn_num)))
         self.cam_pitch_offset_rad = math.radians(float(yaml_param(self, "cam_pitch_offset_deg", descriptor=dyn_num)))
@@ -117,11 +114,11 @@ class LeaderEstimator(Node):
             raise ValueError("leader_actual_pose_timeout_s must be > 0")
         if self.constant_range_m <= 0.0 and self.d_target <= 0.0:
             raise ValueError("either d_target or constant_range_m must be > 0")
-        if self.range_mode not in ("auto", "depth", "const"):
-            raise ValueError("range_mode must be one of: auto, depth, const")
+        if self.range_mode not in ("auto", "depth", "const", "radio"):
+            raise ValueError("range_mode must be one of: auto, depth, const, radio")
 
         self.camera_model: Optional[CameraModel] = None
-        self.uav_pose: Optional[Pose2D] = None
+        self.uav_pose: Optional[Pose3D] = None
         self.last_uav_pose_stamp: Optional[Time] = None
         self.last_image_msg: Optional[Image] = None
         self.last_image_stamp: Optional[Time] = None
@@ -135,9 +132,11 @@ class LeaderEstimator(Node):
         self.last_follow_debug_heading_yaw: Optional[float] = None
         self.last_follow_debug_heading_source: str = ""
         self.last_follow_debug_heading_stamp: Optional[Time] = None
-        self.last_actual_leader_pose: Optional[Pose2D] = None
+        self.last_actual_leader_pose: Optional[Pose3D] = None
         self.last_actual_leader_pose_stamp: Optional[Time] = None
-        self.last_estimate_pose: Optional[Pose2D] = None
+        self.last_radio_range_m: Optional[float] = None
+        self.last_radio_range_stamp: Optional[Time] = None
+        self.last_estimate_pose: Optional[Pose3D] = None
         self.last_estimate_stamp: Optional[Time] = None
         self.last_estimate_track_id: Optional[int] = None
         self.last_estimate_error_dx_m: Optional[float] = None
@@ -186,11 +185,16 @@ class LeaderEstimator(Node):
             if self.leader_actual_pose_enable
             else None
         )
+        self.radio_range_sub = (
+            self.create_subscription(Float64, self.radio_range_topic, self.on_radio_range, 10)
+            if self.radio_range_topic
+            else None
+        )
 
         self.pub = self.create_publisher(PoseStamped, self.out_topic, 10)
         self.status_pub = self.create_publisher(String, self.status_topic, 10)
         self.distance_status_pub = self.create_publisher(String, self.distance_status_topic, 10)
-        self.events_pub = self.create_publisher(String, self.event_topic, 10)
+        self._setup_event_emitter(self.event_topic, self.publish_events)
         self.debug_image_pub = self.create_publisher(Image, self.debug_image_topic, 2) if self.publish_debug_image else None
         self.estimate_error_pub = (
             self.create_publisher(Vector3Stamped, self.estimate_error_topic, 10)
@@ -217,17 +221,11 @@ class LeaderEstimator(Node):
             f"uav_pose={self.uav_pose_topic}, detection={self.external_detection_topic}, "
             f"detection_status={self.external_detection_status_topic}, out={self.out_topic}, "
             f"est_hz={self.est_hz}Hz, range_mode={self.range_mode}, const_target_m={self._constant_target_range()[0]:.2f}, "
+            f"radio_range={self.radio_range_topic or 'disabled'}, "
             f"distance_status={self.distance_status_topic}"
         )
         self.publish_fault_status_msg(self._fault_line("none", "none", self.get_clock().now()))
         self.emit_event("ESTIMATOR_NODE_START")
-
-    def emit_event(self, name: str) -> None:
-        if not self.publish_events:
-            return
-        msg = String()
-        msg.data = str(name)
-        self.events_pub.publish(msg)
 
     def publish_status_msg(self, text: str) -> None:
         if not self.publish_status:
@@ -310,7 +308,7 @@ class LeaderEstimator(Node):
     def on_uav_pose(self, msg: PoseStamped) -> None:
         p = msg.pose.position
         q = msg.pose.orientation
-        self.uav_pose = Pose2D(
+        self.uav_pose = Pose3D(
             x=float(p.x),
             y=float(p.y),
             z=float(p.z),
@@ -324,7 +322,7 @@ class LeaderEstimator(Node):
     def on_actual_leader_pose(self, msg: Odometry) -> None:
         p = msg.pose.pose.position
         q = msg.pose.pose.orientation
-        self.last_actual_leader_pose = Pose2D(
+        self.last_actual_leader_pose = Pose3D(
             x=float(p.x),
             y=float(p.y),
             z=float(p.z),
@@ -334,6 +332,12 @@ class LeaderEstimator(Node):
             self.last_actual_leader_pose_stamp = Time.from_msg(msg.header.stamp)
         except Exception:
             self.last_actual_leader_pose_stamp = self.get_clock().now()
+
+    def on_radio_range(self, msg: Float64) -> None:
+        val = float(msg.data)
+        if math.isfinite(val) and val > 0.0:
+            self.last_radio_range_m = val
+            self.last_radio_range_stamp = self.get_clock().now()
 
     def on_external_detection(self, msg: String) -> None:
         try:
@@ -409,18 +413,37 @@ class LeaderEstimator(Node):
     def depth_fresh(self, now: Time) -> bool:
         return self._is_fresh(self.last_depth_stamp, self.depth_timeout_s, now)
 
+    def radio_range_fresh(self, now: Time) -> bool:
+        return self._is_fresh(self.last_radio_range_stamp, self.radio_range_timeout_s, now)
+
     def _depth_range_at(self, det: Detection2D, now: Time) -> Optional[float]:
         if self.last_depth_msg is None or not self.depth_fresh(now):
             return None
         depth = self._depth_to_array_m(self.last_depth_msg)
         if depth is None:
             return None
-        u = int(round(det.u))
-        v = int(round(det.v))
         h, w = depth.shape[:2]
-        if u < 0 or u >= w or v < 0 or v >= h:
-            return None
-        patch = depth[max(0, v - 2):min(h, v + 3), max(0, u - 2):min(w, u + 3)]
+        # Use the inner 50% of the bounding box for depth sampling when available.
+        # This scales with detection size (robust at all distances) and avoids
+        # bbox edge pixels that often land on background or drone body.
+        if det.bbox is not None:
+            x1, y1, x2, y2 = det.bbox
+            bw = max(1.0, x2 - x1)
+            bh = max(1.0, y2 - y1)
+            mx = bw * 0.25
+            my = bh * 0.25
+            pu1 = max(0, int(round(x1 + mx)))
+            pu2 = min(w, int(round(x2 - mx)))
+            pv1 = max(0, int(round(y1 + my)))
+            pv2 = min(h, int(round(y2 - my)))
+        else:
+            u = int(round(det.u))
+            v = int(round(det.v))
+            if u < 0 or u >= w or v < 0 or v >= h:
+                return None
+            pu1, pu2 = max(0, u - 2), min(w, u + 3)
+            pv1, pv2 = max(0, v - 2), min(h, v + 3)
+        patch = depth[pv1:pv2, pu1:pu2]
         patch = patch[np.isfinite(patch)]
         patch = patch[(patch >= self.depth_min_m) & (patch <= self.depth_max_m)]
         if patch.size < self.depth_patch_min_valid_px:
@@ -522,7 +545,17 @@ class LeaderEstimator(Node):
             return float(horizontal_distance_for_euclidean(self.d_target, vertical_delta)), "const_target"
         return float(self.constant_range_m), "const_fallback"
 
-    def _estimate_from_detection(self, det: Detection2D, cam: CameraModel, now: Time) -> Tuple[Pose2D, str]:
+    def _radio_range_as_horizontal(self, now: Time) -> Optional[float]:
+        """Convert the OMNeT FSPL radio distance (Euclidean) to a horizontal range."""
+        if self.last_radio_range_m is None or not self.radio_range_fresh(now):
+            return None
+        if self.uav_pose is None:
+            return None
+        vertical_delta = self.uav_pose.z - self.target_ground_z_m
+        horiz = horizontal_distance_for_euclidean(self.last_radio_range_m, vertical_delta)
+        return float(horiz) if horiz > 0.0 else None
+
+    def _estimate_from_detection(self, det: Detection2D, cam: CameraModel, now: Time) -> Tuple[Pose3D, str]:
         assert self.uav_pose is not None
         center_x_n = (det.u - cam.cx) / cam.fx
         center_bearing = self.cam_yaw_offset_rad - math.atan2(center_x_n, 1.0)
@@ -541,17 +574,26 @@ class LeaderEstimator(Node):
             )
             if depth_reject_reason != "none":
                 depth_range = None
+        radio_range = self._radio_range_as_horizontal(now)
         if self.range_mode == "depth":
             if depth_range is None:
                 raise ValueError(depth_reject_reason if depth_reject_reason != "none" else "depth_range_invalid")
             range_m = depth_range
             range_source = "depth"
+        elif self.range_mode == "radio":
+            if radio_range is None:
+                raise ValueError("radio_range_stale_or_unavailable")
+            range_m = radio_range
+            range_source = "radio"
         elif self.range_mode == "const":
             range_m, range_source = self._constant_target_range()
-        else:  # auto: prefer depth, fall back to const
+        else:  # auto: prefer depth, then radio, fall back to const
             if depth_range is not None:
                 range_m = depth_range
                 range_source = "depth"
+            elif radio_range is not None:
+                range_m = radio_range
+                range_source = "radio"
             else:
                 range_m, range_source = self._constant_target_range()
 
@@ -577,9 +619,9 @@ class LeaderEstimator(Node):
         self.last_bearing_used_deg = math.degrees(bearing)
         self.last_heading_source = heading_source
         self.last_reject_reason = depth_reject_reason
-        return Pose2D(x=x, y=y, z=self.target_ground_z_m, yaw=yaw), range_source
+        return Pose3D(x=x, y=y, z=self.target_ground_z_m, yaw=yaw), range_source
 
-    def _publish_estimate(self, pose: Pose2D, now: Time, track_id: Optional[int]) -> None:
+    def _publish_estimate(self, pose: Pose3D, now: Time, track_id: Optional[int]) -> None:
         msg = PoseStamped()
         msg.header.stamp = now.to_msg()
         msg.header.frame_id = "map"
@@ -598,7 +640,7 @@ class LeaderEstimator(Node):
         self.prev_heading_yaw = pose.yaw
         self._publish_estimate_error(pose, now)
 
-    def _publish_estimate_error(self, est_pose: Pose2D, now: Time) -> None:
+    def _publish_estimate_error(self, est_pose: Pose3D, now: Time) -> None:
         if not self.leader_actual_pose_enable or self.estimate_error_pub is None:
             self.last_estimate_error_dx_m = None
             self.last_estimate_error_dy_m = None
@@ -691,7 +733,7 @@ class LeaderEstimator(Node):
             return self.last_estimate_pose.yaw, self.last_heading_source or "estimate_pose"
         return None, "none"
 
-    def _heading_direction_label(self, leader_pose: Optional[Pose2D], heading_yaw: Optional[float]) -> str:
+    def _heading_direction_label(self, leader_pose: Optional[Pose3D], heading_yaw: Optional[float]) -> str:
         if leader_pose is None or self.uav_pose is None or heading_yaw is None:
             return "na"
         away_from_uav_yaw = math.atan2(

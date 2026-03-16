@@ -66,12 +66,8 @@ class GenSdf(Node):
         res = "dummmy"
         if not self.xacro_file:
             xacro_path = get_package_share_path('lrs_halmstad') / 'xacro'
-            if self.robot and self.with_camera:
+            if self.robot:
                 self.xacro_file = f'{xacro_path}/lrs_model.xacro'
-            elif self.robot:
-                self.xacro_file = f'{xacro_path}/lrs_robot.xacro'
-            elif self.laser:
-                self.xacro_file = f'{xacro_path}/lrs_laser.xacro'
         mappings = {}
         mappings["robot_type"] = self.type
 

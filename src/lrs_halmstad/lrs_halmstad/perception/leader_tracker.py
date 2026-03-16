@@ -12,9 +12,10 @@ from rclpy.time import Time
 from sensor_msgs.msg import Image
 from std_msgs.msg import String
 
+from lrs_halmstad.common.node_mixins import EventEmitterMixin
 from lrs_halmstad.common.ros_params import yaml_param
-from lrs_halmstad.perception.detection_protocol import Detection2D, encode_detection_payload
-from lrs_halmstad.perception.detection_status import DetectionStatusPublisher
+from lrs_halmstad.perception.detection_protocol import Detection2D
+from lrs_halmstad.perception.detection_status import DetectionNodeMixin, DetectionStatusPublisher
 from lrs_halmstad.perception.yolo_common import (
     YOLO,
     default_models_root,
@@ -27,7 +28,7 @@ from lrs_halmstad.perception.yolo_common import (
 )
 
 
-class LeaderTracker(Node):
+class LeaderTracker(DetectionNodeMixin, EventEmitterMixin, Node):
     """Ultralytics track-mode wrapper publishing tracked detections on /coord/leader_detection."""
 
     def __init__(self):
@@ -79,7 +80,7 @@ class LeaderTracker(Node):
         self.image_sub = self.create_subscription(Image, self.camera_topic, self.on_image, 10)
         self.pub = self.create_publisher(String, self.out_topic, 10)
         self.status_helper = DetectionStatusPublisher(self, self.status_topic)
-        self.events_pub = self.create_publisher(String, self.event_topic, 10)
+        self._setup_event_emitter(self.event_topic, self.publish_events)
 
         self.get_logger().info(
             "[leader_tracker] Started: "
@@ -100,13 +101,6 @@ class LeaderTracker(Node):
         if "/obb/" in weights_lower or weights_lower.endswith("-obb.pt") or weights_lower.endswith("_obb.pt"):
             return "obb"
         return "detection"
-
-    def emit_event(self, name: str) -> None:
-        if not self.publish_events:
-            return
-        msg = String()
-        msg.data = str(name)
-        self.events_pub.publish(msg)
 
     @staticmethod
     def _extract_track_id(item) -> Optional[int]:
@@ -273,14 +267,6 @@ class LeaderTracker(Node):
         det = self._choose_candidate(candidates, stamp_ns_value)
         self.last_infer_reason = "none" if det is not None else "no_detection"
         return det
-
-    def _publish_detection(self, msg: Image, det: Optional[Detection2D]) -> None:
-        out = String()
-        out.data = encode_detection_payload(stamp_ns(msg), det)
-        self.pub.publish(out)
-
-    def _publish_status(self, state: str, reason: str, det: Optional[Detection2D]) -> None:
-        self.status_helper.publish(state=state, reason=reason, task=self.task_type, det=det)
 
     def on_image(self, msg: Image) -> None:
         now = self.get_clock().now()

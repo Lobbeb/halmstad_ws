@@ -12,6 +12,7 @@ from nav_msgs.msg import Odometry
 from sensor_msgs.msg import Joy
 from std_msgs.msg import Float32, String
 
+from lrs_halmstad.common.node_mixins import EventEmitterMixin
 from lrs_halmstad.common.ros_params import declare_yaml_param, required_param_value
 from lrs_halmstad.follow.follow_core import (
     FollowControllerCoreMixin,
@@ -28,7 +29,7 @@ from lrs_halmstad.follow.follow_math import (
     yaw_from_quat,
 )
 
-class FollowUavOdom(FollowControllerCoreMixin, Node):
+class FollowUavOdom(EventEmitterMixin, FollowControllerCoreMixin, Node):
     def __init__(self):
         super().__init__("follow_uav")
         dyn_num = ParameterDescriptor(dynamic_typing=True)
@@ -203,11 +204,7 @@ class FollowUavOdom(FollowControllerCoreMixin, Node):
             f"/{self.uav_name}/psdk_ros2/flight_control_setpoint_ENUposition_yaw",
             10,
         )
-        self.events_pub = (
-            self.create_publisher(String, self.event_topic, 10)
-            if self.publish_events
-            else None
-        )
+        self._setup_event_emitter(self.event_topic, self.publish_events)
         self.metric_dist_pub = (
             self.create_publisher(Float32, f"{self.metrics_prefix}/follow_dist_cmd", 10)
             if self.publish_metrics
@@ -246,13 +243,6 @@ class FollowUavOdom(FollowControllerCoreMixin, Node):
             f"uav_start=({self.uav_start_x:.2f},{self.uav_start_y:.2f},{self.uav_start_z:.2f},{math.degrees(self.uav_start_yaw):.1f}deg)"
         )
         self.emit_event("FOLLOW_ODOM_NODE_START")
-
-    def emit_event(self, text: str) -> None:
-        if not self.publish_events:
-            return
-        msg = String()
-        msg.data = text
-        self.events_pub.publish(msg)
 
     def _on_set_parameters(self, params):
         updates = {}
@@ -371,36 +361,12 @@ class FollowUavOdom(FollowControllerCoreMixin, Node):
             self.get_logger().info(f"[follow_uav_odom] Runtime parameter update: {', '.join(update_parts)}")
         return SetParametersResult(successful=True)
 
-    def _current_uav_pose(self) -> Pose2D:
-        if self.have_uav_actual:
-            return self.uav_actual
-        if self.have_uav_cmd:
-            return self.uav_cmd
-        return Pose2D(self.uav_start_x, self.uav_start_y, self.uav_start_yaw)
-
     def _current_uav_z(self) -> float:
+        # Odom mode always has uav_cmd_z seeded at startup; drop the have_uav_cmd
+        # guard and uav_start_z fallback that the mixin carries for the generic case.
         if self.have_uav_actual:
             return self.uav_actual_z
         return self.uav_cmd_z
-
-    def _use_cmd_state_for_control(self) -> bool:
-        if not self.have_uav_cmd:
-            return False
-        if not self.have_uav_actual or self.last_uav_actual_time is None:
-            return True
-        if self.last_cmd_time is None:
-            return False
-        return self.last_cmd_time.nanoseconds > self.last_uav_actual_time.nanoseconds
-
-    def _control_uav_pose(self) -> Pose2D:
-        if self._use_cmd_state_for_control():
-            return self.uav_cmd
-        return self._current_uav_pose()
-
-    def _control_uav_z(self) -> float:
-        if self._use_cmd_state_for_control():
-            return self.uav_cmd_z
-        return self._current_uav_z()
 
     def on_leader_odom(self, msg: Odometry) -> None:
         p = msg.pose.pose.position

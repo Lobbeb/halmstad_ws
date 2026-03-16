@@ -11,7 +11,7 @@
 
 follow_uav:
   ros__parameters:
-    event_topic: /coord/events  # Topic for follow lifecycle/debug event strings.__________________
+    event_topic: /coord/events         # Topic for follow lifecycle/debug event strings.__________________
                 #<||  Leader input mode is selected by launch. The odom path runs the            ||:
                 #<||  follow_uav_odom executable, and the estimate path runs follow_uav.         ||:
                 #<||  Keep this YAML mode-agnostic so estimate launches do not inherit odom.     ||:
@@ -35,18 +35,18 @@ follow_uav:
     pose_timeout_s: 3.0                              # Treat leader/UAV pose data as stale after this many seconds.
     tick_hz: 20.0                                   # Main odom-follow control loop rate.
 
-    follow_speed_mps: 5.0                         # Hard cap on commanded XY follow speed.
-    follow_speed_gain: 1.5                         # Proportional XY speed gain from anchor-position error. Was 1.2 → snappier position recovery without overshoot at Husky speeds.
+    follow_speed_mps: 3.0                         # Hard cap on commanded XY follow speed.
+    follow_speed_gain: 1.2                         # Proportional XY speed gain from anchor-position error. Was 1.2 → snappier position recovery without overshoot at Husky speeds.
     uav_xy_command_mode: direct                     # XY command path: direct (current clamped target) or controller_step (smaller controller-style waypoint stepping).
     uav_xy_command_step_scale: 0.6                   # Step scale used by controller_step mode; 0.6 matches the old sim controller test path.
-    follow_z_speed_mps: 5.0                         # Hard cap on commanded vertical glide speed.
+    follow_z_speed_mps: 3.0                         # Hard cap on commanded vertical glide speed.
     follow_z_speed_gain: 1.0                       # Proportional vertical speed gain from altitude error.
     search_z_speed_scale: 0.25                      # In estimate-mode search climb, scale the normal Z speed cap to keep ascent smooth.
     search_z_gain_scale: 0.05                        # In estimate-mode search climb, scale the normal Z gain to soften upward response.
     search_min_motion_scale: 0.05                     # Minimum XY motion scale while searching after NO_DET so climb/search does not stall laterally.
     search_delay_s: 1.5                              # Was 0.75s — CPU inference can drop frames; wait longer before deciding UGV is truly lost.
-    follow_yaw_rate_rad_s: 0.8                      # Was 0.5 rad/s (~29°/s). Husky's Nav2 max turn is ~45°/s; 0.8 rad/s ≈ 46°/s lets the body keep up with tight corners.
-    follow_yaw_rate_gain: 1.5                        # Proportional yaw-rate gain; min(gain * yaw_error, yaw_rate_rad_s).
+    follow_yaw_rate_rad_s: 0.6                      # Was 0.5 rad/s (~29°/s). Husky's Nav2 max turn is ~45°/s; 0.8 rad/s ≈ 46°/s lets the body keep up with tight corners.
+    follow_yaw_rate_gain: 1.2                        # Proportional yaw-rate gain; min(gain * yaw_error, yaw_rate_rad_s).
     follow_yaw_accel_rad_s2: 6.0                      # Max yaw-rate acceleration so yaw can catch sharp turns/reversing.
     publish_debug_topics: true                       # Publish /<uav>/follow/{target,actual,error,debug} topics.
     publish_pose_cmd_topics: true                     # Publish legacy /<uav>/pose_cmd and /<uav>/pose_cmd/odom helper topics.
@@ -85,25 +85,27 @@ follow_uav:
 #--------------<< Camera Tracker <<--------------------------------------------------------------------------------------
 camera_tracker:
   ros__parameters:
-    camera_look_target_z_m: 0.3                  # DONT TOUCH! Vertical offset above the leader target point for pan/tilt solving.
-    default_pan_deg: 0.0                          # Fallback pan command when pan tracking is disabled or stale.
-    default_tilt_deg: -45.0                        # Fallback tilt command when tracking is disabled or stale.
-    pan_enable: true                                # Publish tracked pan commands instead of holding default_pan_deg.
-    tilt_enable: true                                # Publish tracked tilt commands instead of holding default_tilt_deg.
-    image_center_correction_enable: false             # Disabled: correction fires at 30Hz while CPU YOLO delivers detections at 3-10Hz. The 250ms timeout causes corrections to flicker on/off between detections, creating 30Hz camera jitter that disrupts ByteTrack and causes detection loss. A future fix should gate corrections on detection age < one YOLO frame period.
-    image_center_correction_timeout_s: 0.25            # Ignore stale detector/tracker boxes when centering in the image.
-    pan_image_center_gain: 0.15                       # (Inactive) Gentle nudge; geometry handles the coarse pan.
-    pan_image_center_max_deg: 1.0                    # (Inactive) 1° max — within one gimbal tick budget.
-    tilt_image_center_gain: 0.2                     # (Inactive) Geometry is usually right; correction only for residual estimate error.
-    tilt_image_center_max_deg: 2.0                 # (Inactive) 2° max — within one gimbal tick budget.
-    publish_debug_topics: true                    # Publish /<uav>/camera0/{target,debug}/* camera geometry and image-centering topics.
-    pose_timeout_s: 2.0                          # Was 3.0s — a 3s stale UAV pose can give a badly wrong pan/tilt angle. Fail faster.
-    tick_hz: 30.0                               # Camera pan/tilt update rate.
+    camera_look_target_z_m: 0.3                       # DONT TOUCH! Vertical offset above the leader target point for pan/tilt solving.
+    default_pan_deg: 0.0                             # Fallback pan command when pan tracking is disabled or stale.
+    default_tilt_deg: -45.0                           # Fallback tilt command when tracking is disabled or stale.
+    pan_enable: true                                   # Publish tracked pan commands instead of holding default_pan_deg.
+    tilt_enable: true                                   # Publish tracked tilt commands instead of holding default_tilt_deg.
+    image_center_correction_enable: true                # Correction fires at 30Hz while CPU YOLO delivers detections at 3-10Hz. The 250ms timeout causes corrections to flicker on/off between detections, creating 30Hz camera jitter that disrupts ByteTrack and causes detection loss.
+    image_center_correction_timeout_s: 0.25               # Ignore stale detector/tracker boxes when centering in the image.
+    pan_image_center_gain: 0.15                          # (Inactive) Gentle nudge; geometry handles the coarse pan.
+    pan_image_center_max_deg: 1.0                       # (Inactive) 1° max — within one gimbal tick budget.
+    tilt_image_center_gain: 0.2                        # (Inactive) Geometry is usually right; correction only for residual estimate error.
+    tilt_image_center_max_deg: 4.0                    # (Inactive) 2° max — within one gimbal tick budget.
+    publish_debug_topics: true                       # Publish /<uav>/camera0/{target,debug}/* camera geometry and image-centering topics.
+    pose_timeout_s: 2.0                             # Was 3.0s — a 3s stale UAV pose can give a badly wrong pan/tilt angle. Fail faster.
+    tick_hz: 10.0                                  # Camera pan/tilt update rate.
 
 uav_simulator:
   ros__parameters:
-    pan_rate_deg_s: 75.0                      # Was 60°/s. Slightly faster so pan can lead the UGV during UAV yaw turns without noticeable lag.
-    tilt_rate_deg_s: 45.0                      # Was 30°/s. During a close approach tilt needs to sweep ~10° in <0.5s; 30°/s was too slow. 45°/s covers that comfortably.
+    gimbal_pitch_min_rad: -1.5708              # Minimum gimbal pitch in radians; -1.5708 = -90° straight down.  
+    gimbal_pitch_max_rad: 0.7854              # Maximum gimbal pitch in radians; 0.7854 = 45° up. This is a wider range than typical gimbals to allow testing of the follow behavior when the camera is pitched up at startup or due to bad initial estimates.
+    pan_rate_deg_s: 45.0                       # Reduced from 90°/s — matched to tilt rate to prevent large visible pan jumps during UAV yaw changes.
+    tilt_rate_deg_s: 60.0                       # Was 30°/s. During a close approach tilt needs to sweep ~10° in <0.5s; 30°/s was too slow. 45°/s covers that comfortably.
 
 leader_detector:
   ros__parameters:
@@ -114,9 +116,9 @@ leader_detector:
 
     device: 'cpu'                                  # YOLO inference device: 'cpu'=CPU, '0'=first CUDA GPU, 'cuda:1'=second GPU.
     imgsz: 640                                    # YOLO inference image size.
-    predict_hz: 12.0                               # Was 60Hz — camera arrives at 10Hz so 60 was never reached. 12Hz makes the intent explicit with a small buffer.
+    predict_hz: 60.0                               # Was 60Hz — camera arrives at 10Hz so 60 was never reached. 12Hz makes the intent explicit with a small buffer.
 
-    conf_threshold: 0.4                          # Minimum YOLO detection confidence to consider.
+    conf_threshold: 0.3                          # Was 0.4 — lowered to let ByteTrack see borderline detections. yolo26n drops to 0.3-0.39 at steep downward angles or UGV side views; filtering at 0.4 caused track resets.
     iou_threshold: 0.5                          # IOU threshold passed into Ultralytics predict/NMS.
     target_class_id: -1                          # Restrict detections to one YOLO class id; -1 means any class.
     target_class_name: ""                         # Optional class-name filter; empty means any class name.
@@ -134,10 +136,10 @@ leader_tracker:
 
     device: 'cpu'                                    # Ultralytics tracking device: 'cpu'=CPU, '0'=first CUDA GPU, 'cuda:1'=second GPU.
     imgsz: 640                                        # Tracking inference image size.
-    predict_hz: 12.0                                   # Was 60Hz — same reasoning as detector; camera is 10Hz so 12Hz is the meaningful cap.
+    predict_hz: 60.0                                   # Was 60Hz — same reasoning as detector; camera is 10Hz so 12Hz is the meaningful cap.
     tracker_config: bytetrack.yaml                      # Tracker config filename under config/trackers or an absolute path.
 
-    conf_threshold: 0.4                                   # Minimum detection confidence accepted by the tracker.
+    conf_threshold: 0.3                                   # Was 0.4 — matched to detector threshold; same reasoning.
     iou_threshold: 0.5                                     # IOU threshold passed into Ultralytics track().
     target_class_id: -1                                     # Restrict tracked detections to one YOLO class id; -1 means any class.
     target_class_name: ""                                    # Optional class-name filter; empty means any class name.
@@ -161,26 +163,28 @@ leader_estimator:
     fault_status_topic: /coord/leader_estimate_fault       # Latched estimator fault topic.
     debug_image_topic: /coord/leader_debug_image          # Estimator debug image topic.
 
-    cam_pitch_offset_deg: -45.0                         # Camera pitch mounting offset used in OBB heading projection; negative is down.
+    cam_pitch_offset_deg: 0.0                         # Camera pitch mounting offset used in OBB heading projection; negative is down.
     cam_yaw_offset_deg: 0.0                            # Camera yaw mounting offset used in bearing projection.
     cam_roll_offset_deg: 0.0                          # Camera roll mounting offset reserved for future geometry work.
     cam_x_offset_m: 0.0                              # Camera X offset in the UAV body frame.
     cam_y_offset_m: 0.0                             # Camera Y offset in the UAV body frame.
-    cam_z_offset_m: 0.0                            # Camera Z offset relative to the UAV body frame.
+    cam_z_offset_m: 0.27                            # Camera Z offset relative to the UAV body frame.
     image_timeout_s: 2.0                          # Was 5.0s — 5s of stale camera is far too tolerant; fault faster so the follow stack reacts.
     uav_pose_timeout_s: 2.0                      # Was 5.0s — same reasoning; a 5s-stale UAV pose produces completely wrong bearing estimates.
 
     est_hz: 20.0                               # Main estimator loop rate.
 
-    range_mode: depth                        # Range source: auto (depth→const), depth, or const.
+    range_mode: auto                        # Range source: auto (depth→radio→const), depth, radio, or const.
     d_target: 8.0                             # Shared target distance reused by the estimator in const mode. Kept in sync with follow_uav d_target.
     depth_max_m: 20.0                          # Maximum valid depth sample.
     depth_min_m: 0.1                            # Minimum valid depth sample.
     depth_scale: 0.001                           # Scale factor for 16UC1 depth images.
     depth_timeout_s: 0.5                          # Ignore stale depth frames so auto mode can fall back instead of reusing old depth forever.
-    depth_patch_min_valid_px: 5                    # Require several valid pixels in the center patch before accepting a depth estimate.
+    depth_patch_min_valid_px: 10                   # Minimum valid pixels inside the inner-50%-bbox depth patch before accepting the estimate.
     depth_max_estimate_jump_m: 0.0                  # Reject depth if it would jump the estimated leader position too far in one update.
     target_ground_z_m: 0.0                         # World Z of the ground plane used for OBB heading projection.
+    radio_range_topic: /omnet/radio_distance        # OMNeT++ FSPL-inverted Euclidean range (std_msgs/Float64). Empty string disables.
+    radio_range_timeout_s: 0.5                      # Discard radio range if older than this (seconds).
 
 ugv_nav2_driver:
   ros__parameters:

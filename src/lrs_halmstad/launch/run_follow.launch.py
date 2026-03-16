@@ -212,6 +212,60 @@ def _build_ugv_nav2_node(context, *args, **kwargs):
     ]
 
 
+def _build_omnet_nodes(context, *args, **kwargs):
+    if not _launch_bool(context, 'start_omnet_bridge'):
+        return []
+    uav_name = LaunchConfiguration('uav_name').perform(context)
+    ugv_ns = LaunchConfiguration('ugv_namespace').perform(context)
+    port = int(LaunchConfiguration('omnet_bridge_port').perform(context))
+    return [
+        # Converts /dji0/pose (actual Gazebo pose) → Odometry for the pose bridge.
+        # Uses the true simulator position rather than the commanded pose so OMNeT
+        # node positions stay accurate even when publish_pose_cmd_topics:=false.
+        Node(
+            package='lrs_halmstad',
+            executable='pose_cmd_to_odom',
+            name='omnet_uav_pose_to_odom',
+            output='screen',
+            parameters=[{
+                'use_sim_time': True,
+                'pose_topic': f'/{uav_name}/pose',
+                'odom_topic': f'/{uav_name}/pose/odom',
+                'frame_id': 'map',
+                'child_frame_id': 'base_link',
+                'copy_header_stamp': True,
+            }],
+        ),
+        # TCP server (port 5555): serves Gazebo UGV+UAV poses to OMNeT GazeboPositionScheduler.
+        Node(
+            package='lrs_halmstad',
+            executable='gazebo_pose_tcp_bridge',
+            name='omnet_tcp_bridge',
+            output='screen',
+            parameters=[{
+                'use_sim_time': True,
+                'port': port,
+                'odom_topics': [f'/{ugv_ns}/amcl_pose_odom', f'/{uav_name}/pose/odom'],
+                'model_names': ['robot', uav_name],
+                'auto_discover_pose_cmd_odom': False,
+            }],
+        ),
+        # TCP client (port 5556): receives live network metrics from OMNeT OmnetMetricsServer
+        # and republishes as /omnet/* ROS2 topics.
+        Node(
+            package='lrs_halmstad',
+            executable='omnet_metrics_bridge',
+            name='omnet_metrics_bridge',
+            output='screen',
+            parameters=[{
+                'use_sim_time': True,
+                'omnet_host': '127.0.0.1',
+                'omnet_port': 5556,
+            }],
+        ),
+    ]
+
+
 def generate_launch_description():
     params_default = PathJoinSubstitution(
         [FindPackageShare('lrs_halmstad'), 'config', 'run_follow_defaults.yaml']
@@ -352,6 +406,16 @@ def generate_launch_description():
     tracker_config_arg = DeclareLaunchArgument('tracker_config', default_value='botsort.yaml')
     event_topic_arg = DeclareLaunchArgument('event_topic', default_value='/coord/events')
     ugv_start_delay_arg = DeclareLaunchArgument('ugv_start_delay_s', default_value='0.0')
+    start_omnet_bridge_arg = DeclareLaunchArgument(
+        'start_omnet_bridge',
+        default_value='false',
+        description='Start the Gazebo→OMNeT TCP pose bridge on omnet_bridge_port',
+    )
+    omnet_bridge_port_arg = DeclareLaunchArgument(
+        'omnet_bridge_port',
+        default_value='5555',
+        description='TCP port for the OMNeT pose bridge (must match omnetpp.ini gazeboScheduler.port)',
+    )
 
     simulator_node = Node(
         package='lrs_halmstad',
@@ -514,6 +578,8 @@ def generate_launch_description():
         ],
     )
 
+    omnet_nodes = OpaqueFunction(function=_build_omnet_nodes)
+
     ugv_nav2_delayed_start = TimerAction(
         period=0.1,
         actions=[
@@ -587,6 +653,8 @@ def generate_launch_description():
         tracker_config_arg,
         event_topic_arg,
         ugv_start_delay_arg,
+        start_omnet_bridge_arg,
+        omnet_bridge_port_arg,
         simulator_node,
         ugv_amcl_to_odom_node,
         detector_node,
@@ -595,6 +663,7 @@ def generate_launch_description():
         follow_odom_node,
         follow_estimate_node,
         camera_tracker_node,
+        omnet_nodes,
         ugv_nav2_delayed_start,
         ugv_external_info,
     ])

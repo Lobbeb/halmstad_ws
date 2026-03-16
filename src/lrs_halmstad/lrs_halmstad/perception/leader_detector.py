@@ -13,9 +13,10 @@ from rclpy.time import Time
 from sensor_msgs.msg import Image
 from std_msgs.msg import String
 
+from lrs_halmstad.common.node_mixins import EventEmitterMixin
 from lrs_halmstad.common.ros_params import yaml_param
-from lrs_halmstad.perception.detection_protocol import Detection2D, encode_detection_payload
-from lrs_halmstad.perception.detection_status import DetectionStatusPublisher
+from lrs_halmstad.perception.detection_protocol import Detection2D
+from lrs_halmstad.perception.detection_status import DetectionNodeMixin, DetectionStatusPublisher
 from lrs_halmstad.perception.yolo_common import (
     YOLO,
     default_models_root,
@@ -23,11 +24,10 @@ from lrs_halmstad.perception.yolo_common import (
     load_ultralytics_model,
     order_quad,
     resolve_yolo_weights_path,
-    stamp_ns,
 )
 
 
-class LeaderDetector(Node):
+class LeaderDetector(DetectionNodeMixin, EventEmitterMixin, Node):
     def __init__(self):
         super().__init__("leader_detector")
         dyn_num = ParameterDescriptor(dynamic_typing=True)
@@ -69,7 +69,7 @@ class LeaderDetector(Node):
         self.image_sub = self.create_subscription(Image, self.camera_topic, self.on_image, 10)
         self.pub = self.create_publisher(String, self.out_topic, 10)
         self.status_helper = DetectionStatusPublisher(self, self.status_topic)
-        self.events_pub = self.create_publisher(String, self.event_topic, 10)
+        self._setup_event_emitter(self.event_topic, self.publish_events)
 
         self.get_logger().info(
             "[leader_detector] Started: "
@@ -78,13 +78,6 @@ class LeaderDetector(Node):
             f"device={self.device}, predict_hz={self.predict_hz}"
         )
         self.emit_event("DETECTOR_NODE_START")
-
-    def emit_event(self, name: str) -> None:
-        if not self.publish_events:
-            return
-        msg = String()
-        msg.data = str(name)
-        self.events_pub.publish(msg)
 
     def _init_yolo_ultralytics(self) -> bool:
         try:
@@ -240,14 +233,6 @@ class LeaderDetector(Node):
         if not self.yolo_ready or self.yolo_model is None:
             return None
         return self._pick_detection_ultralytics(img_bgr)
-
-    def _publish_detection(self, msg: Image, det: Optional[Detection2D]) -> None:
-        out = String()
-        out.data = encode_detection_payload(stamp_ns(msg), det)
-        self.pub.publish(out)
-
-    def _publish_status(self, state: str, reason: str, det: Optional[Detection2D]) -> None:
-        self.status_helper.publish(state=state, reason=reason, task=self.task_type, det=det)
 
     def on_image(self, msg: Image) -> None:
         now = self.get_clock().now()

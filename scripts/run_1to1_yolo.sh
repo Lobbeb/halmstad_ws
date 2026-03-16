@@ -149,6 +149,9 @@ for arg in "$@"; do
       HAVE_UAV_START_Z="true"
       EXTRA_ARGS+=("$arg")
       ;;
+    omnet:=*)
+      EXTRA_ARGS+=("start_omnet_bridge:=${arg#omnet:=}")
+      ;;
     *)
       EXTRA_ARGS+=("$arg")
       ;;

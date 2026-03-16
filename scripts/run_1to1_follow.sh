@@ -55,6 +55,9 @@ for arg in "$@"; do
     mount_pitch_deg:=*)
       EXTRA_ARGS+=("camera_mount_pitch_deg:=${arg#mount_pitch_deg:=}")
       ;;
+    omnet:=*)
+      EXTRA_ARGS+=("start_omnet_bridge:=${arg#omnet:=}")
+      ;;
     *)
       EXTRA_ARGS+=("$arg")
       ;;

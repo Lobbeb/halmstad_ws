@@ -2,9 +2,10 @@ from __future__ import annotations
 
 from typing import Optional
 
+from sensor_msgs.msg import Image
 from std_msgs.msg import String
 
-from lrs_halmstad.perception.detection_protocol import Detection2D
+from lrs_halmstad.perception.detection_protocol import Detection2D, encode_detection_payload
 
 
 def parse_status_line(line: str) -> dict[str, str]:
@@ -64,6 +65,24 @@ def overlay_lines_from_status(line: str) -> list[str]:
         f"hits: {fields.get('track_hits', '0')}",
         f"age: {age_text}",
     ]
+
+
+class DetectionNodeMixin:
+    """Mixin for nodes that publish YOLO detection results and status.
+
+    Requires ``self.pub`` (String publisher), ``self.status_helper``
+    (DetectionStatusPublisher), and ``self.task_type`` to be set up in
+    ``__init__`` before the mixin methods are called.
+    """
+
+    def _publish_detection(self, msg: Image, det: Optional[Detection2D]) -> None:
+        from lrs_halmstad.perception.yolo_common import stamp_ns
+        out = String()
+        out.data = encode_detection_payload(stamp_ns(msg), det)
+        self.pub.publish(out)
+
+    def _publish_status(self, state: str, reason: str, det: Optional[Detection2D]) -> None:
+        self.status_helper.publish(state=state, reason=reason, task=self.task_type, det=det)
 
 
 class DetectionStatusPublisher:

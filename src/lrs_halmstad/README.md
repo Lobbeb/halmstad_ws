@@ -4,7 +4,6 @@ Reference for the current 1-to-1 Gazebo/ROS 2 workflow.
 
 Current real follow launch:
 - `run_follow.launch.py`
-- `run_follow_motion.launch.py` and `run_1to1_follow.launch.py` are compatibility shims only
 
 ## Topic contract
 
@@ -38,6 +37,17 @@ Perception / estimate topics:
 - `/coord/leader_estimate_status`
 - `/coord/leader_estimate_fault`
 - `/coord/leader_debug_image`
+- `/coord/leader_distance_debug`
+
+OMNeT++ network metrics topics (published by `omnet_metrics_bridge` when OMNeT is running,
+requires `start_omnet_bridge:=true` in `run_follow.launch.py`; all `std_msgs/Float64`, ~10 Hz):
+
+- `/omnet/sim_time`          — OMNeT simulation time (s)
+- `/omnet/link_distance`     — geometric UAV–UGV distance from Gazebo positions (m)
+- `/omnet/rssi_dbm`          — received signal strength (dBm, free-space path-loss model)
+- `/omnet/snir_db`           — signal-to-noise-plus-interference ratio (dB)
+- `/omnet/packet_error_rate` — sliding-window PER estimate (0–1)
+- `/omnet/radio_distance`    — range estimate from RSSI inversion only, no Gazebo positions (m)
 
 ## Recommended 1-to-1 bring-up
 
@@ -151,13 +161,16 @@ ros2 run lrs_halmstad controller --ros-args -p uav_name:=dji0
 - In simulation, `simulator` interprets `/dji0/psdk_ros2/flight_control_setpoint_ENUposition_yaw` as an absolute ENU pose setpoint: `x`, `y`, `z`, `yaw`.
 - The attached gimbal path is now the default camera backend in Gazebo, while the ROS image topics remain `/dji0/camera0/*`.
 - Attached-camera teleport spawns now use a non-static UAV model with a kinematic `base_link`, so the gimbal joints visibly actuate while the body remains pose-driven by `simulator`.
-- `uav_simulator` boots **relaxed**: no gimbal joint commands are published until the first `update_pan` or `update_tilt` message arrives. The joint rests at its SDF-default until the follow stack or a manual command arms it. Motion is then rate-limited at `pan_rate_deg_s: 60.0` and `tilt_rate_deg_s: 45.0`, configurable in `config/run_follow_defaults.yaml` under the `uav_simulator` section (uses `yaml_param`, so the values **must** be present in the YAML — there is no hardcoded fallback).
+- `uav_simulator` boots **relaxed**: no gimbal joint commands are published until the first `update_pan` or `update_tilt` message arrives. The joint rests at its SDF-default until the follow stack or a manual command arms it. Motion is then rate-limited at `pan_rate_deg_s: 45.0` and `tilt_rate_deg_s: 60.0`, configurable in `config/run_follow_defaults.yaml` under the `uav_simulator` section (uses `yaml_param`, so the values **must** be present in the YAML — there is no hardcoded fallback). Pan was reduced from 90 °/s to 45 °/s to prevent large visible jumps during UAV yaw changes.
 - Camera image bridge (`/image`, `/camera_info`, `/depth_image`) is now Gazebo→ROS only, reducing stale-frame buffering in image viewers.
 - `camera_update_rate` spawn arg is now correctly wired through to the SDF (was declared but not passed to xacro). The spawn default is `10` Hz, which is the recommended value for WSL2 — Ogre2 rendering through WSLg is the primary RTF bottleneck. Increase only if your host can sustain RTF ≥ 1.0 at higher rates.
 - `leader_estimator` now defaults to the actual simulated UAV pose topic `/dji0/pose`, not `/dji0/pose_cmd`.
-- The active perception range mode is `depth` (uses the UAV depth camera). `leader_range_mode:=const` is still available as a fallback for debugging. The `ground` range mode has been removed.
+- The active perception range mode is `auto` (depth → radio → const). Available explicit modes: `depth`, `radio`, `const`. Set via `range_mode` in `run_follow_defaults.yaml` under `leader_estimator`. The `ground` mode has been removed.
+- When running with OMNeT++, `leader_estimator` subscribes to `/omnet/radio_distance` and uses it as the middle tier in `auto` mode (between depth and constant-range fallback). The raw FSPL-inverted Euclidean range is projected to horizontal distance using the current UAV altitude. Configure via `radio_range_topic` and `radio_range_timeout_s`. Set `radio_range_topic: ''` to disable entirely.
+- Depth range sampling uses the **inner 50 % of the detection bounding box** (25 % margin on each edge) instead of a fixed 5 × 5 pixel patch. This scales correctly at all distances and avoids edge pixels that land on background or drone body. Requires at least 10 valid pixels (`depth_patch_min_valid_px`).
+- YOLO `conf_threshold` is 0.3 for both `leader_detector` and `leader_tracker`. The previous value of 0.4 was above ByteTrack's internal `track_high_thresh: 0.25`, which caused borderline detections (0.30–0.39 confidence) to be dropped before the tracker could see them.
 - YOLO inference runs **CPU-only** (`device: 'cpu'` in `run_follow_defaults.yaml`). GPU inference is not available on WSL2 with AMD hardware: ROCm requires `/dev/dri/renderD*` which WSL2 does not expose, and `torch-directml` is incompatible with YOLO OBB operations. Expected detection rate on CPU is 3–10 Hz depending on image resolution and model size.
-- Image center correction (`image_center_correction_enable`) is **disabled**. The correction fires at the camera tracker rate (30 Hz) while CPU YOLO delivers detections at 3–10 Hz. The fixed timeout caused corrections to flicker on/off between detections, creating jitter that disrupted ByteTrack and caused detection loss. The geometric pan/tilt computation is sufficient; re-enable only if running with GPU inference at a rate comparable to the tracker tick rate.
+- Image center correction (`image_center_correction_enable`) is **enabled** at `tick_hz: 10.0` (matched to the CPU YOLO detection rate). Running the tracker faster than the detection rate caused corrections to flicker on stale bounding boxes, producing gimbal jitter that disrupted ByteTrack. Keep `tick_hz` ≤ the expected YOLO rate, or disable correction if running at a higher tick rate without GPU inference.
 - All world SDF files use consistent physics parameters: `max_step_size: 0.004`, `real_time_update_rate: 250` (targeting RTF ≤ 1.0).
 - The Husky now uses `lidar2d_0` as its only active range sensor in this workspace. The old temporary `lidar3d_0` path is no longer part of the active bring-up.
 - UGV mobility now runs in two supported modes: `ugv_mode:=nav2` sends sequential Nav2 `NavigateToPose` goals derived from the configured route, and `ugv_mode:=external` leaves UGV motion to an external Nav2 goal source.

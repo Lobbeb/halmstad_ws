@@ -4,14 +4,15 @@ omnet_metrics_bridge — ROS2 node that connects to the OMNeT++ OmnetMetricsServ
 TCP server and republishes network metrics as ROS2 topics.
 
 OMNeT sends one ASCII line per update interval:
-    <simtime_s> <distance_m> <rssi_dbm> <snir_db> <per>
+    <simtime_s> <distance_m> <rssi_dbm> <snir_db> <per> <radio_distance_m>
 
 Published topics:
-    /omnet/link_distance      (std_msgs/Float64)  — metres
+    /omnet/link_distance      (std_msgs/Float64)  — metres (geometric, from Gazebo positions)
     /omnet/rssi_dbm           (std_msgs/Float64)  — dBm
     /omnet/snir_db            (std_msgs/Float64)  — dB
     /omnet/packet_error_rate  (std_msgs/Float64)  — 0..1
     /omnet/sim_time           (std_msgs/Float64)  — OMNeT simulation time (s)
+    /omnet/radio_distance     (std_msgs/Float64)  — metres (FSPL-inverted from RSSI only)
 """
 
 import socket
@@ -37,11 +38,12 @@ class OmnetMetricsBridge(Node):
             self.get_parameter("reconnect_interval_s").get_parameter_value().double_value
         )
 
-        self._pub_distance = self.create_publisher(Float64, "/omnet/link_distance", 10)
-        self._pub_rssi     = self.create_publisher(Float64, "/omnet/rssi_dbm", 10)
-        self._pub_snir     = self.create_publisher(Float64, "/omnet/snir_db", 10)
-        self._pub_per      = self.create_publisher(Float64, "/omnet/packet_error_rate", 10)
-        self._pub_simtime  = self.create_publisher(Float64, "/omnet/sim_time", 10)
+        self._pub_distance      = self.create_publisher(Float64, "/omnet/link_distance", 10)
+        self._pub_rssi          = self.create_publisher(Float64, "/omnet/rssi_dbm", 10)
+        self._pub_snir          = self.create_publisher(Float64, "/omnet/snir_db", 10)
+        self._pub_per           = self.create_publisher(Float64, "/omnet/packet_error_rate", 10)
+        self._pub_simtime       = self.create_publisher(Float64, "/omnet/sim_time", 10)
+        self._pub_radio_dist    = self.create_publisher(Float64, "/omnet/radio_distance", 10)
 
         self._sock: socket.socket | None = None
         self._stop_event = threading.Event()
@@ -59,6 +61,12 @@ class OmnetMetricsBridge(Node):
             try:
                 self._connect()
                 self._receive_loop()
+            except ConnectionRefusedError:
+                if not self._stop_event.is_set():
+                    self.get_logger().debug(
+                        f"OMNeT server not available at {self._host}:{self._port}; "
+                        f"retrying in {self._reconnect_interval:.1f}s"
+                    )
             except Exception as exc:
                 if not self._stop_event.is_set():
                     self.get_logger().warning(
@@ -95,11 +103,11 @@ class OmnetMetricsBridge(Node):
         if not line:
             return
         parts = line.split()
-        if len(parts) != 5:
+        if len(parts) != 6:
             self.get_logger().debug(f"Unexpected metrics line: {line!r}")
             return
         try:
-            sim_time, distance, rssi, snir, per = (float(p) for p in parts)
+            sim_time, distance, rssi, snir, per, radio_dist = (float(p) for p in parts)
         except ValueError:
             self.get_logger().debug(f"Could not parse metrics line: {line!r}")
             return
@@ -111,11 +119,12 @@ class OmnetMetricsBridge(Node):
             msg.data = val
             pub.publish(msg)
 
-        _pub(self._pub_simtime,  sim_time)
-        _pub(self._pub_distance, distance)
-        _pub(self._pub_rssi,     rssi)
-        _pub(self._pub_snir,     snir)
-        _pub(self._pub_per,      per)
+        _pub(self._pub_simtime,    sim_time)
+        _pub(self._pub_distance,   distance)
+        _pub(self._pub_rssi,       rssi)
+        _pub(self._pub_snir,       snir)
+        _pub(self._pub_per,        per)
+        _pub(self._pub_radio_dist, radio_dist)
 
     def _close(self) -> None:
         if self._sock is not None:

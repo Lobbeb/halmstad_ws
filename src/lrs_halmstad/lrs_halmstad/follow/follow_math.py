@@ -10,6 +10,14 @@ class Pose2D:
     yaw: float
 
 
+@dataclass
+class Pose3D:
+    x: float
+    y: float
+    z: float
+    yaw: float
+
+
 def coerce_bool(value) -> bool:
     if isinstance(value, bool):
         return value
