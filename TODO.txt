@@ -1,10 +1,3 @@
--   See if we can merge follow_uav.py and follow_uav_odom.py. The only difference is that
-    one is used by mode:=follow and the other by mode:=yolo, so if we already have the 
-    AMCL odom topic from the UGV in follow_uav.py (because we use it for estimation error)
-    we can use it to control the UAV in normal follow mode, like in follow_uav_odom.py.
-    Just make sure we inherit the movement-logic from follow_uav_odom.py since it
-    actually works.
-
 -   Make sure we use controller.py and simulator.py when moving the UAV and UGV so it
     integrates cleanly with the gitlab code we had from the start.
 
