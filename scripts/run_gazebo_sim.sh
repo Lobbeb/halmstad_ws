@@ -32,7 +32,10 @@ set +u
 source /opt/ros/jazzy/setup.bash
 
 cd "$WS_ROOT"
-colcon build --symlink-install
+# Limit package discovery to the ROS workspace source tree.
+# This avoids accidentally building reference repos or notes stored elsewhere
+# under the workspace root.
+colcon build --symlink-install --base-paths src
 
 source "$WS_ROOT/install/setup.bash"
 source "$WS_ROOT/src/lrs_halmstad/clearpath/setup.bash"

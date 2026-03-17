@@ -98,6 +98,7 @@ camera_tracker:
     tilt_image_center_max_deg: 4.0                    # (Inactive) 2° max — within one gimbal tick budget.
     publish_debug_topics: true                       # Publish /<uav>/camera0/{target,debug}/* camera geometry and image-centering topics.
     pose_timeout_s: 2.0                             # Was 3.0s — a 3s stale UAV pose can give a badly wrong pan/tilt angle. Fail faster.
+    trackable_hold_timeout_s: 0.40                  # How long to hold the last trackable-leader pose/Z when the trackable source is temporarily lost (e.g. brief YOLO dropout). Shorter than pose_timeout_s so camera does not pan wildly on stale data.
     tick_hz: 10.0                                  # Camera pan/tilt update rate.
 
 uav_simulator:
@@ -237,3 +238,58 @@ ugv_nav2_driver:
     pose_stale_timeout_s: 2.0                      # Reject localization poses that have not been received recently enough.
     pose_timeout_s: 10.0                          # Timeout while waiting for the first/current localization pose.
     start_delay_s: 0.0                           # Delay before starting route generation and Nav2 goal handling.
+
+#--------------<< Visual Follow Pipeline <<---------------------------------------------------------------------------
+selected_target_filter:
+  ros__parameters:
+    strong_confidence_threshold: 0.65        # Confidence at or above this is treated as a strong detection (no hold needed).
+    weak_confidence_threshold: 0.35          # Confidence below this triggers the hold/prediction path.
+    min_confidence_threshold: 0.12           # Absolute floor; detections below this are dropped entirely.
+    track_switch_min_confidence: 0.60        # Minimum confidence required to switch to a new track ID.
+    prediction_enable: true                  # Enable Kalman-style prediction to fill short dropout gaps.
+    prediction_max_gap_s: 0.20               # Maximum gap duration to bridge with prediction.
+
+visual_target_estimator:
+  ros__parameters:
+    range_signal_mode: "auto"                # Range source: auto (uses depth/camera info), projected, or area.
+    reference_range_m: 7.0                   # Reference target range used when no depth is available.
+    reference_area_norm: 0.009               # Normalised bbox area at reference_range_m; used by area-based range estimator.
+    position_alpha_projected: 0.65           # Low-pass alpha for position from projected-range path.
+    position_alpha_area: 0.45                # Low-pass alpha for position from area-based range path.
+    velocity_beta_projected: 0.35            # High-pass beta for velocity estimation from projected-range path.
+    velocity_beta_area: 0.18                 # High-pass beta for velocity estimation from area-based range path.
+
+visual_follow_controller:
+  ros__parameters:
+    yaw_gain: 2.0                            # Proportional gain mapping horizontal image error to yaw-rate command.
+    forward_range_gain: 0.75                 # Proportional gain mapping range error to forward speed command.
+    forward_area_gain: 6.0                   # Proportional gain mapping area error to forward speed command (area path).
+    yaw_rate_max_rad_s: 1.0                  # Maximum commanded yaw rate.
+    forward_speed_max_mps: 2.0               # Maximum commanded forward speed.
+    loss_hold_timeout_s: 0.35                # Hold last command for this duration after detection loss before zeroing output.
+
+follow_point_generator:
+  ros__parameters:
+    follow_distance_m: 7.0                   # Desired standoff distance behind the leader in the leader-relative frame.
+    lateral_offset_m: 0.0                    # Optional lateral offset from the follow point (positive = left).
+    lookahead_horizon_s: 0.25                # Lookahead duration for leader velocity prediction when placing the follow point.
+    heading_dir_alpha: 0.25                  # Low-pass alpha for the estimated leader heading direction.
+    point_alpha: 0.55                        # Low-pass alpha applied to the output follow point position.
+    max_follow_point_jump_m: 2.0             # Reject follow point updates that jump more than this distance.
+
+follow_point_planner:
+  ros__parameters:
+    xy_alpha: 0.45                           # Low-pass alpha for XY planned target position.
+    yaw_alpha: 0.55                          # Low-pass alpha for planned target yaw.
+    max_planned_step_m: 0.40                 # Maximum XY step per update to the planned target.
+    max_planned_yaw_step_rad: 0.12           # Maximum yaw step per update to the planned target.
+    hold_timeout_s: 0.5                      # Hold last planned target for this duration after follow-point dropout.
+
+visual_actuation_bridge:
+  ros__parameters:
+    input_mode: "auto"                       # Input source: auto (detected from active nodes), control, follow_point, or planned_target.
+    forward_scale: 1.0                       # Scale factor applied to the forward/X speed command before sending to the UAV.
+    yaw_scale: 1.0                           # Scale factor applied to the yaw command before sending to the UAV.
+    max_xy_step_m: 0.25                      # Maximum XY position step per bridge update when operating in planned_target mode.
+    max_yaw_step_rad: 0.20                   # Maximum yaw step per bridge update when operating in planned_target mode.
+    publish_pose_cmd_mirror: true            # Also publish the issued command on the legacy pose_cmd topic for logging/debug.

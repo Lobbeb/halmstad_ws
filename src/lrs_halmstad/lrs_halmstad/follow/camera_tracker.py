@@ -56,6 +56,7 @@ class CameraTracker(Node):
         self.uav_pose_cmd_topic = str(self.declare_parameter("uav_pose_cmd_topic", "").value).strip()
         self.tick_hz = max(1.0, float(yaml_param(self, "tick_hz")))
         self.pose_timeout_s = float(yaml_param(self, "pose_timeout_s"))
+        self.trackable_hold_timeout_s = max(0.0, float(yaml_param(self, "trackable_hold_timeout_s")))
         self.camera_x_offset_m = float(yaml_param(self, "camera_x_offset_m"))
         self.camera_y_offset_m = float(yaml_param(self, "camera_y_offset_m"))
         self.camera_z_offset_m = float(yaml_param(self, "camera_z_offset_m"))
@@ -474,10 +475,11 @@ class CameraTracker(Node):
             self.last_trackable_leader_pose is None
             or self.last_trackable_leader_z is None
             or self.last_trackable_leader_stamp is None
+            or self.trackable_hold_timeout_s <= 0.0
         ):
             return False
         age_s = (now - self.last_trackable_leader_stamp).nanoseconds * 1e-9
-        return age_s <= self.pose_timeout_s
+        return age_s <= self.trackable_hold_timeout_s
 
     def _tracking_uav_pose(self, now: Time) -> Optional[Pose2D]:
         if self.have_uav_actual:

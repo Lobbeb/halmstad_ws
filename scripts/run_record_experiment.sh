@@ -158,6 +158,27 @@ if [ "$MODE" = "yolo" ]; then
   )
 fi
 
+if [ "$PROFILE" = "step2_light" ]; then
+  TOPICS+=(
+    "/coord/leader_detection_status"
+    "/coord/leader_selected_target"
+    "/coord/leader_selected_target_filtered"
+    "/coord/leader_selected_target_filtered_status"
+    "/coord/leader_visual_target_estimate"
+    "/coord/leader_visual_target_estimate_status"
+    "/coord/leader_follow_point"
+    "/coord/leader_follow_point_status"
+    "/coord/leader_planned_target"
+    "/coord/leader_planned_target_status"
+    "/coord/leader_visual_control"
+    "/coord/leader_visual_control_status"
+    "/coord/leader_visual_actuation_bridge_status"
+    "/$UAV_NAME/psdk_ros2/flight_control_setpoint_ENUposition_yaw"
+    "/$UAV_NAME/pose_cmd"
+    "/$UAV_NAME/pose"
+  )
+fi
+
 if [ "$PROFILE" = "vision" ]; then
   TOPICS+=(
     "/$UAV_NAME/camera0/image_raw"

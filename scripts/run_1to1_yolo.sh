@@ -319,5 +319,8 @@ ros2 launch lrs_halmstad run_follow.launch.py \
   external_detection_node:="$EXTERNAL_DETECTION_NODE" \
   leader_range_mode:="$LEADER_RANGE_MODE" \
   yolo_weights:="$WEIGHTS_REL" \
+  start_visual_actuation_bridge:=true \
+  start_visual_follow_point_generator:=true \
+  start_visual_follow_planner:=true \
   "${EXTRA_ARGS[@]}" \
   world:="$WORLD"

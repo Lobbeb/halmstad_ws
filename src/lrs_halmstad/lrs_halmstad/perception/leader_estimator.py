@@ -16,8 +16,13 @@ from rclpy.qos import QoSDurabilityPolicy, QoSHistoryPolicy, QoSProfile, QoSReli
 from rclpy.time import Time
 from sensor_msgs.msg import CameraInfo, Image
 from std_msgs.msg import Float32, Float64, String
+from vision_msgs.msg import Detection2DArray
 
 from lrs_halmstad.common.node_mixins import EventEmitterMixin
+from lrs_halmstad.common.selected_target_state import (
+    SelectedTargetState,
+    encode_selected_target_state_msg,
+)
 from lrs_halmstad.common.ros_params import yaml_param
 from lrs_halmstad.follow.follow_math import (
     Pose3D,
@@ -63,6 +68,13 @@ class LeaderEstimator(EventEmitterMixin, Node):
         self.estimate_error_topic = str(yaml_param(self, "estimate_error_topic")).strip()
         self.event_topic = str(yaml_param(self, "event_topic")).strip()
         self.debug_image_topic = str(yaml_param(self, "debug_image_topic")).strip()
+        self.selected_target_topic = "/coord/leader_selected_target"
+        self.declare_parameter("publish_selected_target", True)
+        self.publish_selected_target = coerce_bool(self.get_parameter("publish_selected_target").value)
+        _ct = self.declare_parameter("camera_tilt_topic", "").value
+        self.camera_tilt_topic = str(_ct).strip() or f"/{self.uav_name}/follow/actual/tilt_deg"
+        _cy = self.declare_parameter("camera_world_yaw_topic", "").value
+        self.camera_world_yaw_topic = str(_cy).strip() or f"/{self.uav_name}/camera0/actual/world_yaw_rad"
 
         self.publish_status = coerce_bool(yaml_param(self, "publish_status"))
         self.publish_fault_status = coerce_bool(yaml_param(self, "publish_fault_status"))
@@ -127,7 +139,13 @@ class LeaderEstimator(EventEmitterMixin, Node):
         self.last_depth_stamp: Optional[Time] = None
         self.last_external_det: Optional[Detection2D] = None
         self.last_external_det_stamp: Optional[Time] = None
+        self.last_external_det_rx_stamp: Optional[Time] = None
         self.last_external_det_status_text: str = ""
+        self.last_camera_frame_id: str = ""
+        self.last_camera_tilt_deg: Optional[float] = None
+        self.last_camera_tilt_stamp: Optional[Time] = None
+        self.last_camera_world_yaw_rad: Optional[float] = None
+        self.last_camera_world_yaw_stamp: Optional[Time] = None
         self.last_external_det_status_stamp: Optional[Time] = None
         self.last_follow_debug_heading_yaw: Optional[float] = None
         self.last_follow_debug_heading_source: str = ""
@@ -190,12 +208,19 @@ class LeaderEstimator(EventEmitterMixin, Node):
             if self.radio_range_topic
             else None
         )
+        self.camera_tilt_sub = self.create_subscription(Float32, self.camera_tilt_topic, self.on_camera_tilt, 10)
+        self.camera_world_yaw_sub = self.create_subscription(Float32, self.camera_world_yaw_topic, self.on_camera_world_yaw, 10)
 
         self.pub = self.create_publisher(PoseStamped, self.out_topic, 10)
         self.status_pub = self.create_publisher(String, self.status_topic, 10)
         self.distance_status_pub = self.create_publisher(String, self.distance_status_topic, 10)
         self._setup_event_emitter(self.event_topic, self.publish_events)
         self.debug_image_pub = self.create_publisher(Image, self.debug_image_topic, 2) if self.publish_debug_image else None
+        self.selected_target_pub = (
+            self.create_publisher(Detection2DArray, self.selected_target_topic, 10)
+            if self.publish_selected_target
+            else None
+        )
         self.estimate_error_pub = (
             self.create_publisher(Vector3Stamped, self.estimate_error_topic, 10)
             if self.leader_actual_pose_enable
@@ -277,6 +302,8 @@ class LeaderEstimator(EventEmitterMixin, Node):
     def on_image(self, msg: Image) -> None:
         self.last_image_msg = msg
         self.last_image_recv_walltime = time.monotonic()
+        if msg.header.frame_id:
+            self.last_camera_frame_id = str(msg.header.frame_id)
         try:
             self.last_image_stamp = Time.from_msg(msg.header.stamp)
         except Exception:
@@ -296,6 +323,8 @@ class LeaderEstimator(EventEmitterMixin, Node):
         fy = float(msg.k[4])
         if fx <= 0.0 or fy <= 0.0:
             return
+        if msg.header.frame_id:
+            self.last_camera_frame_id = str(msg.header.frame_id)
         self.camera_model = CameraModel(
             fx=fx,
             fy=fy,
@@ -350,7 +379,16 @@ class LeaderEstimator(EventEmitterMixin, Node):
         else:
             stamp = self.get_clock().now()
         self.last_external_det_stamp = stamp
+        self.last_external_det_rx_stamp = self.get_clock().now()
         self.last_external_det = det_msg.detection
+
+    def on_camera_tilt(self, msg: Float32) -> None:
+        self.last_camera_tilt_deg = float(msg.data)
+        self.last_camera_tilt_stamp = self.get_clock().now()
+
+    def on_camera_world_yaw(self, msg: Float32) -> None:
+        self.last_camera_world_yaw_rad = wrap_pi(float(msg.data))
+        self.last_camera_world_yaw_stamp = self.get_clock().now()
 
     def on_external_detection_status(self, msg: String) -> None:
         self.last_external_det_status_text = str(msg.data)
@@ -554,6 +592,54 @@ class LeaderEstimator(EventEmitterMixin, Node):
         vertical_delta = self.uav_pose.z - self.target_ground_z_m
         horiz = horizontal_distance_for_euclidean(self.last_radio_range_m, vertical_delta)
         return float(horiz) if horiz > 0.0 else None
+
+    def _selected_target_bbox(self, det: Detection2D):
+        if det.obb_corners is not None and len(det.obb_corners) == 4:
+            corners = det.obb_corners
+            x1 = min(c[0] for c in corners)
+            x2 = max(c[0] for c in corners)
+            y1 = min(c[1] for c in corners)
+            y2 = max(c[1] for c in corners)
+            return (0.5 * float(x1 + x2), 0.5 * float(y1 + y2), max(0.0, float(x2 - x1)), max(0.0, float(y2 - y1)), 0.0)
+        if det.bbox is not None and len(det.bbox) == 4:
+            x1, y1, x2, y2 = det.bbox
+            return (0.5 * float(x1 + x2), 0.5 * float(y1 + y2), max(0.0, float(x2 - x1)), max(0.0, float(y2 - y1)), 0.0)
+        return (float(det.u), float(det.v), 0.0, 0.0, 0.0)
+
+    def _publish_selected_target(self, now: Time, det: Optional[Detection2D], projected_range_m: Optional[float] = None) -> None:
+        if self.selected_target_pub is None:
+            return
+        stamp = (
+            self.last_external_det_stamp.to_msg()
+            if det is not None and self.last_external_det_stamp is not None
+            else now.to_msg()
+        )
+        frame_id = self.last_camera_frame_id
+        if det is None:
+            state = SelectedTargetState(stamp=stamp, frame_id=frame_id, valid=False)
+        else:
+            center_x, center_y, size_x, size_y, theta = self._selected_target_bbox(det)
+            cls_label = str(det.cls_name or "")
+            if not cls_label and det.cls_id is not None:
+                cls_label = str(det.cls_id)
+            track_id = "" if det.track_id is None else str(int(det.track_id))
+            track_age_s = float(det.track_age_s) if det.track_age_s > 0.0 else None
+            state = SelectedTargetState(
+                stamp=stamp,
+                frame_id=frame_id,
+                valid=True,
+                bbox_center_x_px=center_x,
+                bbox_center_y_px=center_y,
+                bbox_size_x_px=size_x,
+                bbox_size_y_px=size_y,
+                bbox_theta_rad=theta,
+                confidence=float(det.conf),
+                class_id=cls_label,
+                track_id=track_id,
+                projected_range_m=projected_range_m,
+                track_age_s=track_age_s,
+            )
+        self.selected_target_pub.publish(encode_selected_target_state_msg(state))
 
     def _estimate_from_detection(self, det: Detection2D, cam: CameraModel, now: Time) -> Tuple[Pose3D, str]:
         assert self.uav_pose is not None
@@ -962,6 +1048,7 @@ class LeaderEstimator(EventEmitterMixin, Node):
             self.publish_distance_status_msg(now)
             self._record_fault("NO_DET", reason, now)
             self._publish_debug_image("NO_DET", reason, None)
+            self._publish_selected_target(now, None)
             return
 
         try:
@@ -983,6 +1070,8 @@ class LeaderEstimator(EventEmitterMixin, Node):
             self._publish_debug_image("STALE", reason, det)
             return
 
+        projected_range_m = float(self.last_range_used_m) if self.last_range_source == "depth" else None
+        self._publish_selected_target(now, det, projected_range_m)
         self._publish_estimate(pose, now, det.track_id)
         self.publish_status_msg(self._status_line("OK", "none", now))
         self.publish_distance_status_msg(now)

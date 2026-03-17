@@ -38,6 +38,7 @@ class Simulator(Node):
         yaml_param(self, "gimbal_pitch_min_rad")
         yaml_param(self, "gimbal_pitch_max_rad")
         self.declare_parameter("publish_legacy_debug_topics", False)
+        self.declare_parameter("set_pose_future_timeout_s", 0.5)
         yaml_param(self, "pan_rate_deg_s")
         yaml_param(self, "tilt_rate_deg_s")
 
@@ -59,6 +60,7 @@ class Simulator(Node):
         self.gimbal_pitch_min = float(self.get_parameter("gimbal_pitch_min_rad").value)
         self.gimbal_pitch_max = float(self.get_parameter("gimbal_pitch_max_rad").value)
         self.publish_legacy_debug_topics = bool(self.get_parameter("publish_legacy_debug_topics").value)
+        self.set_pose_future_timeout_s = max(0.0, float(self.get_parameter("set_pose_future_timeout_s").value))
         self.pan_rate_deg_s = float(self.get_parameter("pan_rate_deg_s").value)
         self.tilt_rate_deg_s = float(self.get_parameter("tilt_rate_deg_s").value)
         if self.camera_mode == "integrated":
@@ -91,6 +93,7 @@ class Simulator(Node):
         self.target_tilt = None  # None until first command received; no gimbal output until then
         self.target_pan = None
         self.future1 = None
+        self.future1_sent_ns = None
         self._last_set_pose = None  # (x, y, z, yaw) — skip set_pose when unchanged
         self._last_tick_time = None
 
@@ -301,6 +304,21 @@ class Simulator(Node):
                 self.yaw = float(self.update_msg.axes[3])
             self.update_msg = None
             
+    def _future_pending(self, future, sent_ns):
+        if future is None:
+            return False
+        if future.done():
+            return False
+        if sent_ns is None:
+            return True
+        age_s = (self.get_clock().now().nanoseconds - int(sent_ns)) * 1e-9
+        if self.set_pose_future_timeout_s > 0.0 and age_s > self.set_pose_future_timeout_s:
+            self.get_logger().warn(
+                f"SetEntityPose future timed out after {age_s:.2f}s; clearing pending request"
+            )
+            return False
+        return True
+
     def timer_callback(self):
         try:
             now = self.get_clock().now()
@@ -392,8 +410,10 @@ class Simulator(Node):
 
     def set_pose(self, name, x, y, z, yaw):
         try:
-            if self.future1 is not None and not self.future1.done():
+            if self._future_pending(self.future1, self.future1_sent_ns):
                 return
+            self.future1 = None
+            self.future1_sent_ns = None
             robot_request = SetEntityPose.Request()
             quat1 = quaternion_from_euler(0.0, 0.0, yaw)
             robot_request.entity.id = 0
@@ -408,6 +428,7 @@ class Simulator(Node):
             robot_request.pose.orientation.w = quat1[3]
             ## print(robot_request)
             self.future1 = self.cli.call_async(robot_request)
+            self.future1_sent_ns = self.get_clock().now().nanoseconds
             #rclpy.spin_until_future_complete(self, future1)
             #print(future1.result())
         except Exception as ex:
