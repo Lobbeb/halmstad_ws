@@ -92,6 +92,7 @@ camera_tracker:
   ros__parameters:
     use_sim_time: true  #---------! Run this node on Gazebo/ROS simulation time. !---------------------------------------
 
+    actual_pose_reacquire_enable: true  # When estimate pose is unavailable, use the shared leader actual pose only to re-aim the camera and recover detections.
     camera_look_target_z_m: 0.3  # DONT TOUCH! Vertical offset above the leader target point for pan/tilt solving.
     default_pan_deg: 0.0        # Fallback pan command when pan tracking is disabled or stale.
     default_tilt_deg: -45.0    # Fallback tilt command when tracking is disabled or stale.
@@ -105,7 +106,7 @@ camera_tracker:
     pan_image_center_max_deg: 10.0  # Clamp image-based pan correction so it cannot dominate geometry pan.
     tilt_image_center_gain: 0.8  # Scale vertical image-angle error into extra tilt correction.
     tilt_image_center_max_deg: 10.0  # Clamp image-based tilt correction so it cannot dominate geometry tilt.
-    trackable_hold_timeout_s: 0.40  # Keep using the last trackable leader pose briefly so pan does not freeze instantly on short estimate dropouts.
+    trackable_hold_timeout_s: 8.0  # Keep using the last trackable leader pose across CPU-YOLO gaps.  Raised from 0.40.
     publish_debug_topics: true  # Publish /<uav>/camera/{target,debug}/* geometry and image-centering topics.
     pose_timeout_s: 3.0    # Treat leader/UAV pose data as stale after this many seconds.
     tick_hz: 20.0         # Camera pan/tilt update rate.
@@ -120,10 +121,10 @@ selected_target_filter:
     publish_status: true  # Publish filter status for tuning and bag validation.
 
     tick_hz: 20.0  # Filter output/update rate.
-    target_timeout_s: 1.0  # Treat the raw selected target as stale after this timeout.
-    hold_timeout_s: 0.70  # Keep the filtered target alive briefly across short gaps.
+    target_timeout_s: 12.0  # Treat the raw selected target as stale after this timeout.  Raised to match CPU-YOLO cadence.
+    hold_timeout_s: 8.0  # Keep the filtered target alive across CPU-YOLO inference gaps.  Raised from 0.70.
     prediction_enable: true  # Allow a lightweight image-space predictive hold over short gaps.
-    prediction_max_gap_s: 0.35  # Only predict over short target-loss gaps.
+    prediction_max_gap_s: 3.0  # Predict over CPU-YOLO-length target-loss gaps.  Raised from 0.35.
     max_predict_center_shift_px: 120.0  # Clamp the predictive image-center shift to avoid wild extrapolation.
 
     strong_confidence_threshold: 0.65  # Strong-confidence updates are accepted and smoothed normally.
@@ -139,7 +140,7 @@ selected_target_filter:
     range_jump_max_m: 4.0  # Reject implausible projected-range jumps.
     hold_last_range_on_missing: true  # Preserve the last filtered projected range across short range dropouts.
     low_conf_reacquire_enable: true  # Allow a recent plausible low-confidence target to reacquire after a short dropout.
-    low_conf_reacquire_timeout_s: 0.90  # Only allow low-confidence reacquire from very recent accepted target history.
+    low_conf_reacquire_timeout_s: 6.0  # Allow low-confidence reacquire over longer CPU-YOLO gaps.  Raised from 0.90.
     low_conf_reacquire_center_jump_px_max: 240.0  # Reject low-confidence reacquire if image-space jump is too large.
     low_conf_reacquire_area_ratio_max: 4.5  # Reject low-confidence reacquire if scale changes are too abrupt.
     low_conf_reacquire_range_jump_max_m: 6.0  # Reject low-confidence reacquire if projected range jumps too far.
@@ -162,8 +163,8 @@ visual_target_estimator:
     publish_status: true  # Publish readable estimator state/source/quality debug.
 
     tick_hz: 20.0  # Estimator update/publish rate.
-    target_timeout_s: 1.0  # Treat the filtered selected target as stale after this timeout.
-    prediction_max_gap_s: 0.45  # Allow a slightly longer short-horizon prediction when measurements drop out briefly.
+    target_timeout_s: 12.0  # Treat the filtered selected target as stale after this timeout.  Raised to match CPU-YOLO cadence.
+    prediction_max_gap_s: 5.0  # Coast on stale estimate across CPU-YOLO gaps.  Raised from 0.45.
     prefer_intrinsics_normalization: true  # Use fx/fy when available; otherwise fall back to image width/height.
 
     range_signal_mode: auto  # auto prefers projected range and falls back to area-derived pseudo-range.
@@ -195,19 +196,19 @@ follow_point_generator:
     publish_status: true  # Publish readable follow-point state for tuning and validation.
 
     tick_hz: 20.0  # Follow-point update rate.
-    target_estimate_timeout_s: 1.0  # Treat the estimator-backed target state as stale after this timeout.
+    target_estimate_timeout_s: 12.0  # Treat the estimator-backed target state as stale after this timeout.  Raised to match CPU-YOLO cadence.
     uav_pose_timeout_s: 0.5  # Treat UAV pose as stale after this timeout.
     camera_pose_timeout_s: 0.5  # Treat camera pose as stale after this timeout.
-    hold_timeout_s: 0.50  # Briefly hold the last valid follow point across short estimate gaps.
+    hold_timeout_s: 8.0  # Hold the last valid follow point across CPU-YOLO inference gaps.  Raised from 0.50.
 
     follow_distance_m: 7.0  # Nominal standoff distance behind the target.
     lateral_offset_m: 0.0  # Optional lateral offset from the target motion/view line.
     lookahead_horizon_s: 0.15  # Keep the behind-target point slightly predictive without pulling too far ahead.
     min_target_speed_mps: 0.25  # Fall back to target-motion heading above this speed when no fresh target-pose heading is available.
     prefer_target_pose_heading: true  # Prefer the estimator's world-frame target yaw so the UAV shadows the UGV from behind instead of circling it.
-    target_pose_timeout_s: 0.75  # Treat the target-pose heading as stale after this timeout.
+    target_pose_timeout_s: 8.0  # Treat the target-pose heading as stale after this timeout.  Raised from 0.75 for CPU-YOLO cadence.
     heading_dir_alpha: 0.25  # Smooth changes in the chosen behind-heading so turns stay steady.
-    heading_hold_timeout_s: 1.0  # Preserve the last good behind-heading briefly so slow/weak periods do not flip the follow side.
+    heading_hold_timeout_s: 8.0  # Preserve the last good behind-heading across CPU-YOLO gaps.  Raised from 1.0.
     target_velocity_alpha: 0.35  # EMA alpha for world-frame target velocity estimation.
     point_alpha: 0.35  # Smooth the generated follow point more heavily for slower shadow-follow behavior.
     max_follow_point_jump_m: 1.0  # Keep follow-point jumps smaller so the UAV does not lunge across the target.
@@ -227,9 +228,9 @@ follow_point_planner:
     publish_status: true  # Publish readable planner state for tuning and validation.
 
     tick_hz: 20.0  # Planner update rate.
-    follow_point_timeout_s: 0.5  # Treat the raw follow point as stale after this timeout.
+    follow_point_timeout_s: 12.0  # Treat the raw follow point as stale after this timeout.  Raised for CPU-YOLO cadence.
     pose_timeout_s: 0.5  # Treat UAV pose as stale after this timeout.
-    hold_timeout_s: 0.5  # Briefly hold the last planned target across short follow-point gaps.
+    hold_timeout_s: 8.0  # Hold the last planned target across CPU-YOLO inference gaps.  Raised from 0.5.
 
     xy_alpha: 0.30  # Move more conservatively toward each follow point for a steadier shadow-follow path.
     yaw_alpha: 0.40  # Turn more gradually toward the follow-point yaw.
@@ -294,9 +295,9 @@ visual_actuation_bridge:
     status_topic: /coord/leader_visual_actuation_bridge_status  # Human-readable bridge state/debug topic.
 
     tick_hz: 20.0  # Bridge update rate.
-    control_timeout_s: 0.5  # Treat controller output as stale after this timeout and hold position.
-    follow_point_timeout_s: 0.5  # Treat the follow point as stale after this timeout and hold the current pose.
-    planned_target_timeout_s: 0.5  # Treat the planned target as stale after this timeout and hold the current pose.
+    control_timeout_s: 12.0  # Treat controller output as stale after this timeout and hold position.  Raised for CPU-YOLO cadence.
+    follow_point_timeout_s: 12.0  # Treat the follow point as stale after this timeout and hold the current pose.  Raised for CPU-YOLO cadence.
+    planned_target_timeout_s: 12.0  # Treat the planned target as stale after this timeout and hold the current pose.  Raised for CPU-YOLO cadence.
     pose_timeout_s: 0.5  # Treat UAV pose as stale after this timeout and stop bridging.
     forward_scale: 1.0  # Optional tuning scale applied to controller forward speed before conversion.
     yaw_scale: 1.0  # Optional tuning scale applied to controller yaw rate before conversion.
@@ -352,7 +353,7 @@ leader_estimator:
 
     estimate_error_topic: /coord/leader_estimate_error  # Debug topic publishing estimate-vs-truth error.
     event_topic: /coord/events  # Topic for estimator lifecycle/debug event strings.
-    external_detection_timeout_s: 1.0  # Treat detector/tracker output as stale after this timeout.
+    external_detection_timeout_s: 10.0  # Treat detector/tracker output as stale after this timeout.  Raised from 1.0 to bridge CPU-YOLO inference gaps (~4-10 s between frames).
     external_detection_topic: /coord/leader_detection  # Detection topic carrying bbox/OBB JSON from detector/tracker.
     external_detection_status_topic: /coord/leader_detection_status  # Detector/tracker status topic used only for estimator debug-image overlay.
     selected_target_topic: /coord/leader_selected_target  # Clean selected-target topic for the visual-follow controller.
@@ -416,7 +417,7 @@ ugv_nav2_driver:
 
     goal_action_name: navigate_to_pose    # Nav2 action name to call for goal execution.
     goal_frame_id: map                     # Frame used for generated/supplied goals.
-    goal_reject_retry_count: 5              # Retries after a goal is rejected by the Nav2 action server.
+    goal_reject_retry_count: 20             # Retries after a goal is rejected by the Nav2 action server.
     goal_reject_retry_delay_s: 1.0           # Delay between goal-rejection retries.
     goal_result_timeout_s: 600.0              # Cancel a goal if Nav2 has not returned a result within this timeout.
     goal_sequence_csv: ""                      # Optional inline waypoint list: x,y,yaw_deg;x,y,yaw_deg;...
@@ -425,13 +426,13 @@ ugv_nav2_driver:
     goal_sequence_randomize: true                 # Randomize the loaded waypoint order using goal_sequence_seed.
     goal_sequence_relative_to_current_pose: false  # Treat explicit waypoints as offsets from the current pose.
     goal_sequence_seed: -1                        # RNG seed for waypoint randomization; -1 uses a time-based seed.
-    goal_server_timeout_s: 20.0                  # Timeout while waiting for the Nav2 action server.
-    goal_start_delay_s: 2.0                     # Delay before the first goal so Nav2/TF/costmaps can settle.
+    goal_server_timeout_s: 90.0                  # Timeout while waiting for the Nav2 action server.
+    goal_start_delay_s: 25.0                    # Delay before the first goal so Nav2/TF/costmaps can settle.
     min_goal_xy_delta_m: 0.05                  # Skip a goal if it is too close in XY to the current pose.
     min_goal_yaw_delta_deg: 2.0               # Skip a goal if it is too close in yaw to the current pose.
     pause_after_goal_s: 0.0                  # Dwell time after each completed goal.
 
-    cycles: 2           # Number of motion-profile cycles when generating a route internally.
+    cycles: 40          # Number of motion-profile cycles when generating a route internally.
     forward_speed: 0.75  # Forward speed for generated motion-profile segments.
     forward_time_s: 0.90  # Duration of each generated forward segment.
     motion_profile: route  # Named motion profile used when generating internal waypoints.

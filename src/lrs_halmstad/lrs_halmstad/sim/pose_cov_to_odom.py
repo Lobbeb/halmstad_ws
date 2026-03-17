@@ -29,14 +29,28 @@ class PoseCovToOdom(Node):
             history=HistoryPolicy.KEEP_LAST,
             depth=1,
         )
+        amcl_volatile_qos = QoSProfile(
+            durability=DurabilityPolicy.VOLATILE,
+            reliability=ReliabilityPolicy.RELIABLE,
+            history=HistoryPolicy.KEEP_LAST,
+            depth=10,
+        )
 
         self._pub = self.create_publisher(Odometry, self._odom_topic, 10)
-        self._sub = self.create_subscription(
-            PoseWithCovarianceStamped,
-            self._pose_topic,
-            self._on_pose,
-            amcl_qos,
-        )
+        self._subs = [
+            self.create_subscription(
+                PoseWithCovarianceStamped,
+                self._pose_topic,
+                self._on_pose,
+                amcl_qos,
+            ),
+            self.create_subscription(
+                PoseWithCovarianceStamped,
+                self._pose_topic,
+                self._on_pose,
+                amcl_volatile_qos,
+            ),
+        ]
         self._msg_count = 0
 
         self.get_logger().info(

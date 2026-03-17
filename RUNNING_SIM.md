@@ -13,6 +13,7 @@ Assumption:
 
 Recommended tmux workflow:
 - start with `./run.sh tmux_1to1 warehouse`
+- for an on-screen Gazebo test, use `./run.sh tmux_1to1 warehouse gui:=true`
 - start YOLO mode with `./run.sh tmux_1to1 warehouse mode:=yolo`
 - start YOLO tracker mode with `./run.sh tmux_1to1 warehouse mode:=yolo tracker:=true`
 - record a YOLO run with `./run.sh tmux_1to1 warehouse mode:=yolo record:=true`
@@ -31,6 +32,11 @@ Recommended tmux workflow:
 - current default delays:
   - `gui:=false` -> `spawn=8`, `localization/nav2=10`, `follow=12`
   - `gui:=true` -> `spawn=6`, `localization/nav2=8`, `follow=10`
+- in tmux mode, the follow pane now starts after its staged delay without an extra Nav2-localization wait gate
+- Nav2 readiness is now enforced inside `ugv_nav2_driver`, which avoids circular startup waits during AMCL initial-pose seeding
+- `ugv_nav2_driver` now also waits for those required Nav2 lifecycle nodes before its first goal send and before retrying a rejected goal, so the UGV side stays guarded even if launch timing changes
+- on WSL, `./run.sh gazebo_sim ... true` now defaults to software GL rendering for GUI stability unless you override it
+- `camera_tracker` now uses an odom-frame UGV pose for camera-only reacquisition by default, which helps detached-camera YOLO runs recover from bad startup framing without mixing `map` and `odom` frames while keeping UAV motion ownership on the visual pipeline
 
 ## Start 1-to-1 Sim With Nav2 And AMCL Follow
 
@@ -82,6 +88,12 @@ If you want a different saved map:
 
 ```bash
 ./run.sh tmux_1to1 warehouse
+```
+
+Recommended visible test run:
+
+```bash
+./run.sh tmux_1to1 warehouse gui:=true
 ```
 
 YOLO variant in tmux:
@@ -155,7 +167,7 @@ This sends `Ctrl-c` in this order:
 - Gazebo
 - spawn is expected to exit automatically when Gazebo goes down
 
-Then it waits a few seconds, kills the tmux session, performs a safety cleanup pass for leftover Gazebo / launch processes, and clears stale helper state files under `/tmp/halmstad_ws`.
+Then it waits a few seconds, kills the tmux session, performs a safety cleanup pass for leftover Gazebo, launch, and child stack node processes, and clears stale helper state files under `/tmp/halmstad_ws`.
 If recording was enabled, the stop flow also stops the recorder pane and cleans up matching `ros2 bag record` processes as fallback.
 
 Useful stop overrides:
@@ -170,6 +182,7 @@ Useful stop overrides:
 Current baseline:
 - this odom-follow path now uses `/<ugv>/amcl_pose_odom`, not raw `/platform/odom`
 - `/<ugv>/amcl_pose_odom` is synthesized from `/<ugv>/amcl_pose` by [pose_cov_to_odom.py](src/lrs_halmstad/lrs_halmstad/sim/pose_cov_to_odom.py)
+- when the Clearpath sim odom / TF path is late during startup, the active follow launch also synthesizes `/<ugv>/platform/odom`, `/<ugv>/platform/odom/filtered`, and fallback `odom -> base_link` TF from `/<ugv>/amcl_pose`
 - launch `leader_odom_topic` / `ugv_odom_topic` defaults are intentionally pointed at that AMCL-derived topic
 - current UAV camera mode is detached: `uav_camera_mode:=detached_model`
 - current camera defaults are `pan_enable: true` and `tilt_enable: true`
@@ -521,6 +534,7 @@ When `start_visual_follow_planner:=true` together with `start_visual_actuation_b
 - the planner stage starts automatically on top of that follow-point pipeline
 - the old `follow_uav` / `follow_uav_odom` motion owner is disabled
 - `visual_actuation_bridge` becomes the active motion owner
+- `camera_tracker` may still use an odom-frame UGV pose to re-aim the camera when the estimator is unavailable; this is camera-only reacquisition support for sim/testing and does not make the bridge chase truth pose
 - `follow_point_generator` publishes a world-frame spatial goal on `/coord/leader_follow_point`
 - `follow_point_generator` now prefers `/coord/leader_estimate` XY and yaw as the primary behind-target anchor, so the UAV shadows the UGV pose instead of circling the camera-relative target projection
 - `follow_point_planner` publishes a planned world-frame pose target on `/coord/leader_planned_target`

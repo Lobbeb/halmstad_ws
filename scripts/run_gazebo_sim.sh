@@ -5,6 +5,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 WS_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 WORLD="${1:-warehouse}"
 GUI="${GUI:-true}"
+ENABLE_WSL_SOFTWARE_RENDERING="${ENABLE_WSL_SOFTWARE_RENDERING:-auto}"
 STATE_DIR="/tmp/halmstad_ws"
 SIM_PID_FILE="$STATE_DIR/gazebo_sim.pid"
 SIM_WORLD_FILE="$STATE_DIR/gazebo_sim.world"
@@ -44,6 +45,22 @@ set -u
 mkdir -p "$STATE_DIR"
 printf '%s\n' "$$" > "$SIM_PID_FILE"
 printf '%s\n' "$WORLD" > "$SIM_WORLD_FILE"
+
+# Gazebo + Ogre can crash on some WSL GPU driver stacks.
+# Default to software rendering only on WSL unless explicitly disabled.
+if [ "$ENABLE_WSL_SOFTWARE_RENDERING" = "auto" ]; then
+  if [ -n "${WSL_INTEROP:-}" ] || grep -qi microsoft /proc/version 2>/dev/null; then
+    if [ -z "${LIBGL_ALWAYS_SOFTWARE:-}" ]; then
+      export LIBGL_ALWAYS_SOFTWARE=1
+      echo "[run_gazebo_sim] WSL detected: using LIBGL_ALWAYS_SOFTWARE=1 for stability"
+    fi
+  fi
+elif [ "$ENABLE_WSL_SOFTWARE_RENDERING" = "true" ]; then
+  if [ -z "${LIBGL_ALWAYS_SOFTWARE:-}" ]; then
+    export LIBGL_ALWAYS_SOFTWARE=1
+    echo "[run_gazebo_sim] Forced software rendering: LIBGL_ALWAYS_SOFTWARE=1"
+  fi
+fi
 
 ros2 launch lrs_halmstad managed_clearpath_sim.launch.py \
   world:="$WORLD" \

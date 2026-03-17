@@ -41,12 +41,6 @@
     <origin xyz="0.21 0.13 0.225" rpy="0.0 0.0 0.0"/>
   </xacro:hokuyo_ust>
 
-  <!-- camera_0 -->
-  <xacro:include filename="$(find clearpath_sensors_description)/urdf/intel_realsense.urdf.xacro"/>
-  <xacro:intel_realsense name="camera_0" parent_link="base_link" update_rate="30" image_height="480" image_width="640" model="d435">
-    <origin xyz="0.31 0.0 0.23" rpy="0.0 0.0 0.0"/>
-  </xacro:intel_realsense>
-
 
   <!-- Manipulators -->
 

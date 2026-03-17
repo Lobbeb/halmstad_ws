@@ -192,6 +192,12 @@ signal_processes_by_pattern() {
   return 0
 }
 
+signal_named_nodes() {
+  local label="$1"
+  local names_regex="$2"
+  signal_processes_by_pattern "$label" "__node:=($names_regex)(\\s|$)"
+}
+
 run_fallback_cleanup() {
   signal_process_group_from_pid_file "$SIM_PID_FILE" "Gazebo helper" || true
   signal_processes_by_pattern "experiment recorder" 'ros2 bag record .*((runs|recordings|bags)/experiments/.*/bag)' || true
@@ -200,6 +206,7 @@ run_fallback_cleanup() {
   signal_processes_by_pattern "localization launch" 'ros2 launch clearpath_nav2_demos localization\.launch\.py' || true
   signal_processes_by_pattern "spawn launch" 'ros2 launch lrs_halmstad spawn_uav_1to1\.launch\.py' || true
   signal_processes_by_pattern "Gazebo launch" 'ros2 launch lrs_halmstad managed_clearpath_sim\.launch\.py' || true
+  signal_named_nodes "stack child nodes" 'amcl|map_server|planner_server|controller_server|behavior_server|bt_navigator|waypoint_follower|velocity_smoother|smoother_server|route_server|lifecycle_manager_localization|lifecycle_manager_navigation|ugv_nav2_driver|ugv_amcl_to_odom|ugv_amcl_to_platform_odom|ugv_amcl_to_platform_filtered_odom|ugv_platform_odom_to_tf|uav_simulator|leader_detector|leader_estimator|selected_target_filter|visual_target_estimator|follow_point_generator|follow_point_planner|visual_actuation_bridge|camera_tracker' || true
   signal_processes_by_pattern "Gazebo sim" '(^|/)gz sim($| )' || true
 }
 
@@ -237,6 +244,7 @@ send_ctrl_c() {
 }
 
 if ! tmux_has_session; then
+  run_fallback_cleanup
   cleanup_state_files
   if [ "$DRY_RUN" = true ]; then
     echo "tmux session not found: $SESSION"

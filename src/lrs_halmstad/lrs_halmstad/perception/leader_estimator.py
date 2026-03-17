@@ -218,6 +218,11 @@ class LeaderEstimator(Node):
         self.last_debug_det: Optional[Detection2D] = None
         self.last_camera_frame_id: str = ""
 
+        # ---- estimate caching (prevent re-projection of stale detections) ----
+        self._last_projected_det_rx_ns: int = -1
+        self._cached_estimate_pose: Optional[Pose2D] = None
+        self._cached_estimate_track_id: Optional[int] = None
+
         self.image_sub = self.create_subscription(Image, self.camera_topic, self.on_image, 10)
         self.camera_info_sub = self.create_subscription(CameraInfo, self.camera_info_topic, self.on_camera_info, 10)
         self.depth_sub = self.create_subscription(Image, self.depth_topic, self.on_depth, 10) if self.depth_topic else None
@@ -407,9 +412,12 @@ class LeaderEstimator(Node):
             stamp = Time(nanoseconds=stamp_ns, clock_type=self.get_clock().clock_type)
         else:
             stamp = now
-        self.last_external_det_stamp = stamp
-        self.last_external_det_rx_stamp = now
-        self.last_external_det = det_msg.detection
+        # Only latch valid detections so that NO_DET frames do not erase the
+        # last real detection before external_detection_timeout_s expires.
+        if det_msg.detection is not None:
+            self.last_external_det_stamp = stamp
+            self.last_external_det_rx_stamp = now
+            self.last_external_det = det_msg.detection
 
     def on_external_detection_status(self, msg: String) -> None:
         self.last_external_det_status_text = str(msg.data)
@@ -976,6 +984,22 @@ class LeaderEstimator(Node):
         self.last_debug_det = det
         self._publish_selected_target(now, det)
 
+        # ---- estimate caching: skip re-projection of stale detections ----
+        det_rx_ns = (self.last_external_det_rx_stamp.nanoseconds
+                     if self.last_external_det_rx_stamp is not None else -1)
+        detection_is_new = (det is not None
+                            and det_rx_ns != self._last_projected_det_rx_ns)
+
+        if not detection_is_new and det is not None and self._cached_estimate_pose is not None:
+            # Same detection as last projection — republish cached estimate
+            self._publish_estimate(
+                self._cached_estimate_pose, now, det.track_id)
+            self.publish_status_msg(
+                self._status_line("OK", "estimate_cached", now))
+            self.last_debug_state = "OK"
+            self._publish_debug_image("OK", det)
+            return
+
         if self.camera_model is None:
             self.last_det_conf = -1.0
             self.last_range_source = "none"
@@ -1034,6 +1058,10 @@ class LeaderEstimator(Node):
             self._record_fault("STALE", reason, now)
             self._publish_debug_image("STALE", det)
             return
+
+        self._cached_estimate_pose = pose
+        self._cached_estimate_track_id = det.track_id
+        self._last_projected_det_rx_ns = det_rx_ns
 
         self._publish_estimate(pose, now, det.track_id)
         self.publish_status_msg(self._status_line("OK", "none", now))

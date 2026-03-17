@@ -1,5 +1,6 @@
 import re
 import math
+import time
 from typing import Set
 
 import rclpy
@@ -39,6 +40,8 @@ class Simulator(Node):
         self.declare_parameter("sync_detached_camera_pose", True)
         self.declare_parameter("publish_legacy_debug_topics", False)
         self.declare_parameter("set_pose_future_timeout_s", 0.5)
+        self.declare_parameter("startup_set_pose_grace_s", 20.0)
+        self.declare_parameter("set_pose_failure_backoff_s", 2.0)
 
         self.frame_id = "odom"
         self.world = self.get_parameter("world").value
@@ -60,6 +63,8 @@ class Simulator(Node):
         self.sync_detached_camera_pose = bool(self.get_parameter("sync_detached_camera_pose").value)
         self.publish_legacy_debug_topics = bool(self.get_parameter("publish_legacy_debug_topics").value)
         self.set_pose_future_timeout_s = max(0.0, float(self.get_parameter("set_pose_future_timeout_s").value))
+        self.startup_set_pose_grace_s = max(0.0, float(self.get_parameter("startup_set_pose_grace_s").value))
+        self.set_pose_failure_backoff_s = max(0.0, float(self.get_parameter("set_pose_failure_backoff_s").value))
         if self.camera_mode == "integrated":
             self.camera_mode = "integrated_joint"
         if self.camera_mode == "detached":
@@ -95,11 +100,14 @@ class Simulator(Node):
         self.future2 = None
         self.future1_sent_ns = None
         self.future2_sent_ns = None
+        self._set_pose_ready_after_s = 0.0
+        self._set_pose_backoff_until_s = 0.0
 
         self.cli = self.create_client(SetEntityPose, f'/world/{self.gz_world}/set_pose', callback_group=self.group)
         print(f"WAIT for service: /world/{self.gz_world}/set_pose'")
         while not self.cli.wait_for_service(timeout_sec=1.0):
             self.get_logger().info('service not available, waiting again...')
+        self._set_pose_ready_after_s = time.monotonic() + self.startup_set_pose_grace_s
 
         pose_topic = self._uav_topic("pose")
         camera_pose_topic = self._uav_topic("debug_camera_pose")
@@ -300,6 +308,28 @@ class Simulator(Node):
             )
             return False
         return True
+
+    def _set_pose_updates_allowed(self):
+        now_s = time.monotonic()
+        return now_s >= self._set_pose_ready_after_s and now_s >= self._set_pose_backoff_until_s
+
+    def _handle_set_pose_result(self, label: str, future, slot: int = 1):
+        # If this future was already superseded (local timeout cleared it), skip backoff.
+        current = self.future1 if slot == 1 else self.future2
+        if current is not future:
+            return
+        try:
+            result = future.result()
+        except Exception as ex:
+            self._set_pose_backoff_until_s = time.monotonic() + self.set_pose_failure_backoff_s
+            self.get_logger().warn(f"SetEntityPose call failed for {label}: {ex}")
+            return
+
+        if result is None or not bool(result.success):
+            self._set_pose_backoff_until_s = time.monotonic() + self.set_pose_failure_backoff_s
+            self.get_logger().warn(
+                f"SetEntityPose was rejected for {label}; backing off for {self.set_pose_failure_backoff_s:.1f}s"
+            )
             
     def timer_callback(self):
         try:
@@ -327,6 +357,8 @@ class Simulator(Node):
                 and self.sync_detached_camera_pose
                 and (pose_future_pending or camera_future_pending)
             ):
+                pass
+            elif not self._set_pose_updates_allowed():
                 pass
             else:
                 self.set_pose(self.name, x, y, z, self.yaw)
@@ -425,6 +457,7 @@ class Simulator(Node):
             ## print(robot_request)
             self.future1 = self.cli.call_async(robot_request)
             self.future1_sent_ns = self.get_clock().now().nanoseconds
+            self.future1.add_done_callback(lambda future: self._handle_set_pose_result(name, future, 1))
             #rclpy.spin_until_future_complete(self, future1)
             #print(future1.result())
         except Exception as ex:
@@ -448,6 +481,9 @@ class Simulator(Node):
             camera_request.pose.orientation.w = quat2[3]
             self.future2 = self.cli.call_async(camera_request)
             self.future2_sent_ns = self.get_clock().now().nanoseconds
+            self.future2.add_done_callback(
+                lambda future: self._handle_set_pose_result(f"{self.name}_{self.camera_name}", future, 2)
+            )
         except Exception as ex:
             print("Exception set_camera_model_pose:", ex, type(ex))
 

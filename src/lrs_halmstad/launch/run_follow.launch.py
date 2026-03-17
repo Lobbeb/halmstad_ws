@@ -224,12 +224,14 @@ def _build_camera_tracker_node(context, *args, **kwargs):
         'leader_input_type': LaunchConfiguration('leader_mode'),
         'leader_odom_topic': LaunchConfiguration('ugv_odom_topic'),
         'leader_pose_topic': LaunchConfiguration('leader_pose_topic'),
+        'leader_actual_pose_topic': LaunchConfiguration('camera_leader_actual_pose_topic'),
         'leader_status_topic': '/coord/leader_estimate_status',
         'uav_camera_mode': LaunchConfiguration('uav_camera_mode'),
         'camera_mount_pitch_deg': LaunchConfiguration('camera_mount_pitch_deg'),
         'default_tilt_deg': LaunchConfiguration('camera_default_tilt_deg'),
         'camera_yaw_offset_deg': LaunchConfiguration('camera_yaw_offset_deg'),
         'camera_pan_sign': LaunchConfiguration('camera_pan_sign'),
+        'actual_pose_reacquire_enable': _bool_param('camera_actual_pose_reacquire_enable'),
         'publish_debug_topics': _bool_param('publish_camera_debug_topics'),
     }
     pan_enable = _optional_bool_from_launch(context, 'pan_enable')
@@ -360,6 +362,11 @@ def generate_launch_description():
         'ugv_goal_sequence_file',
         default_value=warehouse_waypoints_default,
     )
+    ugv_use_amcl_odom_fallback_arg = DeclareLaunchArgument(
+        'ugv_use_amcl_odom_fallback',
+        default_value='true',
+        description='Publish fallback platform odom topics and odom->base_link TF from AMCL when sim odom is unavailable',
+    )
     leader_pose_topic_arg = DeclareLaunchArgument(
         'leader_pose_topic',
         default_value='/coord/leader_estimate',
@@ -372,9 +379,19 @@ def generate_launch_description():
         'leader_actual_pose_topic',
         default_value=['/', LaunchConfiguration('ugv_namespace'), '/amcl_pose_odom'],
     )
+    camera_leader_actual_pose_topic_arg = DeclareLaunchArgument(
+        'camera_leader_actual_pose_topic',
+        default_value=['/', LaunchConfiguration('ugv_namespace'), '/platform/odom/filtered'],
+        description='Odom-frame leader pose used by camera_tracker for camera-only reacquisition.',
+    )
     leader_actual_pose_enable_arg = DeclareLaunchArgument(
         'leader_actual_pose_enable',
         default_value='true',
+    )
+    camera_actual_pose_reacquire_enable_arg = DeclareLaunchArgument(
+        'camera_actual_pose_reacquire_enable',
+        default_value='true',
+        description='Allow camera_tracker to use leader_actual_pose_topic for camera-only reacquisition when estimator pose is unavailable.',
     )
     leader_actual_heading_enable_arg = DeclareLaunchArgument(
         'leader_actual_heading_enable',
@@ -738,6 +755,8 @@ def generate_launch_description():
             LaunchConfiguration('params_file'),
             {
                 'start_delay_s': LaunchConfiguration('ugv_start_delay_s'),
+                'continue_on_goal_failure': True,
+                'goal_reject_retry_count': 20,
                 'set_initial_pose_enable': _bool_param('ugv_set_initial_pose'),
                 'initial_pose_x': LaunchConfiguration('ugv_initial_pose_x'),
                 'initial_pose_y': LaunchConfiguration('ugv_initial_pose_y'),
@@ -759,6 +778,59 @@ def generate_launch_description():
                 'pose_topic': 'amcl_pose',
                 'odom_topic': 'amcl_pose_odom',
                 'frame_id': 'map',
+                'child_frame_id': 'base_link',
+                'copy_header_stamp': True,
+            },
+        ],
+    )
+
+    ugv_amcl_to_platform_odom_node = Node(
+        package='lrs_halmstad',
+        executable='pose_cov_to_odom',
+        name='ugv_amcl_to_platform_odom',
+        namespace=LaunchConfiguration('ugv_namespace'),
+        output='screen',
+        condition=IfCondition(LaunchConfiguration('ugv_use_amcl_odom_fallback')),
+        parameters=[
+            {
+                'pose_topic': 'amcl_pose',
+                'odom_topic': 'platform/odom',
+                'frame_id': 'odom',
+                'child_frame_id': 'base_link',
+                'copy_header_stamp': True,
+            },
+        ],
+    )
+
+    ugv_amcl_to_platform_filtered_odom_node = Node(
+        package='lrs_halmstad',
+        executable='pose_cov_to_odom',
+        name='ugv_amcl_to_platform_filtered_odom',
+        namespace=LaunchConfiguration('ugv_namespace'),
+        output='screen',
+        condition=IfCondition(LaunchConfiguration('ugv_use_amcl_odom_fallback')),
+        parameters=[
+            {
+                'pose_topic': 'amcl_pose',
+                'odom_topic': 'platform/odom/filtered',
+                'frame_id': 'odom',
+                'child_frame_id': 'base_link',
+                'copy_header_stamp': True,
+            },
+        ],
+    )
+
+    ugv_platform_odom_to_tf_node = Node(
+        package='lrs_halmstad',
+        executable='odom_to_tf',
+        name='ugv_platform_odom_to_tf',
+        namespace=LaunchConfiguration('ugv_namespace'),
+        output='screen',
+        condition=IfCondition(LaunchConfiguration('ugv_use_amcl_odom_fallback')),
+        parameters=[
+            {
+                'odom_topic': 'platform/odom/filtered',
+                'frame_id': 'odom',
                 'child_frame_id': 'base_link',
                 'copy_header_stamp': True,
             },
@@ -818,10 +890,13 @@ def generate_launch_description():
         ugv_initial_pose_yaw_deg_arg,
         ugv_goal_sequence_csv_arg,
         ugv_goal_sequence_file_arg,
+        ugv_use_amcl_odom_fallback_arg,
         leader_pose_topic_arg,
         ugv_odom_topic_arg,
         leader_actual_pose_topic_arg,
+        camera_leader_actual_pose_topic_arg,
         leader_actual_pose_enable_arg,
+        camera_actual_pose_reacquire_enable_arg,
         leader_actual_heading_enable_arg,
         leader_actual_heading_topic_arg,
         external_detection_enable_arg,
@@ -859,6 +934,9 @@ def generate_launch_description():
         ugv_start_delay_arg,
         simulator_node,
         ugv_amcl_to_odom_node,
+        ugv_amcl_to_platform_odom_node,
+        ugv_amcl_to_platform_filtered_odom_node,
+        ugv_platform_odom_to_tf_node,
         detector_node,
         tracker_node,
         estimator_node,

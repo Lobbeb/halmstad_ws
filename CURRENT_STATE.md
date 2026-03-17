@@ -28,6 +28,14 @@ Current tmux default delays:
 - `gui:=true` -> `spawn=6s`, `localization/nav2=8s`, `follow=10s`
 - `gui:=false` -> `spawn=8s`, `localization/nav2=10s`, `follow=12s`
 
+Current tmux startup behavior:
+- the tmux wrapper now relies on staged startup delays and cleanup, but it no longer blocks the follow pane on Nav2-localization readiness checks
+- the driver-side guard now carries the Nav2 readiness responsibility, which avoids circular startup waits during AMCL initial-pose seeding
+- `ugv_nav2_driver` now also performs its own wait for those required Nav2 lifecycle nodes before sending the first goal and before retrying a rejected goal, so the guard does not depend only on tmux orchestration
+- on WSL, `gazebo_sim` now defaults to `LIBGL_ALWAYS_SOFTWARE=1` for GUI stability unless you override it
+- tmux start/stop safety cleanup now also kills leftover child ROS nodes from the 1-to-1 stack, not just the top-level `ros2 launch ...` wrappers
+- `camera_tracker` now uses an odom-frame UGV pose as a camera-only reacquisition fallback when estimate tracking starts in `NO_DET`, so the detached camera can re-aim toward the UGV without mixing `map` and `odom` geometry or handing motion control back to truth pose
+
 Per-stage delay overrides now exist:
 - `spawn_delay_s:=...`
 - `localization_delay_s:=...`
@@ -103,6 +111,9 @@ Follow launch chain:
   - starts the runtime nodes:
     - `uav_simulator`
     - `ugv_amcl_to_odom` (`pose_cov_to_odom`)
+    - `ugv_amcl_to_platform_odom` (`pose_cov_to_odom`)
+    - `ugv_amcl_to_platform_filtered_odom` (`pose_cov_to_odom`)
+    - `ugv_platform_odom_to_tf` (`odom_to_tf`)
     - `follow_uav_odom` or `follow_uav`
     - `camera_tracker`
     - optional `visual_follow_controller`
@@ -180,9 +191,15 @@ Important interpretation:
 Current relevant files:
 - `src/lrs_halmstad/launch/run_follow.launch.py`
 - `src/lrs_halmstad/lrs_halmstad/sim/pose_cov_to_odom.py`
+- `src/lrs_halmstad/lrs_halmstad/sim/odom_to_tf.py`
 - `src/lrs_halmstad/lrs_halmstad/follow/follow_uav_odom.py`
 - `src/lrs_halmstad/lrs_halmstad/nav/ugv_nav2_driver.py`
 - `src/lrs_halmstad/lrs_halmstad/dataset/sim_dataset_capture.py`
+
+Current Nav2 fallback for sim startup:
+- the active follow path now publishes fallback `/<ugv>/platform/odom` and `/<ugv>/platform/odom/filtered` from `/<ugv>/amcl_pose`
+- the active follow path now also publishes fallback `odom -> base_link` TF from that AMCL-derived filtered odom stream
+- this keeps Nav2 local costmaps and the UGV motion driver alive even when the Clearpath Gazebo model TF bridge is late or absent
 
 Clearpath path:
 - Gazebo sim, localization, Nav2, and SLAM now use the workspace Clearpath copy:
@@ -458,6 +475,7 @@ Current tuned bridge baseline:
 - the first runtime-hardening pass on that harder mode is now also validated:
   - `selected_target_filter` now allows bounded low-confidence reacquire from very recent plausible history
   - `camera_tracker` now keeps the last trackable leader pose alive briefly so pan does not freeze instantly on short estimator dropouts
+  - `camera_tracker` now also falls back to an odom-frame UGV pose for camera-only reacquisition after longer estimate loss, which is meant for sim/testing visibility recovery rather than motion ownership
   - recent defaults now give the filter/estimator slightly longer short-gap prediction windows
   - harder proof command:
     - `./run.sh tmux_1to1 warehouse gui:=true mode:=yolo tracker:=true obb:=true weights:=warehouse-v1-yolo26n-obb.pt use_estimate:=true use_actual_heading:=false start_visual_follow_planner:=true start_visual_actuation_bridge:=true record:=true record_profile:=step2_light record_tag:=robustness_hardening3 delay_s:=12`

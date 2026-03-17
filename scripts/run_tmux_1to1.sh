@@ -26,6 +26,9 @@ NAV2_DELAY_OVERRIDE=""
 FOLLOW_DELAY_OVERRIDE=""
 RECORD_DELAY_OVERRIDE=""
 UAV_NAME="dji0"
+ROS_DOMAIN_ID_EFFECTIVE="${ROS_DOMAIN_ID:-3}"
+RMW_IMPLEMENTATION_EFFECTIVE="${RMW_IMPLEMENTATION:-rmw_fastrtps_cpp}"
+UGV_NAMESPACE="a201_0000"
 SPAWN_ARGS=()
 FOLLOW_ARGS=()
 GAZEBO_ARGS=()
@@ -265,18 +268,98 @@ shell_join() {
 build_line() {
   local delay_s="$1"
   local wait_for_sim="$2"
-  shift 2
+  local ready_cmd="${3:-}"
+  shift 3
   local line=""
   printf -v line 'cd %q && ' "$WS_ROOT"
+  printf -v line '%sexport ROS_DOMAIN_ID=%q && export RMW_IMPLEMENTATION=%q && ' "$line" "$ROS_DOMAIN_ID_EFFECTIVE" "$RMW_IMPLEMENTATION_EFFECTIVE"
   if [ "$wait_for_sim" = true ]; then
     printf -v line '%swhile [ ! -f %q ]; do sleep 1; done && ' "$line" "$SIM_PID_FILE"
   fi
   if [ "$delay_s" != "0" ] && [ "$delay_s" != "0.0" ]; then
     printf -v line '%ssleep %q && ' "$line" "$delay_s"
   fi
+  if [ -n "$ready_cmd" ]; then
+    printf -v line '%sbash -lc %q && ' "$line" "$ready_cmd"
+  fi
   printf -v line '%s%s' "$line" "$(shell_join "$@")"
   printf '%s' "$line"
 }
+
+build_localization_ready_cmd() {
+  cat <<EOF
+set +u
+source /opt/ros/jazzy/setup.bash >/dev/null 2>&1
+source "$WS_ROOT/install/setup.bash" >/dev/null 2>&1
+export ROS_DOMAIN_ID="$ROS_DOMAIN_ID_EFFECTIVE"
+export RMW_IMPLEMENTATION="$RMW_IMPLEMENTATION_EFFECTIVE"
+set -u
+while ! ros2 lifecycle get /$UGV_NAMESPACE/map_server 2>/dev/null | grep -q 'active \[3\]'; do sleep 1; done
+# AMCL can be inactive here until nav2 lifecycle manager transitions it.
+while ! ros2 lifecycle get /$UGV_NAMESPACE/amcl 2>/dev/null | grep -Eq '(inactive \[2\]|active \[3\])'; do sleep 1; done
+EOF
+}
+
+build_nav2_ready_cmd() {
+  cat <<EOF
+set +u
+source /opt/ros/jazzy/setup.bash >/dev/null 2>&1
+source "$WS_ROOT/install/setup.bash" >/dev/null 2>&1
+export ROS_DOMAIN_ID="$ROS_DOMAIN_ID_EFFECTIVE"
+export RMW_IMPLEMENTATION="$RMW_IMPLEMENTATION_EFFECTIVE"
+set -u
+while true; do
+  if ! ros2 lifecycle get /$UGV_NAMESPACE/map_server 2>/dev/null | grep -q 'active \[3\]'; then
+    sleep 1
+    continue
+  fi
+  if ! ros2 lifecycle get /$UGV_NAMESPACE/amcl 2>/dev/null | grep -q 'active \[3\]'; then
+    sleep 1
+    continue
+  fi
+  if ! ros2 lifecycle get /$UGV_NAMESPACE/controller_server 2>/dev/null | grep -q 'active \[3\]'; then
+    sleep 1
+    continue
+  fi
+  if ! ros2 lifecycle get /$UGV_NAMESPACE/bt_navigator 2>/dev/null | grep -q 'active \[3\]'; then
+    sleep 1
+    continue
+  fi
+  if ! ros2 action list 2>/dev/null | grep -qx '/$UGV_NAMESPACE/navigate_to_pose'; then
+    sleep 1
+    continue
+  fi
+  break
+done
+EOF
+}
+
+signal_processes_by_pattern() {
+  local pattern="$1"
+  pkill -INT -f "$pattern" 2>/dev/null || true
+  sleep 1
+  pkill -TERM -f "$pattern" 2>/dev/null || true
+  sleep 1
+  pkill -KILL -f "$pattern" 2>/dev/null || true
+}
+
+signal_named_nodes() {
+  local names_regex="$1"
+  signal_processes_by_pattern "__node:=($names_regex)(\\s|$)"
+}
+
+prelaunch_safety_cleanup() {
+  rm -f "$SIM_PID_FILE"
+  signal_processes_by_pattern 'ros2 launch lrs_halmstad run_follow\.launch\.py'
+  signal_processes_by_pattern 'ros2 launch lrs_halmstad run_1to1_follow\.launch\.py'
+  signal_processes_by_pattern 'ros2 launch clearpath_nav2_demos nav2\.launch\.py'
+  signal_processes_by_pattern 'ros2 launch clearpath_nav2_demos localization\.launch\.py'
+  signal_processes_by_pattern 'ros2 launch lrs_halmstad spawn_uav_1to1\.launch\.py'
+  signal_processes_by_pattern 'ros2 launch lrs_halmstad managed_clearpath_sim\.launch\.py'
+  signal_named_nodes 'amcl|map_server|planner_server|controller_server|behavior_server|bt_navigator|waypoint_follower|velocity_smoother|smoother_server|route_server|lifecycle_manager_localization|lifecycle_manager_navigation|ugv_nav2_driver|ugv_amcl_to_odom|ugv_amcl_to_platform_odom|ugv_amcl_to_platform_filtered_odom|ugv_platform_odom_to_tf|uav_simulator|leader_detector|leader_estimator|selected_target_filter|visual_target_estimator|follow_point_generator|follow_point_planner|visual_actuation_bridge|camera_tracker'
+  signal_processes_by_pattern '(^|/)gz sim($| )'
+}
+
 
 write_session_state() {
   mkdir -p "$TMUX_STATE_DIR"
@@ -312,8 +395,10 @@ NAV2_CMD=(./run.sh nav2)
 if [ "$MODE" = "yolo" ]; then
   FOLLOW_CMD=(./run.sh 1to1_yolo "$WORLD" "${FOLLOW_ARGS[@]}")
 else
-  FOLLOW_CMD=(./run.sh 1to1_follow "$WORLD" "${FOLLOW_ARGS[@]}")
+FOLLOW_CMD=(./run.sh 1to1_follow "$WORLD" "${FOLLOW_ARGS[@]}")
 fi
+
+LOCALIZATION_READY_CMD="$(build_localization_ready_cmd)"
 
 if [ "$RECORD" = true ]; then
   RECORD_CMD=(./run.sh record_experiment "$WORLD" "mode:=$MODE" "uav_name:=$UAV_NAME" "profile:=$RECORD_PROFILE")
@@ -325,13 +410,13 @@ if [ "$RECORD" = true ]; then
   fi
 fi
 
-GAZEBO_LINE="$(build_line 0 false "${GAZEBO_CMD[@]}")"
-SPAWN_LINE="$(build_line "$SPAWN_DELAY_S" true "${SPAWN_CMD[@]}")"
-LOCALIZATION_LINE="$(build_line "$LOCALIZATION_DELAY_S" true "${LOCALIZATION_CMD[@]}")"
-NAV2_LINE="$(build_line "$NAV2_DELAY_S" true "${NAV2_CMD[@]}")"
-FOLLOW_LINE="$(build_line "$FOLLOW_DELAY_S" true "${FOLLOW_CMD[@]}")"
+GAZEBO_LINE="$(build_line 0 false "" "${GAZEBO_CMD[@]}")"
+SPAWN_LINE="$(build_line "$SPAWN_DELAY_S" true "" "${SPAWN_CMD[@]}")"
+LOCALIZATION_LINE="$(build_line "$LOCALIZATION_DELAY_S" true "" "${LOCALIZATION_CMD[@]}")"
+NAV2_LINE="$(build_line "$NAV2_DELAY_S" true "" "${NAV2_CMD[@]}")"
+FOLLOW_LINE="$(build_line "$FOLLOW_DELAY_S" true "" "${FOLLOW_CMD[@]}")"
 if [ "$RECORD" = true ]; then
-  RECORD_LINE="$(build_line "$RECORD_DELAY_S" true "${RECORD_CMD[@]}")"
+  RECORD_LINE="$(build_line "$RECORD_DELAY_S" true "$LOCALIZATION_READY_CMD" "${RECORD_CMD[@]}")"
 fi
 
 if tmux has-session -t "$SESSION" 2>/dev/null; then
@@ -339,6 +424,8 @@ if tmux has-session -t "$SESSION" 2>/dev/null; then
   echo "Attach with: tmux attach -t $SESSION" >&2
   exit 1
 fi
+
+prelaunch_safety_cleanup
 
 if [ "$DRY_RUN" = true ]; then
   echo "Session: $SESSION"

@@ -12,6 +12,8 @@ from action_msgs.msg import GoalStatus
 from geometry_msgs.msg import PoseStamped
 from geometry_msgs.msg import PoseWithCovarianceStamped
 from geometry_msgs.msg import Quaternion
+from lifecycle_msgs.msg import State
+from lifecycle_msgs.srv import GetState
 from nav2_msgs.action import NavigateToPose
 from nav_msgs.msg import Odometry
 from nav_msgs.msg import Path
@@ -89,6 +91,7 @@ class UgvNav2Driver(Node):
         self.declare_parameter("goal_server_timeout_s", 20.0)
         self.declare_parameter("goal_result_timeout_s", 120.0)
         self.declare_parameter("goal_start_delay_s", 2.0)
+        self.declare_parameter("nav2_required_lifecycle_nodes", ["map_server", "amcl", "controller_server", "bt_navigator"])
         self.declare_parameter("goal_reject_retry_count", 5)
         self.declare_parameter("goal_reject_retry_delay_s", 1.0)
         self.declare_parameter("goal_sequence_csv", "")
@@ -136,6 +139,10 @@ class UgvNav2Driver(Node):
         self.goal_server_timeout_s = max(0.0, float(self.get_parameter("goal_server_timeout_s").value))
         self.goal_result_timeout_s = max(0.0, float(self.get_parameter("goal_result_timeout_s").value))
         self.goal_start_delay_s = max(0.0, float(self.get_parameter("goal_start_delay_s").value))
+        required_lifecycle_nodes = self.get_parameter("nav2_required_lifecycle_nodes").value
+        if isinstance(required_lifecycle_nodes, str):
+            required_lifecycle_nodes = [part.strip() for part in required_lifecycle_nodes.split(",") if part.strip()]
+        self.nav2_required_lifecycle_nodes = [str(node).strip() for node in (required_lifecycle_nodes or []) if str(node).strip()]
         self.goal_reject_retry_count = max(0, int(self.get_parameter("goal_reject_retry_count").value))
         self.goal_reject_retry_delay_s = max(0.0, float(self.get_parameter("goal_reject_retry_delay_s").value))
         self.goal_sequence_csv = str(self.get_parameter("goal_sequence_csv").value).strip()
@@ -170,14 +177,28 @@ class UgvNav2Driver(Node):
             history=QoSHistoryPolicy.KEEP_LAST,
             depth=1,
         )
+        self._amcl_pose_volatile_qos = QoSProfile(
+            durability=QoSDurabilityPolicy.VOLATILE,
+            reliability=QoSReliabilityPolicy.RELIABLE,
+            history=QoSHistoryPolicy.KEEP_LAST,
+            depth=10,
+        )
+        self._lifecycle_clients: dict[str, any] = {}
+        self._pose_subscriptions = []
 
         if self.pose_topic_type in ("pose", "pose_with_covariance", "posewithcovariancestamped"):
-            self.create_subscription(
+            self._pose_subscriptions.append(self.create_subscription(
                 PoseWithCovarianceStamped,
                 self.pose_topic,
                 self._on_pose,
                 self._amcl_pose_qos,
-            )
+            ))
+            self._pose_subscriptions.append(self.create_subscription(
+                PoseWithCovarianceStamped,
+                self.pose_topic,
+                self._on_pose,
+                self._amcl_pose_volatile_qos,
+            ))
         elif self.pose_topic_type in ("odom", "odometry"):
             self.create_subscription(Odometry, self.pose_topic, self._on_odom, 10)
         else:
@@ -219,7 +240,8 @@ class UgvNav2Driver(Node):
 
     def _build_initial_pose_msg(self) -> PoseWithCovarianceStamped:
         msg = PoseWithCovarianceStamped()
-        msg.header.stamp = self.get_clock().now().to_msg()
+        msg.header.stamp.sec = 0
+        msg.header.stamp.nanosec = 0
         msg.header.frame_id = self.initial_pose_frame_id
         msg.pose.pose.position.x = float(self.initial_pose_x)
         msg.pose.pose.position.y = float(self.initial_pose_y)
@@ -229,6 +251,16 @@ class UgvNav2Driver(Node):
         msg.pose.covariance[7] = self.initial_pose_covariance_xy
         msg.pose.covariance[35] = self.initial_pose_covariance_yaw
         return msg
+
+    def _initial_pose_state(self) -> Pose2DState:
+        return Pose2DState(
+            x=float(self.initial_pose_x),
+            y=float(self.initial_pose_y),
+            yaw=math.radians(self.initial_pose_yaw_deg),
+            frame_id=self.initial_pose_frame_id,
+            stamp_ns=0,
+            received_monotonic_s=time.monotonic(),
+        )
 
     def _maybe_set_initial_pose(self) -> None:
         if not self.set_initial_pose_enable:
@@ -266,7 +298,8 @@ class UgvNav2Driver(Node):
         )
 
         while rclpy.ok():
-            initial_pose_msg.header.stamp = self.get_clock().now().to_msg()
+            initial_pose_msg.header.stamp.sec = 0
+            initial_pose_msg.header.stamp.nanosec = 0
             self._initial_pose_pub.publish(initial_pose_msg)
 
             wait_until = time.monotonic() + publish_period_s
@@ -277,10 +310,11 @@ class UgvNav2Driver(Node):
                     return
 
             if deadline is not None and time.monotonic() > deadline:
-                raise RuntimeError(
+                self.get_logger().warn(
                     f"Timed out after {self.initial_pose_timeout_s:.1f}s waiting for localization pose "
-                    f"on '{self.pose_topic}' after publishing initial pose"
+                    f"on '{self.pose_topic}' after publishing initial pose; continuing with startup"
                 )
+                return
 
     def _wait_for_pose(self) -> Pose2DState:
         deadline = time.monotonic() + self.pose_timeout_s if self.pose_timeout_s > 0.0 else None
@@ -290,6 +324,16 @@ class UgvNav2Driver(Node):
             if self._latest_pose is not None:
                 return self._latest_pose
             if deadline is not None and time.monotonic() > deadline:
+                if self.set_initial_pose_enable and self.pose_topic_type in (
+                    "pose",
+                    "pose_with_covariance",
+                    "posewithcovariancestamped",
+                ):
+                    self.get_logger().warn(
+                        f"Timed out waiting for UGV pose on topic '{self.pose_topic}'; "
+                        "using configured initial pose as startup fallback"
+                    )
+                    return self._initial_pose_state()
                 raise RuntimeError(
                     f"Timed out waiting for UGV pose on topic '{self.pose_topic}'"
                 )
@@ -313,11 +357,74 @@ class UgvNav2Driver(Node):
         )
 
     def _wait_for_goal_server(self) -> None:
-        if self._nav_client.wait_for_server(timeout_sec=self.goal_server_timeout_s):
-            return
+        wait_chunk_s = self.goal_server_timeout_s if self.goal_server_timeout_s > 0.0 else 5.0
+
+        while rclpy.ok():
+            if self._nav_client.wait_for_server(timeout_sec=wait_chunk_s):
+                self.get_logger().info(
+                    f"Connected to Nav2 action server '{self.goal_action_name}'"
+                )
+                return
+
+            self.get_logger().warn(
+                f"Timed out waiting {wait_chunk_s:.1f}s for Nav2 action server '{self.goal_action_name}'; retrying"
+            )
+
         raise RuntimeError(
-            f"Timed out waiting for Nav2 action server '{self.goal_action_name}'"
+            f"ROS shutdown while waiting for Nav2 action server '{self.goal_action_name}'"
         )
+
+    def _lifecycle_client(self, node_name: str):
+        client = self._lifecycle_clients.get(node_name)
+        if client is not None:
+            return client
+        client = self.create_client(GetState, f"{node_name}/get_state")
+        self._lifecycle_clients[node_name] = client
+        return client
+
+    def _wait_for_lifecycle_node_active(self, node_name: str) -> None:
+        wait_chunk_s = self.goal_server_timeout_s if self.goal_server_timeout_s > 0.0 else 5.0
+        client = self._lifecycle_client(node_name)
+
+        while rclpy.ok():
+            if not client.wait_for_service(timeout_sec=1.0):
+                self.get_logger().warn(
+                    f"Timed out waiting for Nav2 lifecycle service '{node_name}/get_state'; retrying"
+                )
+                continue
+
+            future = client.call_async(GetState.Request())
+            rclpy.spin_until_future_complete(self, future, timeout_sec=wait_chunk_s)
+            if not future.done():
+                self.get_logger().warn(
+                    f"Timed out waiting {wait_chunk_s:.1f}s for Nav2 lifecycle state from '{node_name}'; retrying"
+                )
+                continue
+
+            response = future.result()
+            if response is None:
+                self.get_logger().warn(
+                    f"Nav2 lifecycle service '{node_name}/get_state' returned no state; retrying"
+                )
+                continue
+
+            state = response.current_state
+            if state.id == State.PRIMARY_STATE_ACTIVE:
+                self.get_logger().info(f"Confirmed Nav2 lifecycle node '{node_name}' is active")
+                return
+
+            self.get_logger().warn(
+                f"Nav2 lifecycle node '{node_name}' is '{state.label}' ({state.id}); waiting for active"
+            )
+            deadline = time.monotonic() + 1.0
+            while rclpy.ok() and time.monotonic() < deadline:
+                rclpy.spin_once(self, timeout_sec=0.1)
+
+        raise RuntimeError(f"ROS shutdown while waiting for Nav2 lifecycle node '{node_name}' to become active")
+
+    def _wait_for_nav2_active(self) -> None:
+        for node_name in self.nav2_required_lifecycle_nodes:
+            self._wait_for_lifecycle_node_active(node_name)
 
     def _settle_before_goals(self) -> None:
         if self.goal_start_delay_s <= 0.0:
@@ -565,6 +672,7 @@ class UgvNav2Driver(Node):
                     f"Nav2 rejected goal x={x:.2f} y={y:.2f} yaw={math.degrees(yaw):.1f}deg; "
                     f"retry {attempt + 1}/{self.goal_reject_retry_count} after {self.goal_reject_retry_delay_s:.1f}s"
                 )
+                self._wait_for_nav2_active()
                 deadline = time.monotonic() + self.goal_reject_retry_delay_s
                 while rclpy.ok() and time.monotonic() < deadline:
                     rclpy.spin_once(self, timeout_sec=0.1)
@@ -615,6 +723,7 @@ class UgvNav2Driver(Node):
         self._maybe_set_initial_pose()
         start_pose = self._ensure_pose_is_fresh()
         self._wait_for_goal_server()
+        self._wait_for_nav2_active()
         self._settle_before_goals()
 
         segments, waypoints = self._build_waypoints(start_pose)
