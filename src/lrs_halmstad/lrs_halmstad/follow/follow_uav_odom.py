@@ -27,6 +27,8 @@ from lrs_halmstad.follow.follow_math import (
     solve_yaw_to_target,
     wrap_pi,
     yaw_from_quat,
+    horizontal_distance_for_euclidean,
+    vertical_distance_for_euclidean,
 )
 
 class FollowUavOdom(EventEmitterMixin, FollowControllerCoreMixin, Node):
@@ -36,11 +38,11 @@ class FollowUavOdom(EventEmitterMixin, FollowControllerCoreMixin, Node):
 
         self.declare_parameter("world", "orchard")
         self.declare_parameter("uav_name", "dji0")
-        self.declare_parameter("leader_odom_topic", "/a201_0000/platform/odom/filtered")
+        self.declare_parameter("leader_odom_topic", "/a201_0000/amcl_pose_odom")
 
         declare_yaml_param(self, "tick_hz", descriptor=dyn_num)
         declare_yaml_param(self, "d_target", descriptor=dyn_num)
-        self.declare_parameter("d_max", 100.0)
+        self.declare_parameter("d_max", 20.0)
         declare_yaml_param(self, "xy_anchor_max", descriptor=dyn_num)
         declare_yaml_param(self, "xy_min", descriptor=dyn_num)
         declare_yaml_param(self, "z_min", descriptor=dyn_num)

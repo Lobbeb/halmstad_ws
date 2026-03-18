@@ -4,11 +4,13 @@ from __future__ import annotations
 import json
 import math
 import os
+import time
 from dataclasses import dataclass
 from typing import List, Optional, Sequence, Tuple
 
 import numpy as np
 import rclpy
+import rclpy.clock
 from geometry_msgs.msg import PoseStamped
 from nav_msgs.msg import Odometry
 from rcl_interfaces.msg import ParameterDescriptor
@@ -84,15 +86,14 @@ class SimDatasetCapture(Node):
         self.declare_parameter("dataset_name", "warehouse_auto")
         self.declare_parameter("class_id", 0)
         self.declare_parameter("class_name", "ugv")
-        self.declare_parameter("capture_hz", 2.0, dyn_num)
-        self.declare_parameter("camera_pose_timeout_s", 1.0)
-        self.declare_parameter("target_pose_timeout_s", 1.0)
+        self.declare_parameter("camera_pose_timeout_s", 10.0)
+        self.declare_parameter("image_timeout_s", 10.0)
         self.declare_parameter("val_every_n", 10)
         self.declare_parameter("save_metadata", True)
         self.declare_parameter("save_overlay", True)
-        self.declare_parameter("save_negative_examples", False)
-        self.declare_parameter("min_bbox_pixels", 12.0, dyn_num)
-        self.declare_parameter("min_bbox_area_px", 144.0, dyn_num)
+        self.declare_parameter("save_negative_examples", True)
+        self.declare_parameter("min_bbox_pixels", 0.0, dyn_num)
+        self.declare_parameter("min_bbox_area_px", 0.0, dyn_num)
         self.declare_parameter("target_length_m", 1.0, dyn_num)
         self.declare_parameter("target_width_m", 0.7, dyn_num)
         self.declare_parameter("target_height_m", 0.65, dyn_num)
@@ -110,10 +111,8 @@ class SimDatasetCapture(Node):
         self.dataset_name = str(self.get_parameter("dataset_name").value).strip() or "warehouse_auto"
         self.class_id = int(self.get_parameter("class_id").value)
         self.class_name = str(self.get_parameter("class_name").value).strip() or "ugv"
-        self.capture_hz = max(0.1, float(self.get_parameter("capture_hz").value))
-        self.capture_period_s = 1.0 / self.capture_hz
         self.camera_pose_timeout_s = float(self.get_parameter("camera_pose_timeout_s").value)
-        self.target_pose_timeout_s = float(self.get_parameter("target_pose_timeout_s").value)
+        self.image_timeout_s = float(self.get_parameter("image_timeout_s").value)
         self.val_every_n = int(self.get_parameter("val_every_n").value)
         self.save_metadata = bool(self.get_parameter("save_metadata").value)
         self.save_overlay = bool(self.get_parameter("save_overlay").value)
@@ -133,14 +132,15 @@ class SimDatasetCapture(Node):
             raise ValueError("target dimensions must be > 0")
 
         self.camera_model: Optional[CameraModel] = None
+        self.last_image: Optional[Image] = None
+        self.last_image_recv: Optional[float] = None  # wall time
         self.last_camera_pose: Optional[Pose3D] = None
         self.last_camera_pose_stamp: Optional[Time] = None
+        self.last_camera_pose_recv: Optional[float] = None  # wall time
         self.last_target_pose: Optional[Pose3D] = None
         self.last_target_pose_stamp: Optional[Time] = None
-        self.last_capture_time: Optional[Time] = None
         self.capture_index = 0
         self.last_wait_reason: str = "init"
-        self.last_wait_log_time: Optional[Time] = None
 
         self._ensure_dataset_layout()
         self._write_dataset_yaml()
@@ -149,11 +149,12 @@ class SimDatasetCapture(Node):
         self.create_subscription(CameraInfo, self.camera_info_topic, self.on_camera_info, 10)
         self.create_subscription(PoseStamped, self.camera_pose_topic, self.on_camera_pose, 10)
         self.create_subscription(Odometry, self.target_pose_topic, self.on_target_pose, 10)
+        self.create_timer(2.0, self._status_tick, clock=rclpy.clock.Clock())
 
         self.get_logger().info(
             f"[sim_dataset_capture] Started: image={self.camera_topic}, info={self.camera_info_topic}, "
             f"camera_pose={self.camera_pose_topic}, target_pose={self.target_pose_topic}, "
-            f"output_dir={self.output_dir}, capture_hz={self.capture_hz:.2f}, class={self.class_name}:{self.class_id}"
+            f"output_dir={self.output_dir}, trigger=amcl_pose_odom, class={self.class_name}:{self.class_id}"
         )
 
     def _ensure_dataset_layout(self) -> None:
@@ -211,6 +212,11 @@ class SimDatasetCapture(Node):
             self.last_camera_pose_stamp = Time.from_msg(msg.header.stamp)
         except Exception:
             self.last_camera_pose_stamp = self.get_clock().now()
+        self.last_camera_pose_recv = time.monotonic()
+
+    def on_image(self, msg: Image) -> None:
+        self.last_image = msg
+        self.last_image_recv = time.monotonic()
 
     def on_target_pose(self, msg: Odometry) -> None:
         p = msg.pose.pose.position
@@ -229,24 +235,27 @@ class SimDatasetCapture(Node):
             self.last_target_pose_stamp = Time.from_msg(msg.header.stamp)
         except Exception:
             self.last_target_pose_stamp = self.get_clock().now()
+        self._try_capture()
 
-    def on_image(self, msg: Image) -> None:
+    def _status_tick(self) -> None:
+        if self.last_wait_reason != "capturing":
+            self.get_logger().info(f"[sim_dataset_capture] Waiting: {self.last_wait_reason}")
+
+    def _try_capture(self) -> None:
         now = self.get_clock().now()
         if not self._ready(now):
-            self._log_wait_state(now)
             return
-        if self.last_capture_time is not None:
-            dt = (now - self.last_capture_time).nanoseconds * 1e-9
-            if dt < self.capture_period_s:
-                return
 
+        msg = self.last_image
         image = self._image_to_bgr(msg)
         if image is None:
             return
 
         bbox, projected_points = self._compute_bbox()
-        if bbox is None and not self.save_negative_examples:
-            return
+        if bbox is None:
+            self.last_wait_reason = f"no_bbox pts={len(projected_points)}"
+            if not self.save_negative_examples:
+                return
 
         subset = "val" if self.val_every_n > 0 and ((self.capture_index + 1) % self.val_every_n == 0) else "train"
         stem = self._frame_stem(msg)
@@ -275,7 +284,6 @@ class SimDatasetCapture(Node):
                 json.dump(metadata, fh, indent=2, sort_keys=True)
 
         self.capture_index += 1
-        self.last_capture_time = now
         self.last_wait_reason = "capturing"
         self.get_logger().info(
             f"[sim_dataset_capture] Saved frame {self.capture_index}: subset={subset} "
@@ -286,30 +294,27 @@ class SimDatasetCapture(Node):
         if self.camera_model is None:
             self.last_wait_reason = "waiting_for_camera_info"
             return False
-        if self.last_camera_pose is None or self.last_camera_pose_stamp is None:
+        if self.last_camera_pose is None or self.last_camera_pose_recv is None:
             self.last_wait_reason = "waiting_for_camera_pose"
             return False
-        if self.last_target_pose is None or self.last_target_pose_stamp is None:
+        if self.last_target_pose is None:
             self.last_wait_reason = "waiting_for_target_pose"
             return False
-        cam_age = (now - self.last_camera_pose_stamp).nanoseconds * 1e-9
-        tgt_age = (now - self.last_target_pose_stamp).nanoseconds * 1e-9
+        if self.last_image is None or self.last_image_recv is None:
+            self.last_wait_reason = "waiting_for_image"
+            return False
+        wall_now = time.monotonic()
+        cam_age = wall_now - self.last_camera_pose_recv
+        img_age = wall_now - self.last_image_recv
         if cam_age > self.camera_pose_timeout_s:
             self.last_wait_reason = f"stale_camera_pose age={cam_age:.2f}s"
             return False
-        if tgt_age > self.target_pose_timeout_s:
-            self.last_wait_reason = f"stale_target_pose age={tgt_age:.2f}s"
+        if img_age > self.image_timeout_s:
+            self.last_wait_reason = f"stale_image age={img_age:.2f}s"
             return False
         self.last_wait_reason = "ready"
         return True
 
-    def _log_wait_state(self, now: Time) -> None:
-        if self.last_wait_log_time is not None:
-            dt = (now - self.last_wait_log_time).nanoseconds * 1e-9
-            if dt < 2.0:
-                return
-        self.last_wait_log_time = now
-        self.get_logger().info(f"[sim_dataset_capture] Waiting: {self.last_wait_reason}")
 
     def _frame_stem(self, msg: Image) -> str:
         try:
@@ -343,23 +348,19 @@ class SimDatasetCapture(Node):
         return None
 
     def _cuboid_points_world(self) -> np.ndarray:
-        if self.last_target_pose is None:
+        tp = self.last_target_pose
+        if tp is None:
             return np.zeros((0, 3), dtype=np.float64)
         half_l = 0.5 * self.target_length_m
         half_w = 0.5 * self.target_width_m
         h = self.target_height_m
-        yaw = yaw_from_quat(
-            self.last_target_pose.qx,
-            self.last_target_pose.qy,
-            self.last_target_pose.qz,
-            self.last_target_pose.qw,
-        )
+        yaw = yaw_from_quat(tp.qx, tp.qy, tp.qz, tp.qw)
         cy = math.cos(yaw)
         sy = math.sin(yaw)
 
         def rotate_local(px: float, py: float, pz: float) -> Tuple[float, float, float]:
-            wx = self.last_target_pose.x + cy * px - sy * py
-            wy = self.last_target_pose.y + sy * px + cy * py
+            wx = tp.x + cy * px - sy * py
+            wy = tp.y + sy * px + cy * py
             wz = self.target_base_z_m + pz
             return (wx, wy, wz)
 
@@ -412,7 +413,7 @@ class SimDatasetCapture(Node):
 
         projected: List[Tuple[float, float]] = []
         for x_forward, y_right, z_down in points_camera:
-            if x_forward <= 1e-3:
+            if x_forward <= 0:
                 continue
             u = self.camera_model.cx + self.camera_model.fx * (y_right / x_forward)
             v = self.camera_model.cy + self.camera_model.fy * (z_down / x_forward)
@@ -432,9 +433,6 @@ class SimDatasetCapture(Node):
 
         bw = x2 - x1
         bh = y2 - y1
-        area = bw * bh
-        if bw < self.min_bbox_pixels or bh < self.min_bbox_pixels or area < self.min_bbox_area_px:
-            return None, projected
 
         xc = (x1 + x2) / (2.0 * self.camera_model.width)
         yc = (y1 + y2) / (2.0 * self.camera_model.height)

@@ -27,3 +27,8 @@
 /dji0/follow/actual/distance_3d_m
 /dji0/follow/error/xy_distance_m
 /dji0/follow/error/anchor_distance_m
+/coord/leader_follow_point
+/coord/leader_follow_point_status
+/coord/leader_planned_target
+/coord/leader_planned_target_status
+/coord/leader_visual_actuation_bridge_status

@@ -56,6 +56,8 @@ class FollowPointGenerator(Node):
         self.declare_parameter("heading_dir_alpha", 0.25)
         self.declare_parameter("heading_hold_timeout_s", 1.0)
         self.declare_parameter("target_velocity_alpha", 0.35)
+        self.declare_parameter("max_target_meas_speed_mps", 2.0)
+        self.declare_parameter("require_motion_to_start", True)
         self.declare_parameter("point_alpha", 0.55)
         self.declare_parameter("max_follow_point_jump_m", 2.0)
         self.declare_parameter("follow_altitude_m", 7.0)
@@ -94,6 +96,8 @@ class FollowPointGenerator(Node):
         self.heading_dir_alpha = float(self.get_parameter("heading_dir_alpha").value)
         self.heading_hold_timeout_s = float(self.get_parameter("heading_hold_timeout_s").value)
         self.target_velocity_alpha = float(self.get_parameter("target_velocity_alpha").value)
+        self.max_target_meas_speed_mps = float(self.get_parameter("max_target_meas_speed_mps").value)
+        self.require_motion_to_start = coerce_bool(self.get_parameter("require_motion_to_start").value)
         self.point_alpha = float(self.get_parameter("point_alpha").value)
         self.max_follow_point_jump_m = float(self.get_parameter("max_follow_point_jump_m").value)
         self.follow_altitude_m = float(self.get_parameter("follow_altitude_m").value)
@@ -151,6 +155,7 @@ class FollowPointGenerator(Node):
         self.last_follow_point_msg: Optional[PoseStamped] = None
         self.last_follow_point_stamp: Optional[Time] = None
         self.last_valid_follow_point_time: Optional[Time] = None
+        self._motion_started: bool = False
 
         self.create_subscription(Odometry, self.target_estimate_topic, self.on_target_estimate, 10)
         if self.target_pose_topic:
@@ -312,6 +317,11 @@ class FollowPointGenerator(Node):
         dt_s = max(1e-3, (now - self.last_target_world_stamp).nanoseconds * 1e-9)
         meas_vx = (float(target_xy[0]) - float(self.last_target_world_xy[0])) / dt_s
         meas_vy = (float(target_xy[1]) - float(self.last_target_world_xy[1])) / dt_s
+        meas_speed = math.hypot(meas_vx, meas_vy)
+        if self.max_target_meas_speed_mps > 0.0 and meas_speed > self.max_target_meas_speed_mps:
+            scale = self.max_target_meas_speed_mps / meas_speed
+            meas_vx *= scale
+            meas_vy *= scale
         alpha = self.target_velocity_alpha
         self.target_world_vx_mps = (1.0 - alpha) * self.target_world_vx_mps + alpha * meas_vx
         self.target_world_vy_mps = (1.0 - alpha) * self.target_world_vy_mps + alpha * meas_vy
@@ -464,40 +474,46 @@ class FollowPointGenerator(Node):
             if target_xy is not None:
                 target_x, target_y = target_xy
                 target_speed_mps = self._update_target_velocity(now, target_xy)
-                pred_target_x = float(target_x + self.target_world_vx_mps * self.lookahead_horizon_s)
-                pred_target_y = float(target_y + self.target_world_vy_mps * self.lookahead_horizon_s)
-                dir_x, dir_y, policy_mode = self._select_follow_heading(
-                    now=now,
-                    pred_target_x=pred_target_x,
-                    pred_target_y=pred_target_y,
-                    target_speed_mps=target_speed_mps,
-                )
+                if not self._motion_started and target_speed_mps >= self.min_target_speed_mps:
+                    self._motion_started = True
+                if self.require_motion_to_start and not self._motion_started:
+                    state = "WAITING"
+                    reason = "waiting_for_ugv_motion"
+                else:
+                    pred_target_x = float(target_x + self.target_world_vx_mps * self.lookahead_horizon_s)
+                    pred_target_y = float(target_y + self.target_world_vy_mps * self.lookahead_horizon_s)
+                    dir_x, dir_y, policy_mode = self._select_follow_heading(
+                        now=now,
+                        pred_target_x=pred_target_x,
+                        pred_target_y=pred_target_y,
+                        target_speed_mps=target_speed_mps,
+                    )
 
-                perp_x = -dir_y
-                perp_y = dir_x
-                leader_z = (
-                    float(self.last_target_pose_z)
-                    if self.last_target_pose_z is not None and math.isfinite(self.last_target_pose_z)
-                    else 0.0
-                )
-                follow_z = self.follow_altitude_m
-                z_delta = follow_z - leader_z
-                horizontal_dist = horizontal_distance_for_euclidean(self.follow_distance_m, z_delta)
-                raw_follow_x = pred_target_x - horizontal_dist * dir_x + self.lateral_offset_m * perp_x
-                raw_follow_y = pred_target_y - horizontal_dist * dir_y + self.lateral_offset_m * perp_y
-                follow_x, follow_y = self._smooth_follow_xy(raw_follow_x, raw_follow_y)
-                yaw_cmd = solve_yaw_to_target(
-                    follow_x,
-                    follow_y,
-                    pred_target_x,
-                    pred_target_y,
-                    self.camera_x_offset_m,
-                    self.camera_y_offset_m,
-                )
-                follow_yaw = wrap_pi(float(yaw_cmd))
-                self._publish_follow_point(now, follow_x, follow_y, follow_z, follow_yaw)
-                state = "ACTIVE"
-                reason = "none"
+                    perp_x = -dir_y
+                    perp_y = dir_x
+                    leader_z = (
+                        float(self.last_target_pose_z)
+                        if self.last_target_pose_z is not None and math.isfinite(self.last_target_pose_z)
+                        else 0.0
+                    )
+                    follow_z = self.follow_altitude_m
+                    z_delta = follow_z - leader_z
+                    horizontal_dist = horizontal_distance_for_euclidean(self.follow_distance_m, z_delta)
+                    raw_follow_x = pred_target_x - horizontal_dist * dir_x + self.lateral_offset_m * perp_x
+                    raw_follow_y = pred_target_y - horizontal_dist * dir_y + self.lateral_offset_m * perp_y
+                    follow_x, follow_y = self._smooth_follow_xy(raw_follow_x, raw_follow_y)
+                    yaw_cmd = solve_yaw_to_target(
+                        follow_x,
+                        follow_y,
+                        pred_target_x,
+                        pred_target_y,
+                        self.camera_x_offset_m,
+                        self.camera_y_offset_m,
+                    )
+                    follow_yaw = wrap_pi(float(yaw_cmd))
+                    self._publish_follow_point(now, follow_x, follow_y, follow_z, follow_yaw)
+                    state = "ACTIVE"
+                    reason = "none"
             else:
                 reason = "target_projection_invalid"
         elif self.last_follow_point_msg is not None and self.last_valid_follow_point_time is not None:

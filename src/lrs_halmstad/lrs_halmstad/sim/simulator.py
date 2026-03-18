@@ -459,12 +459,12 @@ class Simulator(Node):
         return msg
 
     def _gimbal_pitch_cmd_rad(self, commanded_tilt_deg: float) -> float:
-        joint_cmd_rad = -math.radians(commanded_tilt_deg + self.camera_mount_pitch_deg)
+        joint_cmd_rad = math.radians(commanded_tilt_deg + self.camera_mount_pitch_deg)
         return self._clamp(joint_cmd_rad, self.gimbal_pitch_min, self.gimbal_pitch_max)
 
     def _absolute_camera_tilt_deg(self, commanded_tilt_deg: float) -> float:
         joint_cmd_rad = self._gimbal_pitch_cmd_rad(commanded_tilt_deg)
-        return float(-math.degrees(joint_cmd_rad) - self.camera_mount_pitch_deg)
+        return float(math.degrees(joint_cmd_rad) - self.camera_mount_pitch_deg)
 
 
 def main(args=None):

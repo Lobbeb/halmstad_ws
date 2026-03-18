@@ -155,6 +155,11 @@ if [ "$MODE" = "yolo" ]; then
     "/$UAV_NAME/follow/actual/distance_3d_m"
     "/$UAV_NAME/follow/error/xy_distance_m"
     "/$UAV_NAME/follow/error/anchor_distance_m"
+    "/coord/leader_follow_point"
+    "/coord/leader_follow_point_status"
+    "/coord/leader_planned_target"
+    "/coord/leader_planned_target_status"
+    "/coord/leader_visual_actuation_bridge_status"
   )
 fi
 

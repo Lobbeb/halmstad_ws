@@ -6,7 +6,7 @@ WS_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 DEFAULT_BAG_ROOT="$WS_ROOT/bags/experiments"
 PLAY_START_DELAY_S="1.0"
 RENDER_REFRESH_S="0.25"
-BLOCK_MAX_LINES=14
+BLOCK_MAX_LINES=20
 LEADER_FIELDS_PER_LINE=3
 LEADER_KEY_WIDTH=15
 LEADER_VALUE_WIDTH=12
@@ -218,6 +218,11 @@ format_topic_block() {
   local leader_payload=""
   shift
 
+  if [[ "$topic" == *"/leader_follow_point" || "$topic" == *"/leader_planned_target" ]]; then
+    format_pose_payload "$@"
+    return 0
+  fi
+
   if leader_payload="$(extract_leader_payload "$@")"; then
     if [[ "$topic" == *"/leader_"* ]]; then
       if [[ "$topic" == *"/leader_distance_debug" ]]; then
@@ -320,6 +325,55 @@ format_leader_distance_payload() {
   format_leader_cells_line "est_d_m" "$est_d_m" "est_xy_m" "$est_xy_m" "est_avg" "$avg_est_d_m"
   format_leader_cells_line "real_d_m" "$real_d_m" "real_xy_m" "$real_xy_m" "real_avg" "$avg_real_d_m"
   format_leader_cells_line "err_d_m" "$err_d_m" "err_xy_m" "$err_xy_m" "err_avg" "$avg_err_d_m"
+}
+
+format_pose_payload() {
+  local line=""
+  local fp_in_pos=false
+  local fp_in_ori=false
+  local fp_pos_x="na" fp_pos_y="na" fp_pos_z="na"
+  local fp_ori_x="0" fp_ori_y="0" fp_ori_z="0" fp_ori_w="1"
+  local fp_trimmed=""
+
+  for line in "$@"; do
+    fp_trimmed="${line#"${line%%[![:space:]]*}"}"
+    case "$fp_trimmed" in
+      "position:")    fp_in_pos=true;  fp_in_ori=false ;;
+      "orientation:") fp_in_ori=true;  fp_in_pos=false ;;
+      "pose:" | "header:" | "stamp:") fp_in_pos=false; fp_in_ori=false ;;
+    esac
+    if $fp_in_pos; then
+      case "$fp_trimmed" in
+        "x: "*) fp_pos_x="${fp_trimmed#x: }" ;;
+        "y: "*) fp_pos_y="${fp_trimmed#y: }" ;;
+        "z: "*) fp_pos_z="${fp_trimmed#z: }" ;;
+      esac
+    elif $fp_in_ori; then
+      case "$fp_trimmed" in
+        "x: "*) fp_ori_x="${fp_trimmed#x: }" ;;
+        "y: "*) fp_ori_y="${fp_trimmed#y: }" ;;
+        "z: "*) fp_ori_z="${fp_trimmed#z: }" ;;
+        "w: "*) fp_ori_w="${fp_trimmed#w: }" ;;
+      esac
+    fi
+  done
+
+  local fp_x_fmt fp_y_fmt fp_z_fmt fp_yaw
+  IFS='|' read -r fp_x_fmt fp_y_fmt fp_z_fmt fp_yaw <<< \
+    "$(awk -v px="$fp_pos_x" -v py="$fp_pos_y" -v pz="$fp_pos_z" \
+         -v ox="$fp_ori_x" -v oy="$fp_ori_y" -v oz="$fp_ori_z" -v ow="$fp_ori_w" \
+      'BEGIN {
+        pi = 3.14159265358979
+        s = 2*(ow*oz + ox*oy); c = 1 - 2*(oy*oy + oz*oz)
+        yaw_deg = atan2(s, c) * 180 / pi
+        xf = (px == "na") ? "na" : sprintf("%.3f", px+0)
+        yf = (py == "na") ? "na" : sprintf("%.3f", py+0)
+        zf = (pz == "na") ? "na" : sprintf("%.3f", pz+0)
+        printf "%s|%s|%s|%.1f", xf, yf, zf, yaw_deg
+      }')"
+
+  format_leader_cells_line "x_m" "$fp_x_fmt" "y_m" "$fp_y_fmt" "z_m" "$fp_z_fmt"
+  format_leader_cells_line "yaw_deg" "$fp_yaw"
 }
 
 format_leader_cells_line() {

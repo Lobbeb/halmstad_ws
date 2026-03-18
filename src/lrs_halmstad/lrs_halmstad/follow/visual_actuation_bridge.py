@@ -41,6 +41,7 @@ class VisualActuationBridge(Node):
         self.declare_parameter("publish_pose_cmd_mirror", True)
         self.declare_parameter("use_current_altitude", False)
         self.declare_parameter("fixed_z_m", 7.0)
+        self.declare_parameter("yaw_cmd_sign", 1.0)
 
         self.uav_name = str(self.get_parameter("uav_name").value).strip() or "dji0"
         self.input_mode = str(self.get_parameter("input_mode").value).strip().lower() or "auto"
@@ -72,6 +73,9 @@ class VisualActuationBridge(Node):
         self.publish_pose_cmd_mirror = coerce_bool(self.get_parameter("publish_pose_cmd_mirror").value)
         self.use_current_altitude = coerce_bool(self.get_parameter("use_current_altitude").value)
         self.fixed_z_m = float(self.get_parameter("fixed_z_m").value)
+        self.yaw_cmd_sign = float(self.get_parameter("yaw_cmd_sign").value)
+        if self.yaw_cmd_sign not in (1.0, -1.0):
+            raise ValueError("yaw_cmd_sign must be 1.0 or -1.0")
 
         if self.tick_hz <= 0.0:
             raise ValueError("tick_hz must be > 0")
@@ -356,7 +360,7 @@ class VisualActuationBridge(Node):
                         step_xy_m = self.max_xy_step_m
                     else:
                         step_xy_m = dist_xy
-                    yaw_error = wrap_pi(float(plan_yaw) - self.uav_pose.yaw)
+                    yaw_error = wrap_pi(float(plan_yaw) - self.uav_pose.yaw) * self.yaw_cmd_sign
                     step_yaw_rad = self._clamp_symmetric(yaw_error, self.max_yaw_step_rad)
 
                     target_x = self.uav_pose.x + dx

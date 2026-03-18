@@ -55,5 +55,4 @@ ros2 run lrs_halmstad sim_dataset_capture --ros-args \
   -p use_sim_time:=true \
   -p output_dir:="$OUTPUT_DIR" \
   -p dataset_name:="$WORLD" \
-  -p target_pose_topic:=/a201_0000/amcl_pose_odom \
   "${EXTRA_ARGS[@]}"

@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import math
+import time
 from typing import Optional
 
 import rclpy
@@ -76,6 +77,7 @@ class CameraTracker(Node):
         self.tilt_image_center_gain = float(yaml_param(self, "tilt_image_center_gain"))
         self.tilt_image_center_max_deg = max(0.0, float(yaml_param(self, "tilt_image_center_max_deg")))
         self.publish_debug_topics = coerce_bool(yaml_param(self, "publish_debug_topics"))
+        self.gimbal_override_hold_s = max(0.0, float(yaml_param(self, "gimbal_override_hold_s")))
 
         if self.leader_input_type == "estimate":
             self.leader_input_type = "pose"
@@ -118,6 +120,10 @@ class CameraTracker(Node):
         self.last_uav_cmd_stamp: Optional[Time] = None
         self.last_tilt_cmd_deg: Optional[float] = None
         self.last_pan_cmd_deg: Optional[float] = None
+        self._tilt_override: Optional[float] = None
+        self._tilt_override_until: float = 0.0
+        self._pan_override: Optional[float] = None
+        self._pan_override_until: float = 0.0
 
         if self.leader_input_type == "odom":
             self.leader_sub = self.create_subscription(
@@ -338,6 +344,9 @@ class CameraTracker(Node):
             if self.publish_debug_topics
             else None
         )
+        if self.gimbal_override_hold_s > 0.0:
+            self.create_subscription(Float64, f"/{self.uav_name}/tilt_override", self.on_tilt_override, 10)
+            self.create_subscription(Float64, f"/{self.uav_name}/pan_override", self.on_pan_override, 10)
         self.tilt_pub = self.create_publisher(Float64, f"/{self.uav_name}/update_tilt", 10)
         self.pan_pub = self.create_publisher(Float64, f"/{self.uav_name}/update_pan", 10)
         self.timer = self.create_timer(1.0 / self.tick_hz, self.on_tick)
@@ -429,6 +438,14 @@ class CameraTracker(Node):
         self.camera_fy = fy
         self.camera_cx = float(msg.k[2])
         self.camera_cy = float(msg.k[5])
+
+    def on_tilt_override(self, msg: Float64) -> None:
+        self._tilt_override = float(msg.data)
+        self._tilt_override_until = time.monotonic() + self.gimbal_override_hold_s
+
+    def on_pan_override(self, msg: Float64) -> None:
+        self._pan_override = float(msg.data)
+        self._pan_override_until = time.monotonic() + self.gimbal_override_hold_s
 
     def leader_pose_is_fresh(self, now: Time) -> bool:
         if not self.have_leader or self.last_leader_stamp is None:
@@ -834,10 +851,18 @@ class CameraTracker(Node):
         if tracked_leader_pose is not None and tracked_leader_z is not None:
             self._publish_camera_debug_for_target(uav_pose, uav_z, tracked_leader_pose, tracked_leader_z)
 
+        now_mono = time.monotonic()
+        tilt_overridden = self._tilt_override is not None and now_mono < self._tilt_override_until
+        pan_overridden = self._pan_override is not None and now_mono < self._pan_override_until
+
         tilt_msg = Float64()
         tilt_mode = "default"
         target_tilt_cmd_deg: Optional[float] = None
-        if self.tilt_enable and tilt_leader_pose is not None and tilt_leader_z is not None:
+        if tilt_overridden:
+            tilt_mode = "override"
+            target_tilt_cmd_deg = float(self._tilt_override)  # type: ignore[arg-type]
+            tilt_msg.data = target_tilt_cmd_deg
+        elif self.tilt_enable and tilt_leader_pose is not None and tilt_leader_z is not None:
             raw_tilt_cmd = self._compute_tilt_deg_for_target(
                 uav_pose,
                 uav_z,
@@ -874,7 +899,9 @@ class CameraTracker(Node):
         )
 
         pan_msg = Float64()
-        if self.pan_enable and tracked_leader_pose is not None and tracked_leader_z is not None:
+        if pan_overridden:
+            pan_msg.data = float(self._pan_override)  # type: ignore[arg-type]
+        elif self.pan_enable and tracked_leader_pose is not None and tracked_leader_z is not None:
             raw_pan_cmd = float(
                 self._compute_pan_deg_for_target(
                     uav_pose,

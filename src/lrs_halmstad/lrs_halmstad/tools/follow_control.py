@@ -17,6 +17,7 @@ from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
 from rclpy.parameter import Parameter
 from rclpy.parameter_client import AsyncParameterClient
+from std_msgs.msg import Float64
 
 from lrs_halmstad.follow.follow_math import horizontal_distance_for_euclidean
 
@@ -40,6 +41,19 @@ class FollowControlConfig:
     focus_weight: float
     decimals: int
     seed: Optional[int]
+    # Gimbal sweep fields (random mode)
+    uav_name: str = "dji0"
+    gimbal_enable: bool = False
+    gimbal_only: bool = False          # skip d_target/z_min, only sweep gimbal
+    gimbal_interval_s: float = 0.0    # 0 = use interval_s
+    tilt_center_deg: float = -45.0
+    tilt_amplitude_deg: float = 15.0
+    tilt_min_deg: float = -75.0
+    tilt_max_deg: float = -15.0
+    pan_center_deg: float = 0.0
+    pan_amplitude_deg: float = 20.0
+    pan_min_deg: float = -45.0
+    pan_max_deg: float = 45.0
 
 
 def sample_biased_range(
@@ -96,27 +110,47 @@ class RandomFollowParams(Node):
         super().__init__("random_follow_params")
         self.config = config
         self.rng = random.Random(config.seed)
-        self.param_client = AsyncParameterClient(self, config.node_name)
+        self.param_client = AsyncParameterClient(self, config.node_name) if not config.gimbal_only else None
         self.pending_future = None
         self.applied_count = 0
-        self.next_update_wall = time.monotonic() + max(config.start_delay_s, 0.0)
+        t0 = time.monotonic() + max(config.start_delay_s, 0.0)
+        self.next_update_wall = t0
+        self.next_gimbal_wall = t0
         self.timer = self.create_timer(0.2, self._tick)
 
+        # Gimbal publishers
+        self._tilt_pub = None
+        self._pan_pub = None
+        if config.gimbal_enable or config.gimbal_only:
+            self._tilt_pub = self.create_publisher(Float64, f"/{config.uav_name}/tilt_override", 10)
+            self._pan_pub = self.create_publisher(Float64, f"/{config.uav_name}/pan_override", 10)
+
         self._validate_config()
-        self._wait_for_follow_node()
+        if not config.gimbal_only:
+            self._wait_for_follow_node()
 
         seed_text = "time-based" if config.seed is None else str(config.seed)
-        self.get_logger().info(
-            "Random follow param sweep ready: "
-            f"target={config.node_name} "
-            f"interval={config.interval_s:.1f}s "
-            f"z_min=[{config.min_z_min}, {config.max_z_min}] "
-            f"d_target=[{config.min_d_target}, {config.max_d_target}] "
-            f"focus=[{config.focus_min}, {config.focus_max}] "
-            f"focus_weight={config.focus_weight:.2f} "
-            f"count={'infinite' if config.count <= 0 else config.count} "
-            f"seed={seed_text}"
-        )
+        gimbal_interval = config.gimbal_interval_s if config.gimbal_interval_s > 0.0 else config.interval_s
+        if not config.gimbal_only:
+            self.get_logger().info(
+                "Random follow param sweep ready: "
+                f"target={config.node_name} "
+                f"interval={config.interval_s:.1f}s "
+                f"z_min=[{config.min_z_min}, {config.max_z_min}] "
+                f"d_target=[{config.min_d_target}, {config.max_d_target}] "
+                f"focus=[{config.focus_min}, {config.focus_max}] "
+                f"focus_weight={config.focus_weight:.2f} "
+                f"count={'infinite' if config.count <= 0 else config.count} "
+                f"seed={seed_text}"
+            )
+        if config.gimbal_enable or config.gimbal_only:
+            self.get_logger().info(
+                f"Gimbal sweep: uav={config.uav_name} interval={gimbal_interval:.1f}s "
+                f"tilt={config.tilt_center_deg:.1f}±{config.tilt_amplitude_deg:.1f}° "
+                f"[{config.tilt_min_deg}, {config.tilt_max_deg}] "
+                f"pan={config.pan_center_deg:.1f}±{config.pan_amplitude_deg:.1f}° "
+                f"[{config.pan_min_deg}, {config.pan_max_deg}]"
+            )
         if config.start_delay_s > 0.0:
             self.get_logger().info(f"Initial delay {config.start_delay_s:.1f}s before first random update")
 
@@ -126,14 +160,15 @@ class RandomFollowParams(Node):
             raise ValueError("interval must be > 0")
         if cfg.timeout_s <= 0.0:
             raise ValueError("timeout must be > 0")
-        if cfg.min_z_min < 0.0 or cfg.max_z_min < cfg.min_z_min:
-            raise ValueError("z_min range must satisfy 0 <= min <= max")
-        if cfg.min_d_target <= 0.0 or cfg.max_d_target <= 0.0 or cfg.max_d_target < cfg.min_d_target:
-            raise ValueError("d_target range must satisfy 0 < min <= max")
-        if cfg.focus_max < cfg.focus_min:
-            raise ValueError("focus range must satisfy focus_min <= focus_max")
-        if not 0.0 <= cfg.focus_weight <= 1.0:
-            raise ValueError("focus_weight must be within [0, 1]")
+        if not cfg.gimbal_only:
+            if cfg.min_z_min < 0.0 or cfg.max_z_min < cfg.min_z_min:
+                raise ValueError("z_min range must satisfy 0 <= min <= max")
+            if cfg.min_d_target <= 0.0 or cfg.max_d_target <= 0.0 or cfg.max_d_target < cfg.min_d_target:
+                raise ValueError("d_target range must satisfy 0 < min <= max")
+            if cfg.focus_max < cfg.focus_min:
+                raise ValueError("focus range must satisfy focus_min <= focus_max")
+            if not 0.0 <= cfg.focus_weight <= 1.0:
+                raise ValueError("focus_weight must be within [0, 1]")
         if cfg.decimals < 0:
             raise ValueError("decimals must be >= 0")
 
@@ -141,12 +176,48 @@ class RandomFollowParams(Node):
         while rclpy.ok() and not self.param_client.wait_for_services(timeout_sec=self.config.timeout_s):
             self.get_logger().info(f"Waiting for parameter services on {self.config.node_name} ...")
 
+    def _sample_angle(self, center: float, amplitude: float, lo: float, hi: float) -> float:
+        raw = center + self.rng.uniform(-amplitude, amplitude)
+        return max(lo, min(hi, round(raw, self.config.decimals)))
+
     def _tick(self) -> None:
+        now = time.monotonic()
+
+        # Gimbal sweep tick (independent interval)
+        gimbal_interval = (
+            self.config.gimbal_interval_s if self.config.gimbal_interval_s > 0.0 else self.config.interval_s
+        )
+        if (self.config.gimbal_enable or self.config.gimbal_only) and now >= self.next_gimbal_wall:
+            self.next_gimbal_wall = now + gimbal_interval
+            tilt = self._sample_angle(
+                self.config.tilt_center_deg,
+                self.config.tilt_amplitude_deg,
+                self.config.tilt_min_deg,
+                self.config.tilt_max_deg,
+            )
+            pan = self._sample_angle(
+                self.config.pan_center_deg,
+                self.config.pan_amplitude_deg,
+                self.config.pan_min_deg,
+                self.config.pan_max_deg,
+            )
+            tilt_msg = Float64()
+            tilt_msg.data = float(tilt)
+            self._tilt_pub.publish(tilt_msg)
+            pan_msg = Float64()
+            pan_msg.data = float(pan)
+            self._pan_pub.publish(pan_msg)
+            self.get_logger().info(f"Gimbal: tilt={tilt:.1f}° pan={pan:.1f}°")
+
+        if self.config.gimbal_only:
+            return
+
+        # d_target / z_min tick (existing behaviour)
         if self.pending_future is not None:
             return
         if self.config.count > 0 and self.applied_count >= self.config.count:
             return
-        if time.monotonic() < self.next_update_wall:
+        if now < self.next_update_wall:
             return
 
         z_min = round(
@@ -417,6 +488,19 @@ def parse_args() -> FollowControlConfig:
     parser.add_argument("--focus-weight", type=float, default=0.7, help="Probability mass to place in the preferred random band, default: 0.7")
     parser.add_argument("--decimals", type=int, default=2, help="Decimal places to keep in random mode, default: 2")
     parser.add_argument("--seed", type=int, default=None, help="Optional RNG seed for repeatability")
+    # Gimbal sweep options (random mode)
+    parser.add_argument("--uav-name", default="dji0", help="UAV name for gimbal topics, default: dji0")
+    parser.add_argument("--gimbal", action="store_true", help="Also randomly sweep pan/tilt alongside d_target/z_min")
+    parser.add_argument("--gimbal-only", action="store_true", help="Only sweep pan/tilt, skip d_target/z_min params")
+    parser.add_argument("--gimbal-interval", type=float, default=0.0, help="Gimbal update interval in seconds (default: same as --interval)")
+    parser.add_argument("--tilt-center", type=float, default=-45.0, help="Tilt centre in degrees, default: -45")
+    parser.add_argument("--tilt-amplitude", type=float, default=15.0, help="Tilt random amplitude in degrees, default: 15")
+    parser.add_argument("--tilt-min", type=float, default=-75.0, help="Tilt lower limit in degrees, default: -75")
+    parser.add_argument("--tilt-max", type=float, default=-15.0, help="Tilt upper limit in degrees, default: -15")
+    parser.add_argument("--pan-center", type=float, default=0.0, help="Pan centre in degrees, default: 0")
+    parser.add_argument("--pan-amplitude", type=float, default=20.0, help="Pan random amplitude in degrees, default: 20")
+    parser.add_argument("--pan-min", type=float, default=-45.0, help="Pan lower limit in degrees, default: -45")
+    parser.add_argument("--pan-max", type=float, default=45.0, help="Pan upper limit in degrees, default: 45")
     args = parser.parse_args()
     mode = "keyboard" if args.mode == "params" else args.mode
     return FollowControlConfig(
@@ -437,6 +521,18 @@ def parse_args() -> FollowControlConfig:
         focus_weight=float(args.focus_weight),
         decimals=int(args.decimals),
         seed=args.seed,
+        uav_name=args.uav_name,
+        gimbal_enable=args.gimbal or args.gimbal_only,
+        gimbal_only=args.gimbal_only,
+        gimbal_interval_s=float(args.gimbal_interval),
+        tilt_center_deg=float(args.tilt_center),
+        tilt_amplitude_deg=float(args.tilt_amplitude),
+        tilt_min_deg=float(args.tilt_min),
+        tilt_max_deg=float(args.tilt_max),
+        pan_center_deg=float(args.pan_center),
+        pan_amplitude_deg=float(args.pan_amplitude),
+        pan_min_deg=float(args.pan_min),
+        pan_max_deg=float(args.pan_max),
     )
 
 

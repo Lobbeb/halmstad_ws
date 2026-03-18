@@ -409,7 +409,7 @@ def generate_launch_description():
     publish_pose_cmd_topics_arg = DeclareLaunchArgument('publish_pose_cmd_topics', default_value='true')
     uav_start_x_arg = DeclareLaunchArgument(
         'uav_start_x',
-        default_value='-2.0',
+        default_value='-7.0',
     )
     uav_start_y_arg = DeclareLaunchArgument(
         'uav_start_y',
