@@ -270,7 +270,7 @@ visual_follow_controller:
 
 follow_point_generator:
   ros__parameters:
-    prefer_target_pose_position: true  # false = use visual_target_estimator bearing+range for world XY (goes through selected_target_filter trust gating); true = use leader_estimator OBB world-frame pose directly (old behaviour).
+    prefer_target_pose_position: false  # false = use visual_target_estimator bearing+range for world XY (goes through selected_target_filter trust gating); true = use leader_estimator OBB world-frame pose directly (old behaviour).
     prefer_target_pose_heading: false  # true = use OBB yaw from leader_estimator for follow heading; false = fall back to motion/anchor/view_line heading. OBB has 180° ambiguity — motion heading is more reliable.
     follow_distance_m: 8.0            # 3D Euclidean standoff sphere radius; horizontal component = sqrt(d²−z_delta²); keep 6–15 m.
     follow_altitude_m: 7.0           # Target UAV world-frame altitude; used with follow_distance_m to compute horizontal standoff; keep 4–12 m.

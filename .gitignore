@@ -55,6 +55,8 @@ opt/omnetpp-*/
 # --- Local ML weights and datasets ---
 /models
 /datasets
+/descriptions/
+*_MATH.md
 
 # --- Local debug helpers ---
 /run_follow_yaw_debug.py
