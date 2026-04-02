@@ -304,7 +304,7 @@ def _build_omnet_nodes(context, *args, **kwargs):
     ugv_ns = LaunchConfiguration('ugv_namespace').perform(context)
     port = int(LaunchConfiguration('omnet_bridge_port').perform(context))
     return [
-        # Converts /dji0/pose (actual Gazebo pose) → Odometry for the pose bridge.
+        # Converts /dji0/pose (actual Gazebo pose) â†’ Odometry for the pose bridge.
         # Uses the true simulator position rather than the commanded pose so OMNeT
         # node positions stay accurate even when publish_pose_cmd_topics:=false.
         Node(
@@ -535,14 +535,29 @@ def generate_launch_description():
         'yolo_weights',
         default_value='',
     )
-    yolo_device_arg = DeclareLaunchArgument('yolo_device', default_value='cpu')
+    yolo_device_arg = DeclareLaunchArgument('yolo_device', default_value='auto')
+    detector_backend_arg = DeclareLaunchArgument('detector_backend', default_value='ultralytics')
+    detector_onnx_model_arg = DeclareLaunchArgument('detector_onnx_model', default_value='')
+    detector_async_inference_arg = DeclareLaunchArgument('detector_async_inference', default_value='true')
+    detector_latest_frame_only_arg = DeclareLaunchArgument('detector_latest_frame_only', default_value='true')
+    detector_stale_detection_threshold_ms_arg = DeclareLaunchArgument(
+        'detector_stale_detection_threshold_ms',
+        default_value='500.0',
+    )
+    detector_metrics_window_s_arg = DeclareLaunchArgument('detector_metrics_window_s', default_value='5.0')
+    detector_benchmark_csv_path_arg = DeclareLaunchArgument('detector_benchmark_csv_path', default_value='')
+    detector_image_qos_depth_arg = DeclareLaunchArgument('detector_image_qos_depth', default_value='1')
+    detector_image_qos_reliability_arg = DeclareLaunchArgument(
+        'detector_image_qos_reliability',
+        default_value='best_effort',
+    )
     tracker_config_arg = DeclareLaunchArgument('tracker_config', default_value='botsort.yaml')
     event_topic_arg = DeclareLaunchArgument('event_topic', default_value='/coord/events')
     ugv_start_delay_arg = DeclareLaunchArgument('ugv_start_delay_s', default_value='0.0')
     start_omnet_bridge_arg = DeclareLaunchArgument(
         'start_omnet_bridge',
         default_value='false',
-        description='Start the Gazebo→OMNeT TCP pose bridge on omnet_bridge_port',
+        description='Start the Gazeboâ†’OMNeT TCP pose bridge on omnet_bridge_port',
     )
     omnet_bridge_port_arg = DeclareLaunchArgument(
         'omnet_bridge_port',
@@ -664,6 +679,15 @@ def generate_launch_description():
                 'target_class_id': LaunchConfiguration('target_class_id'),
                 'device': LaunchConfiguration('yolo_device'),
                 'yolo_weights': LaunchConfiguration('yolo_weights'),
+                'backend': LaunchConfiguration('detector_backend'),
+                'onnx_model': LaunchConfiguration('detector_onnx_model'),
+                'async_inference': _bool_param('detector_async_inference'),
+                'latest_frame_only': _bool_param('detector_latest_frame_only'),
+                'stale_detection_threshold_ms': LaunchConfiguration('detector_stale_detection_threshold_ms'),
+                'metrics_window_s': LaunchConfiguration('detector_metrics_window_s'),
+                'benchmark_csv_path': LaunchConfiguration('detector_benchmark_csv_path'),
+                'image_qos_depth': LaunchConfiguration('detector_image_qos_depth'),
+                'image_qos_reliability': LaunchConfiguration('detector_image_qos_reliability'),
                 'event_topic': LaunchConfiguration('event_topic'),
             },
             LaunchConfiguration('params_file'),
@@ -686,6 +710,15 @@ def generate_launch_description():
                 'target_class_id': LaunchConfiguration('target_class_id'),
                 'device': LaunchConfiguration('yolo_device'),
                 'yolo_weights': LaunchConfiguration('yolo_weights'),
+                'backend': LaunchConfiguration('detector_backend'),
+                'onnx_model': LaunchConfiguration('detector_onnx_model'),
+                'async_inference': _bool_param('detector_async_inference'),
+                'latest_frame_only': _bool_param('detector_latest_frame_only'),
+                'stale_detection_threshold_ms': LaunchConfiguration('detector_stale_detection_threshold_ms'),
+                'metrics_window_s': LaunchConfiguration('detector_metrics_window_s'),
+                'benchmark_csv_path': LaunchConfiguration('detector_benchmark_csv_path'),
+                'image_qos_depth': LaunchConfiguration('detector_image_qos_depth'),
+                'image_qos_reliability': LaunchConfiguration('detector_image_qos_reliability'),
                 'tracker_config': LaunchConfiguration('tracker_config'),
                 'event_topic': LaunchConfiguration('event_topic'),
             },
@@ -711,6 +744,7 @@ def generate_launch_description():
                 'leader_actual_pose_topic': LaunchConfiguration('leader_actual_pose_topic'),
                 'leader_actual_pose_enable': _bool_param('leader_actual_pose_enable'),
                 'external_detection_topic': LaunchConfiguration('external_detection_topic'),
+                'external_detection_max_latency_ms': LaunchConfiguration('detector_stale_detection_threshold_ms'),
                 'event_topic': LaunchConfiguration('event_topic'),
             },
             LaunchConfiguration('params_file'),
@@ -1011,6 +1045,15 @@ def generate_launch_description():
         target_class_id_arg,
         yolo_weights_arg,
         yolo_device_arg,
+        detector_backend_arg,
+        detector_onnx_model_arg,
+        detector_async_inference_arg,
+        detector_latest_frame_only_arg,
+        detector_stale_detection_threshold_ms_arg,
+        detector_metrics_window_s_arg,
+        detector_benchmark_csv_path_arg,
+        detector_image_qos_depth_arg,
+        detector_image_qos_reliability_arg,
         tracker_config_arg,
         event_topic_arg,
         ugv_start_delay_arg,

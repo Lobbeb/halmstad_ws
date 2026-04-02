@@ -24,6 +24,7 @@ def build_detection_status_line(
     reason: str,
     task: str,
     det: Optional[Detection2D],
+    extras: Optional[dict[str, object]] = None,
 ) -> str:
     perception = "none" if det is None else (det.source or "external")
     conf = -1.0 if det is None else float(det.conf)
@@ -34,7 +35,7 @@ def build_detection_status_line(
     track_age_s = 0.0 if det is None else float(det.track_age_s)
     track_state = "na" if det is None else str(det.track_state or "na")
     track_switched = False if det is None else bool(det.track_switched)
-    return (
+    line = (
         f"task={str(task).strip() or 'detection'} "
         f"state={str(state).strip() or 'UNKNOWN'} "
         f"reason={str(reason).strip() or 'none'} "
@@ -48,6 +49,18 @@ def build_detection_status_line(
         f"track_state={track_state} "
         f"track_switched={'true' if track_switched else 'false'}"
     )
+    for key, value in (extras or {}).items():
+        key_text = str(key).strip()
+        if not key_text:
+            continue
+        if isinstance(value, bool):
+            value_text = "true" if value else "false"
+        elif isinstance(value, float):
+            value_text = f"{value:.3f}"
+        else:
+            value_text = str(value)
+        line += f" {key_text}={value_text}"
+    return line
 
 
 def overlay_lines_from_status(line: str) -> list[str]:
@@ -75,21 +88,42 @@ class DetectionNodeMixin:
     ``__init__`` before the mixin methods are called.
     """
 
-    def _publish_detection(self, msg: Image, det: Optional[Detection2D]) -> None:
+    def _publish_detection(
+        self,
+        msg: Image,
+        det: Optional[Detection2D],
+        *,
+        metadata: Optional[dict[str, object]] = None,
+    ) -> None:
         from lrs_halmstad.perception.yolo_common import stamp_ns
         out = String()
-        out.data = encode_detection_payload(stamp_ns(msg), det)
+        out.data = encode_detection_payload(stamp_ns(msg), det, metadata=metadata)
         self.pub.publish(out)
 
-    def _publish_status(self, state: str, reason: str, det: Optional[Detection2D]) -> None:
-        self.status_helper.publish(state=state, reason=reason, task=self.task_type, det=det)
+    def _publish_status(
+        self,
+        state: str,
+        reason: str,
+        det: Optional[Detection2D],
+        *,
+        extras: Optional[dict[str, object]] = None,
+    ) -> None:
+        self.status_helper.publish(state=state, reason=reason, task=self.task_type, det=det, extras=extras)
 
 
 class DetectionStatusPublisher:
     def __init__(self, node, topic: str):
         self._pub = node.create_publisher(String, str(topic).strip(), 10)
 
-    def publish(self, *, state: str, reason: str, task: str, det: Optional[Detection2D]) -> None:
+    def publish(
+        self,
+        *,
+        state: str,
+        reason: str,
+        task: str,
+        det: Optional[Detection2D],
+        extras: Optional[dict[str, object]] = None,
+    ) -> None:
         msg = String()
-        msg.data = build_detection_status_line(state=state, reason=reason, task=task, det=det)
+        msg.data = build_detection_status_line(state=state, reason=reason, task=task, det=det, extras=extras)
         self._pub.publish(msg)

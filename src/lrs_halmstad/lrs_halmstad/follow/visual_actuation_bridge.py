@@ -108,9 +108,9 @@ class VisualActuationBridge(Node):
         self.last_planned_target_stamp: Optional[Time] = None
         self.last_tick_time: Optional[Time] = None
 
-        self.create_subscription(TwistStamped, self.visual_control_topic, self.on_visual_control, 10)
-        self.create_subscription(PoseStamped, self.follow_point_topic, self.on_follow_point, 10)
-        self.create_subscription(PoseStamped, self.planned_target_topic, self.on_planned_target, 10)
+        self.create_subscription(TwistStamped, self.visual_control_topic, self.on_visual_control, 1)
+        self.create_subscription(PoseStamped, self.follow_point_topic, self.on_follow_point, 1)
+        self.create_subscription(PoseStamped, self.planned_target_topic, self.on_planned_target, 1)
         self.create_subscription(PoseStamped, self.uav_pose_topic, self.on_uav_pose, 10)
         self.uav_cmd_pub = self.create_publisher(Joy, self.out_topic, 10)
         self.pose_cmd_pub = (

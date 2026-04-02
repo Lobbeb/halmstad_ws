@@ -157,9 +157,9 @@ class FollowPointGenerator(Node):
         self.last_valid_follow_point_time: Optional[Time] = None
         self._motion_started: bool = False
 
-        self.create_subscription(Odometry, self.target_estimate_topic, self.on_target_estimate, 10)
+        self.create_subscription(Odometry, self.target_estimate_topic, self.on_target_estimate, 1)
         if self.target_pose_topic:
-            self.create_subscription(PoseStamped, self.target_pose_topic, self.on_target_pose, 10)
+            self.create_subscription(PoseStamped, self.target_pose_topic, self.on_target_pose, 1)
         self.create_subscription(PoseStamped, self.uav_pose_topic, self.on_uav_pose, 10)
         self.create_subscription(PoseStamped, self.camera_pose_topic, self.on_camera_pose, 10)
         self.follow_point_pub = self.create_publisher(PoseStamped, self.out_topic, 10)

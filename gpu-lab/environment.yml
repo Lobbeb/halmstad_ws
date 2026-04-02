@@ -1,0 +1,28 @@
+name: halmstad-gpu
+channels:
+  - pytorch
+  - nvidia
+  - defaults
+dependencies:
+  - python=3.12
+  - pip
+  - setuptools
+  - pytorch
+  - torchvision
+  - torchaudio
+  - pytorch-cuda=12.4
+  - pyyaml>=6.0
+  - pandas>=1.5
+  - numpy>=1.24,<2
+  - matplotlib>=3.7
+  - rospkg>=1.4.1
+  - pytest>=7.0
+  - black
+  - flake8
+  - mypy
+  - pre-commit
+  - pip:
+      - ultralytics
+      - onnx
+      - onnxruntime
+      - opencv-python-headless

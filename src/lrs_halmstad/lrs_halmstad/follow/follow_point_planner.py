@@ -103,7 +103,7 @@ class FollowPointPlanner(Node):
         self.last_planned_target_time: Optional[Time] = None
         self._prev_fp_xy: Optional[tuple[float, float]] = None
 
-        self.create_subscription(PoseStamped, self.follow_point_topic, self.on_follow_point, 10)
+        self.create_subscription(PoseStamped, self.follow_point_topic, self.on_follow_point, 1)
         self.create_subscription(PoseStamped, self.uav_pose_topic, self.on_uav_pose, 10)
         self.planned_target_pub = self.create_publisher(PoseStamped, self.out_topic, 10)
         self.status_pub = self.create_publisher(String, self.status_topic, 10) if self.publish_status else None

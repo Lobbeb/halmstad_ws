@@ -190,8 +190,8 @@ class VisualFollowController(Node):
             durability=QoSDurabilityPolicy.VOLATILE,
         )
 
-        self.create_subscription(Detection2DArray, self.selected_target_topic, self.on_selected_target, 10)
-        self.create_subscription(Odometry, self.target_estimate_topic, self.on_target_estimate, 10)
+        self.create_subscription(Detection2DArray, self.selected_target_topic, self.on_selected_target, 1)
+        self.create_subscription(Odometry, self.target_estimate_topic, self.on_target_estimate, 1)
         self.create_subscription(CameraInfo, self.camera_info_topic, self.on_camera_info, camera_info_qos)
         self.create_subscription(Image, self.camera_topic, self.on_image, 10)
 

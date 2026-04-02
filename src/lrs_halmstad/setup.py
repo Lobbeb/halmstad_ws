@@ -88,6 +88,7 @@ setup(
             'follow_point_planner = lrs_halmstad.follow.follow_point_planner:main',
             'selected_target_filter = lrs_halmstad.follow.selected_target_filter:main',
             'visual_target_estimator = lrs_halmstad.perception.visual_target_estimator:main',
+            "export_yolo_onnx = lrs_halmstad.perception.export_yolo_onnx:main",
             "leader_detector = lrs_halmstad.perception.leader_detector:main",
             "leader_tracker = lrs_halmstad.perception.leader_tracker:main",
             "leader_estimator = lrs_halmstad.perception.leader_estimator:main",
@@ -105,6 +106,7 @@ setup(
             "run_dataset_make_obb = lrs_halmstad.dataset.make_obb:main",
             "run_dataset_prune_negatives = lrs_halmstad.dataset.prune_negatives:main",
             "run_dataset_sync_check = lrs_halmstad.dataset.sync_check:main",
+            "run_perception_benchmark_summary = lrs_halmstad.tools.perception_benchmark_summary:main",
             "ugv_nav2_driver = lrs_halmstad.nav.ugv_nav2_driver:main",
             "ugv_nav2_goal_tester = lrs_halmstad.nav.ugv_nav2_goal_tester:main",
               # optional later:

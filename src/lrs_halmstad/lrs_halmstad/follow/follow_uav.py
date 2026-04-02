@@ -310,7 +310,7 @@ class FollowUav(FollowControllerCoreMixin, Node):
             PoseStamped,
             self.leader_pose_topic,
             self.on_leader_pose,
-            10,
+            1,
         )
         leader_desc = f"pose:{self.leader_pose_topic}"
         self.leader_actual_heading_sub = None
@@ -326,7 +326,7 @@ class FollowUav(FollowControllerCoreMixin, Node):
             String,
             self.leader_status_topic,
             self.on_leader_status,
-            10,
+            1,
         )
 
         self.pose_pub = (

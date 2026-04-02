@@ -158,7 +158,7 @@ class SelectedTargetFilter(Node):
             stable_age_s=0.0,
         )
 
-        self.create_subscription(Detection2DArray, self.in_topic, self.on_raw_target, 10)
+        self.create_subscription(Detection2DArray, self.in_topic, self.on_raw_target, 1)
         self.out_pub = self.create_publisher(Detection2DArray, self.out_topic, 10)
         self.status_pub = self.create_publisher(String, self.status_topic, 10) if self.publish_status else None
         self.timer = self.create_timer(1.0 / self.tick_hz, self.on_tick)

@@ -140,20 +140,20 @@ class CameraTracker(Node):
                 Odometry,
                 self.leader_odom_topic,
                 self.on_leader_odom,
-                10,
+                1,
             )
         else:
             self.leader_sub = self.create_subscription(
                 PoseStamped,
                 self.leader_pose_topic,
                 self.on_leader_pose,
-                10,
+                1,
             )
             self.leader_status_sub = self.create_subscription(
                 String,
                 self.leader_status_topic,
                 self.on_leader_status,
-                10,
+                1,
             ) if self.leader_status_topic else None
         self.leader_actual_sub = (
             self.create_subscription(
@@ -170,7 +170,7 @@ class CameraTracker(Node):
                 String,
                 self.leader_detection_topic,
                 self.on_leader_detection,
-                10,
+                1,
             )
             if self.image_center_correction_enable and self.leader_detection_topic
             else None

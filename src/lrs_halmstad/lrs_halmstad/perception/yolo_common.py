@@ -21,6 +21,11 @@ try:
 except Exception:  # pragma: no cover - optional dependency
     YOLO = None
 
+try:
+    import torch  # type: ignore
+except Exception:  # pragma: no cover - optional dependency
+    torch = None
+
 
 def default_models_root(module_file: str) -> str:
     configured_root = os.environ.get("LRS_HALMSTAD_MODELS_ROOT", "").strip()
@@ -53,6 +58,23 @@ def resolve_yolo_weights_path(raw_path: str, models_root: str) -> str:
     return os.path.join(models_root, expanded)
 
 
+def resolve_onnx_model_path(raw_path: str, models_root: str, yolo_weights_path: str = "") -> str:
+    expanded = os.path.expanduser(str(raw_path or "").strip())
+    if expanded:
+        if os.path.isabs(expanded):
+            return expanded
+        return os.path.join(models_root, expanded)
+
+    weights_path = os.path.expanduser(str(yolo_weights_path or "").strip())
+    if weights_path.lower().endswith(".onnx"):
+        return weights_path
+    if weights_path.lower().endswith(".pt"):
+        candidate = os.path.splitext(weights_path)[0] + ".onnx"
+        if os.path.isfile(candidate):
+            return candidate
+    return ""
+
+
 def resolve_tracker_config(raw_path: str, module_file: str) -> str:
     config_root = package_config_root(module_file)
     if not raw_path:
@@ -74,6 +96,45 @@ def load_ultralytics_model(weights_path: str):
     if YOLO is None:
         raise RuntimeError("ultralytics_not_installed")
     return YOLO(weights_path)
+
+
+def normalize_inference_device(raw_device: str) -> str:
+    requested = str(raw_device or "").strip()
+    return requested or "auto"
+
+
+def cuda_available() -> bool:
+    if torch is None:
+        return False
+    try:
+        return bool(torch.cuda.is_available() and torch.cuda.device_count() > 0)
+    except Exception:
+        return False
+
+
+def resolve_inference_device(raw_device: str) -> tuple[str, Optional[str]]:
+    requested = normalize_inference_device(raw_device)
+    requested_lower = requested.lower()
+
+    if requested_lower in {"auto", "gpu"}:
+        if cuda_available():
+            return "0", None
+        return "cpu", "cuda_unavailable_auto_fallback"
+
+    if requested_lower == "cuda":
+        if cuda_available():
+            return "0", None
+        return "cpu", "cuda_unavailable_cpu_fallback"
+
+    if requested_lower.startswith("cuda:") or requested_lower.isdigit():
+        if cuda_available():
+            return requested_lower, None
+        return "cpu", f"{requested_lower}_unavailable_cpu_fallback"
+
+    if requested_lower == "cpu":
+        return "cpu", None
+
+    return requested, None
 
 
 def image_to_bgr(msg: Image) -> Optional[np.ndarray]:

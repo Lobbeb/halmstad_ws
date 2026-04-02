@@ -23,8 +23,8 @@ Current real follow launch:
 - `/dji0/camera0/camera_info`
 - `/dji0/camera0/depth_image`
 - `/dji0/psdk_ros2/flight_control_setpoint_ENUposition_yaw`
-- `/dji0/tilt_override` — external tilt command; held for `gimbal_override_hold_s` seconds, suppressing geometric computation
-- `/dji0/pan_override` — external pan command; same hold mechanism
+- `/dji0/tilt_override` â€” external tilt command; held for `gimbal_override_hold_s` seconds, suppressing geometric computation
+- `/dji0/pan_override` â€” external pan command; same hold mechanism
 - `/dji0/pose`
 
 Legacy optional debug topics:
@@ -42,12 +42,12 @@ Perception / estimate topics:
 OMNeT++ network metrics topics (published by `omnet_metrics_bridge` when OMNeT is running,
 requires `start_omnet_bridge:=true` in `run_follow.launch.py`; all `std_msgs/Float64`, ~10 Hz):
 
-- `/omnet/sim_time`          — OMNeT simulation time (s)
-- `/omnet/link_distance`     — geometric UAV–UGV distance from Gazebo positions (m)
-- `/omnet/rssi_dbm`          — received signal strength (dBm, free-space path-loss model)
-- `/omnet/snir_db`           — signal-to-noise-plus-interference ratio (dB)
-- `/omnet/packet_error_rate` — sliding-window PER estimate (0–1)
-- `/omnet/radio_distance`    — range estimate from RSSI inversion only, no Gazebo positions (m)
+- `/omnet/sim_time`          â€” OMNeT simulation time (s)
+- `/omnet/link_distance`     â€” geometric UAVâ€“UGV distance from Gazebo positions (m)
+- `/omnet/rssi_dbm`          â€” received signal strength (dBm, free-space path-loss model)
+- `/omnet/snir_db`           â€” signal-to-noise-plus-interference ratio (dB)
+- `/omnet/packet_error_rate` â€” sliding-window PER estimate (0â€“1)
+- `/omnet/radio_distance`    â€” range estimate from RSSI inversion only, no Gazebo positions (m)
 
 ## Recommended 1-to-1 bring-up
 
@@ -161,17 +161,26 @@ ros2 run lrs_halmstad controller --ros-args -p uav_name:=dji0
 - In simulation, `simulator` interprets `/dji0/psdk_ros2/flight_control_setpoint_ENUposition_yaw` as an absolute ENU pose setpoint: `x`, `y`, `z`, `yaw`.
 - The attached gimbal path is now the default camera backend in Gazebo, while the ROS image topics remain `/dji0/camera0/*`.
 - Attached-camera teleport spawns now use a non-static UAV model with a kinematic `base_link`, so the gimbal joints visibly actuate while the body remains pose-driven by `simulator`.
-- `uav_simulator` boots **relaxed**: no gimbal joint commands are published until the first `update_pan` or `update_tilt` message arrives. The joint rests at its SDF-default until the follow stack or a manual command arms it. Motion is then rate-limited at `pan_rate_deg_s: 45.0` and `tilt_rate_deg_s: 60.0`, configurable in `config/run_follow_defaults.yaml` under the `uav_simulator` section (uses `yaml_param`, so the values **must** be present in the YAML — there is no hardcoded fallback). Pan was reduced from 90 °/s to 45 °/s to prevent large visible jumps during UAV yaw changes.
-- Camera image bridge (`/image`, `/camera_info`, `/depth_image`) is now Gazebo→ROS only, reducing stale-frame buffering in image viewers.
-- `camera_update_rate` spawn arg is now correctly wired through to the SDF (was declared but not passed to xacro). The spawn default is `10` Hz, which is the recommended value for WSL2 — Ogre2 rendering through WSLg is the primary RTF bottleneck. Increase only if your host can sustain RTF ≥ 1.0 at higher rates.
+- `uav_simulator` boots **relaxed**: no gimbal joint commands are published until the first `update_pan` or `update_tilt` message arrives. The joint rests at its SDF-default until the follow stack or a manual command arms it. Motion is then rate-limited at `pan_rate_deg_s: 45.0` and `tilt_rate_deg_s: 60.0`, configurable in `config/run_follow_defaults.yaml` under the `uav_simulator` section (uses `yaml_param`, so the values **must** be present in the YAML â€” there is no hardcoded fallback). Pan was reduced from 90 Â°/s to 45 Â°/s to prevent large visible jumps during UAV yaw changes.
+- Camera image bridge (`/image`, `/camera_info`, `/depth_image`) is now Gazeboâ†’ROS only, reducing stale-frame buffering in image viewers.
+- `camera_update_rate` spawn arg is now correctly wired through to the SDF (was declared but not passed to xacro). The spawn default is `10` Hz, which is the recommended value for WSL2 â€” Ogre2 rendering through WSLg is the primary RTF bottleneck. Increase only if your host can sustain RTF â‰¥ 1.0 at higher rates.
 - `leader_estimator` now defaults to the actual simulated UAV pose topic `/dji0/pose`, not `/dji0/pose_cmd`.
-- The active perception range mode is `auto` (depth → radio → const). Available explicit modes: `depth`, `radio`, `const`. Set via `range_mode` in `run_follow_defaults.yaml` under `leader_estimator`. The `ground` mode has been removed.
+- The active perception range mode is `auto` (depth â†’ radio â†’ const). Available explicit modes: `depth`, `radio`, `const`. Set via `range_mode` in `run_follow_defaults.yaml` under `leader_estimator`. The `ground` mode has been removed.
 - When running with OMNeT++, `leader_estimator` subscribes to `/omnet/radio_distance` and uses it as the middle tier in `auto` mode (between depth and constant-range fallback). The raw FSPL-inverted Euclidean range is projected to horizontal distance using the current UAV altitude. Configure via `radio_range_topic` and `radio_range_timeout_s`. Set `radio_range_topic: ''` to disable entirely.
-- Depth range sampling uses the **inner 50 % of the detection bounding box** (25 % margin on each edge) instead of a fixed 5 × 5 pixel patch. This scales correctly at all distances and avoids edge pixels that land on background or drone body. Requires at least 10 valid pixels (`depth_patch_min_valid_px`).
+- Depth range sampling uses the **inner 50 % of the detection bounding box** (25 % margin on each edge) instead of a fixed 5 Ã— 5 pixel patch. This scales correctly at all distances and avoids edge pixels that land on background or drone body. Requires at least 10 valid pixels (`depth_patch_min_valid_px`).
 - YOLO `conf_threshold` is 0.15 for both `leader_detector` and `leader_tracker`. Lowered from 0.3 to improve detection recall with the newer OBB models; `min_confidence_threshold` (absolute floor in `leader_estimator`) is 0.08.
-- YOLO inference runs **CPU-only** (`device: 'cpu'` in `run_follow_defaults.yaml`). GPU inference is not available on WSL2 with AMD hardware: ROCm requires `/dev/dri/renderD*` which WSL2 does not expose, and `torch-directml` is incompatible with YOLO OBB operations. Expected detection rate on CPU is 3–10 Hz depending on image resolution and model size.
-- Image center correction (`image_center_correction_enable`) is **enabled** at `tick_hz: 10.0` (matched to the CPU YOLO detection rate). Running the tracker faster than the detection rate caused corrections to flicker on stale bounding boxes, producing gimbal jitter that disrupted ByteTrack. Keep `tick_hz` ≤ the expected YOLO rate, or disable correction if running at a higher tick rate without GPU inference.
-- All world SDF files use consistent physics parameters: `max_step_size: 0.004`, `real_time_update_rate: 250` (targeting RTF ≤ 1.0).
+- YOLO inference now defaults to `device: 'auto'`. On CUDA-capable hosts (for example HH GPU-LAB) the detector/tracker will use GPU 0 automatically; on non-CUDA hosts such as the current WSL2 AMD setup they fall back to CPU. Expected CPU detection rate is still roughly 3â€“10 Hz depending on image resolution and model size.
+- The live detector/tracker runtime now defaults to asynchronous newest-frame-only processing. `leader_detector` and `leader_tracker` keep only one pending image, use `image_qos_depth: 1`, stamp every published detection with timing metadata, and can write per-frame benchmark CSV rows via `benchmark_csv_path`.
+- Runtime backend selection is controlled by `detector_backend:=ultralytics|onnx_cpu|onnx_directml` plus optional `detector_onnx_model:=<path>`. On Windows + AMD, install `onnxruntime-directml` in the runtime environment before using `detector_backend:=onnx_directml`.
+- Export the current trained Ultralytics model to ONNX with `ros2 run lrs_halmstad export_yolo_onnx --weights <model.pt> --out <model.onnx> --imgsz 640`. The command also writes a `.manifest.json` next to the exported ONNX file for reproducible deployment.
+- Compare baseline vs improved runtime with launch overrides, for example:
+  - baseline sync Ultralytics: `ros2 launch lrs_halmstad run_follow.launch.py detector_backend:=ultralytics detector_async_inference:=false detector_benchmark_csv_path:=/tmp/baseline.csv`
+  - async Ultralytics: `ros2 launch lrs_halmstad run_follow.launch.py detector_backend:=ultralytics detector_async_inference:=true detector_benchmark_csv_path:=/tmp/async.csv`
+  - async ONNX CPU: `ros2 launch lrs_halmstad run_follow.launch.py detector_backend:=onnx_cpu detector_onnx_model:=/abs/model.onnx detector_benchmark_csv_path:=/tmp/onnx_cpu.csv`
+  - async ONNX DirectML: `ros2 launch lrs_halmstad run_follow.launch.py detector_backend:=onnx_directml detector_onnx_model:=C:/path/model.onnx detector_benchmark_csv_path:=C:/temp/onnx_dml.csv`
+- Summarize benchmark CSVs with `ros2 run lrs_halmstad run_perception_benchmark_summary /tmp/baseline.csv /tmp/async.csv /tmp/onnx_cpu.csv`.
+- Image center correction (`image_center_correction_enable`) is **enabled** at `tick_hz: 10.0` (matched to the CPU YOLO detection rate). Running the tracker faster than the detection rate caused corrections to flicker on stale bounding boxes, producing gimbal jitter that disrupted ByteTrack. Keep `tick_hz` â‰¤ the expected YOLO rate, or disable correction if running at a higher tick rate without GPU inference.
+- All world SDF files use consistent physics parameters: `max_step_size: 0.004`, `real_time_update_rate: 250` (targeting RTF â‰¤ 1.0).
 - The Husky now uses `lidar2d_0` as its only active range sensor in this workspace. The old temporary `lidar3d_0` path is no longer part of the active bring-up.
 - UGV mobility now runs in two supported modes: `ugv_mode:=nav2` sends sequential Nav2 `NavigateToPose` goals derived from the configured route, and `ugv_mode:=external` leaves UGV motion to an external Nav2 goal source.
 
@@ -227,12 +236,12 @@ Relevant `follow_control random` gimbal args:
 | `--gimbal` | off | Also sweep pan/tilt alongside d_target/z_min |
 | `--gimbal-only` | off | Only sweep pan/tilt; skip d_target/z_min |
 | `--gimbal-interval` | `--interval` | Seconds between gimbal updates |
-| `--tilt-center` | -45° | Centre of the tilt random distribution |
-| `--tilt-amplitude` | 15° | ±amplitude around centre |
-| `--tilt-min` / `--tilt-max` | -75° / -15° | Hard limits |
-| `--pan-center` | 0° | Centre of the pan random distribution |
-| `--pan-amplitude` | 20° | ±amplitude around centre |
-| `--pan-min` / `--pan-max` | -45° / 45° | Hard limits |
+| `--tilt-center` | -45Â° | Centre of the tilt random distribution |
+| `--tilt-amplitude` | 15Â° | Â±amplitude around centre |
+| `--tilt-min` / `--tilt-max` | -75Â° / -15Â° | Hard limits |
+| `--pan-center` | 0Â° | Centre of the pan random distribution |
+| `--pan-amplitude` | 20Â° | Â±amplitude around centre |
+| `--pan-min` / `--pan-max` | -45Â° / 45Â° | Hard limits |
 | `--uav-name` | `dji0` | UAV namespace for override topics |
 
 Set `gimbal_override_hold_s` in `run_follow_defaults.yaml` to a value slightly larger than `--gimbal-interval` (e.g. `10.0` with `--gimbal-interval 8`).
@@ -241,7 +250,7 @@ Set `gimbal_override_hold_s` in `run_follow_defaults.yaml` to a value slightly l
 
 All dataset tools resolve paths relative to `~/halmstad_ws/datasets/` unless an absolute path is given.
 
-### make_obb — generate OBB labels
+### make_obb â€” generate OBB labels
 
 ```bash
 ros2 run lrs_halmstad make_obb warehouse_v3
@@ -254,12 +263,12 @@ ros2 run lrs_halmstad make_obb warehouse_v3 --overlay --overwrite  # regenerate 
 - `--overlay`: draws yellow projected-point dots + green OBB polygon on each image into `overlay_obb/<split>/`.
 - `--overwrite`: regenerates existing label/overlay files instead of skipping them.
 
-### prune_negatives — delete frames where the UGV is not visible
+### prune_negatives â€” delete frames where the UGV is not visible
 
 Labels are generated geometrically (without occlusion checking), so some frames have valid-looking labels but the UGV is actually behind a wall or out of frame. Use this tool to prune them:
 
 ```bash
-# Dry run — shows what would be deleted
+# Dry run â€” shows what would be deleted
 ros2 run lrs_halmstad prune_negatives warehouse_v3 --dry-run
 
 # Actually delete (removes matching files from images/, labels/, labels_det/, metadata/, overlays/)

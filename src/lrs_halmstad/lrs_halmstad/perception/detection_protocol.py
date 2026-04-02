@@ -30,9 +30,15 @@ class Detection2D:
 class DetectionMessage:
     stamp_ns: int
     detection: Optional[Detection2D]
+    metadata: dict[str, object]
 
 
-def encode_detection_payload(stamp_ns: int, det: Optional[Detection2D]) -> str:
+def encode_detection_payload(
+    stamp_ns: int,
+    det: Optional[Detection2D],
+    *,
+    metadata: Optional[dict[str, object]] = None,
+) -> str:
     payload = {
         "stamp_ns": int(stamp_ns),
         "valid": det is not None,
@@ -50,6 +56,7 @@ def encode_detection_payload(stamp_ns: int, det: Optional[Detection2D]) -> str:
         "obb_corners": [] if det is None or det.obb_corners is None else [[float(x), float(y)] for x, y in det.obb_corners],
         "obb_heading_yaw": None if det is None or det.obb_heading_yaw is None else float(det.obb_heading_yaw),
         "source": "" if det is None else str(det.source),
+        "metadata": dict(metadata or {}),
     }
     return json.dumps(payload, separators=(",", ":"), ensure_ascii=True)
 
@@ -62,7 +69,7 @@ def decode_detection_payload(data: str) -> DetectionMessage:
 
     stamp_ns = int(payload.get("stamp_ns", 0) or 0)
     if not bool(payload.get("valid", False)):
-        return DetectionMessage(stamp_ns=stamp_ns, detection=None)
+        return DetectionMessage(stamp_ns=stamp_ns, detection=None, metadata=dict(payload.get("metadata") or {}))
 
     bbox_raw = payload.get("bbox") or []
     if len(bbox_raw) < 4:
@@ -90,4 +97,8 @@ def decode_detection_payload(data: str) -> DetectionMessage:
         obb_heading_yaw=None if obb_heading_yaw is None else float(obb_heading_yaw),
         source=str(payload.get("source", "")),
     )
-    return DetectionMessage(stamp_ns=stamp_ns, detection=det)
+    return DetectionMessage(
+        stamp_ns=stamp_ns,
+        detection=det,
+        metadata=dict(payload.get("metadata") or {}),
+    )

@@ -89,6 +89,9 @@ class LeaderEstimator(EventEmitterMixin, Node):
         self.image_timeout_s = float(yaml_param(self, "image_timeout_s", descriptor=dyn_num))
         self.uav_pose_timeout_s = float(yaml_param(self, "uav_pose_timeout_s", descriptor=dyn_num))
         self.external_detection_timeout_s = float(yaml_param(self, "external_detection_timeout_s", descriptor=dyn_num))
+        self.external_detection_max_latency_ms = float(
+            yaml_param(self, "external_detection_max_latency_ms", descriptor=dyn_num)
+        )
 
         self.d_target = float(yaml_param(self, "d_target", descriptor=dyn_num))
         self.declare_parameter("constant_range_m", 5.0, dyn_num)
@@ -123,6 +126,8 @@ class LeaderEstimator(EventEmitterMixin, Node):
             raise ValueError("uav_pose_timeout_s must be > 0")
         if self.external_detection_timeout_s <= 0.0:
             raise ValueError("external_detection_timeout_s must be > 0")
+        if self.external_detection_max_latency_ms < 0.0:
+            raise ValueError("external_detection_max_latency_ms must be >= 0")
         if self.leader_actual_pose_timeout_s <= 0.0:
             raise ValueError("leader_actual_pose_timeout_s must be > 0")
         if self.constant_range_m <= 0.0 and self.d_target <= 0.0:
@@ -141,6 +146,8 @@ class LeaderEstimator(EventEmitterMixin, Node):
         self.last_external_det: Optional[Detection2D] = None
         self.last_external_det_stamp: Optional[Time] = None
         self.last_external_det_rx_stamp: Optional[Time] = None
+        self.last_external_det_publish_latency_ms: float = -1.0
+        self.last_external_det_reject_reason: str = "none"
         self.last_external_det_status_text: str = ""
         self.last_camera_frame_id: str = ""
         self.last_camera_tilt_deg: Optional[float] = None
@@ -185,12 +192,12 @@ class LeaderEstimator(EventEmitterMixin, Node):
         self.camera_info_sub = self.create_subscription(CameraInfo, self.camera_info_topic, self.on_camera_info, 10)
         self.depth_sub = self.create_subscription(Image, self.depth_topic, self.on_depth, 10) if self.depth_topic else None
         self.uav_pose_sub = self.create_subscription(PoseStamped, self.uav_pose_topic, self.on_uav_pose, 10)
-        self.external_detection_sub = self.create_subscription(String, self.external_detection_topic, self.on_external_detection, 10)
+        self.external_detection_sub = self.create_subscription(String, self.external_detection_topic, self.on_external_detection, 1)
         self.external_detection_status_sub = self.create_subscription(
             String,
             self.external_detection_status_topic,
             self.on_external_detection_status,
-            10,
+            1,
         )
         self.follow_debug_heading_source_sub = self.create_subscription(
             String,
@@ -287,15 +294,35 @@ class LeaderEstimator(EventEmitterMixin, Node):
             return -1.0
         return max(0.0, (now - self.last_external_det_stamp).nanoseconds * 1e-6)
 
+    def _detector_publish_latency_ms(self) -> float:
+        return float(self.last_external_det_publish_latency_ms)
+
     def _detector_reason(self, now: Time) -> str:
         if self.last_external_det_stamp is None:
-            return "none"
+            return self.last_external_det_reject_reason if self.last_external_det_reject_reason != "none" else "none"
         return "ok" if self.external_detection_fresh(now) else "stale"
+
+    def _detection_publish_latency_ms(self, metadata: dict[str, object]) -> Optional[float]:
+        raw = metadata.get("camera_to_publish_latency_ms")
+        try:
+            value = float(raw)
+        except Exception:
+            return None
+        return value if math.isfinite(value) and value >= 0.0 else None
+
+    def _detection_exceeds_latency_budget(self, metadata: dict[str, object]) -> bool:
+        if self.external_detection_max_latency_ms <= 0.0:
+            return False
+        if bool(metadata.get("stale_detection", False)):
+            return True
+        latency_ms = self._detection_publish_latency_ms(metadata)
+        return latency_ms is not None and latency_ms > self.external_detection_max_latency_ms
 
     def _fault_line(self, state: str, reason: str, now: Time) -> str:
         return (
             f"state={state} reason={reason} fault_age_ms={self._fault_age_ms(now):.1f} "
             f"detector=external detector_reason={self._detector_reason(now)} detector_age_ms={self._detector_age_ms(now):.1f} "
+            f"detector_publish_latency_ms={self._detector_publish_latency_ms():.1f} "
             f"conf={self.last_det_conf:.3f} latency_ms={self.last_latency_ms:.1f} reject_reason={self.last_reject_reason}"
         )
 
@@ -385,12 +412,18 @@ class LeaderEstimator(EventEmitterMixin, Node):
             stamp = Time(nanoseconds=stamp_ns, clock_type=self.get_clock().clock_type)
         else:
             stamp = now
+        latency_ms = self._detection_publish_latency_ms(det_msg.metadata)
+        self.last_external_det_publish_latency_ms = latency_ms if latency_ms is not None else -1.0
         # Only latch valid detections so that NO_DET frames do not erase the
         # last real detection before external_detection_timeout_s expires.
         if det_msg.detection is not None:
+            if self._detection_exceeds_latency_budget(det_msg.metadata):
+                self.last_external_det_reject_reason = "detection_publish_latency_exceeded"
+                return
             self.last_external_det_stamp = stamp
             self.last_external_det_rx_stamp = now
             self.last_external_det = det_msg.detection
+            self.last_external_det_reject_reason = "none"
 
     def on_camera_tilt(self, msg: Float32) -> None:
         self.last_camera_tilt_deg = float(msg.data)
@@ -776,6 +809,7 @@ class LeaderEstimator(EventEmitterMixin, Node):
         return (
             f"state={state} reason={reason} "
             f"detector_reason={self._detector_reason(now)} detector_age_ms={self._detector_age_ms(now):.1f} "
+            f"detector_publish_latency_ms={self._detector_publish_latency_ms():.1f} "
             f"conf={self.last_det_conf:.3f} latency_ms={self.last_latency_ms:.1f} "
             f"range_src={self.last_range_source} range_mode={self.range_mode} range_m={self.last_range_used_m:.2f} "
             f"bearing_deg={self.last_bearing_used_deg:.1f} reject_reason={self.last_reject_reason} "
@@ -1070,6 +1104,8 @@ class LeaderEstimator(EventEmitterMixin, Node):
             self.last_range_used_m = -1.0
             self.last_heading_source = "none"
             reason = "no_detection" if self.last_external_det_stamp is not None else "detection_missing"
+            if self.last_external_det_reject_reason != "none":
+                reason = self.last_external_det_reject_reason
             self.publish_status_msg(self._status_line("NO_DET", reason, now))
             self.publish_distance_status_msg(now)
             self._record_fault("NO_DET", reason, now)

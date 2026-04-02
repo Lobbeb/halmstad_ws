@@ -128,7 +128,7 @@ class VisualTargetEstimator(Node):
         self.projected_loss_streak = 0
         self.last_status_state = "INIT"
 
-        self.create_subscription(Detection2DArray, self.selected_target_topic, self.on_selected_target, 10)
+        self.create_subscription(Detection2DArray, self.selected_target_topic, self.on_selected_target, 1)
         self.create_subscription(CameraInfo, self.camera_info_topic, self.on_camera_info, 10)
         self.out_pub = self.create_publisher(Odometry, self.out_topic, 10)
         self.status_pub = self.create_publisher(String, self.status_topic, 10) if self.publish_status else None
