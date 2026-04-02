@@ -78,7 +78,7 @@ def resolve_onnx_model_path(raw_path: str, models_root: str, yolo_weights_path: 
 def resolve_tracker_config(raw_path: str, module_file: str) -> str:
     config_root = package_config_root(module_file)
     if not raw_path:
-        return str(config_root / "trackers" / "botsort.yaml")
+        return str(config_root / "trackers" / "bytetrack.yaml")
     expanded = Path(os.path.expanduser(raw_path))
     if expanded.is_absolute():
         return str(expanded)

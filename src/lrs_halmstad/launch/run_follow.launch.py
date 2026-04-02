@@ -552,7 +552,7 @@ def generate_launch_description():
         'detector_image_qos_reliability',
         default_value='best_effort',
     )
-    tracker_config_arg = DeclareLaunchArgument('tracker_config', default_value='botsort.yaml')
+    tracker_config_arg = DeclareLaunchArgument('tracker_config', default_value='bytetrack.yaml')
     event_topic_arg = DeclareLaunchArgument('event_topic', default_value='/coord/events')
     ugv_start_delay_arg = DeclareLaunchArgument('ugv_start_delay_s', default_value='0.0')
     start_omnet_bridge_arg = DeclareLaunchArgument(
