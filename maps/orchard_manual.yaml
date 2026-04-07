@@ -1,7 +1,0 @@
-image: orchard_manual.pgm
-mode: trinary
-resolution: 0.050
-origin: [-19.658, -22.501, 0]
-negate: 0
-occupied_thresh: 0.65
-free_thresh: 0.196

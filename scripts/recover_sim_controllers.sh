@@ -5,9 +5,9 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 WS_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 ROBOT_NAMESPACE="${1:-a201_0000}"
-STARTUP_DELAY_S="${STARTUP_DELAY_S:-20}"
-MAX_ATTEMPTS="${MAX_ATTEMPTS:-3}"
-ATTEMPT_SLEEP_S="${ATTEMPT_SLEEP_S:-5}"
+STARTUP_DELAY_S="${STARTUP_DELAY_S:-30}"
+MAX_ATTEMPTS="${MAX_ATTEMPTS:-5}"
+ATTEMPT_SLEEP_S="${ATTEMPT_SLEEP_S:-8}"
 CONTROLLER_MANAGER="/${ROBOT_NAMESPACE}/controller_manager"
 LIST_SERVICE="${CONTROLLER_MANAGER}/list_controllers"
 
@@ -83,4 +83,5 @@ if ! wait_for_controller_manager; then
 fi
 
 activate_controller joint_state_broadcaster || true
+sleep 2
 activate_controller platform_velocity_controller || true

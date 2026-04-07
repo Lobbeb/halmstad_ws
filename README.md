@@ -239,7 +239,7 @@ Default behavior:
 - Binds TCP server on `127.0.0.1:5555`
 - Streams snapshot data from:
   - `/a201_0000/platform/odom` as model `robot`
-  - `/dji0/pose_cmd/odom` as model `dji0`
+  - `/dji0/pose/odom` as model `dji0`
 - Auto-discovers any additional `/<model>/pose_cmd/odom` topics and exposes them as model `<model>`
 
 Override bridge parameters:
@@ -248,7 +248,7 @@ ros2 run lrs_halmstad gazebo_pose_tcp_bridge --ros-args \
   -p bind_host:=127.0.0.1 \
   -p port:=5555 \
   -p auto_discover_pose_cmd_odom:=true \
-  -p odom_topics:="['/a201_0000/platform/odom','/dji0/pose_cmd/odom']" \
+  -p odom_topics:="['/a201_0000/platform/odom','/dji0/pose/odom']" \
   -p model_names:="['robot','dji0']"
 ```
 

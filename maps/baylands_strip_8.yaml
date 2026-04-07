@@ -1,0 +1,7 @@
+image: baylands_strip_8.pgm
+mode: trinary
+resolution: 0.050
+origin: [-361.143, -237.603, 0]
+negate: 0
+occupied_thresh: 0.65
+free_thresh: 0.196

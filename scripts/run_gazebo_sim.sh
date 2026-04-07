@@ -3,21 +3,140 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 WS_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-WORLD="${1:-warehouse}"
+WORLD=""
 GUI="${GUI:-true}"
+GUI_SET="false"
 ENABLE_WSL_SOFTWARE_RENDERING="${ENABLE_WSL_SOFTWARE_RENDERING:-auto}"
 STATE_DIR="/tmp/halmstad_ws"
 SIM_PID_FILE="$STATE_DIR/gazebo_sim.pid"
 SIM_WORLD_FILE="$STATE_DIR/gazebo_sim.world"
 CONTROLLER_RECOVERY_PID_FILE="$STATE_DIR/gazebo_sim.controller_recovery.pid"
+SPAWN_STATE_NAME=""
+X_SET="false"
+Y_SET="false"
+Z_SET="false"
+YAW_SET="false"
+PASSTHROUGH_ARGS=()
+BAYLANDS_DEFAULT_X="19.83"
+BAYLANDS_DEFAULT_Y="114.99"
+BAYLANDS_DEFAULT_Z="0.6"
+BAYLANDS_DEFAULT_YAW="0.5"
 
-if [ "$#" -gt 0 ]; then
+source "$SCRIPT_DIR/slam_state_common.sh"
+
+if [ "$#" -gt 0 ] && [[ "$1" != *=* ]] && [ "$1" != "true" ] && [ "$1" != "false" ]; then
+  WORLD="$1"
   shift
 fi
 
 if [ "$#" -gt 0 ] && { [ "$1" = "true" ] || [ "$1" = "false" ]; }; then
   GUI="$1"
+  GUI_SET="true"
   shift
+fi
+
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    state:=*)
+      SPAWN_STATE_NAME="${1#state:=}"
+      ;;
+    spawn_state:=*)
+      SPAWN_STATE_NAME="${1#spawn_state:=}"
+      ;;
+    state_name:=*)
+      SPAWN_STATE_NAME="${1#state_name:=}"
+      ;;
+    gui:=*)
+      GUI="${1#gui:=}"
+      GUI_SET="true"
+      ;;
+    true|false)
+      if [ "$GUI_SET" = "false" ]; then
+        GUI="$1"
+        GUI_SET="true"
+      else
+        PASSTHROUGH_ARGS+=("$1")
+      fi
+      ;;
+    x:=*)
+      X_SET="true"
+      PASSTHROUGH_ARGS+=("$1")
+      ;;
+    y:=*)
+      Y_SET="true"
+      PASSTHROUGH_ARGS+=("$1")
+      ;;
+    z:=*)
+      Z_SET="true"
+      PASSTHROUGH_ARGS+=("$1")
+      ;;
+    yaw:=*)
+      YAW_SET="true"
+      PASSTHROUGH_ARGS+=("$1")
+      ;;
+    *)
+      PASSTHROUGH_ARGS+=("$1")
+      ;;
+  esac
+  shift
+done
+
+if [ -n "$SPAWN_STATE_NAME" ]; then
+  METADATA_PATH="$(slam_metadata_path_for_name "$WS_ROOT" "$SPAWN_STATE_NAME")"
+  if [ ! -f "$METADATA_PATH" ]; then
+    echo "[run_gazebo_sim] Saved SLAM state metadata not found: $METADATA_PATH" >&2
+    exit 1
+  fi
+
+  # shellcheck disable=SC1090
+  source "$METADATA_PATH"
+
+  if [ -n "$WORLD" ] && [ -n "${world:-}" ] && [ "$WORLD" != "$world" ]; then
+    echo "[run_gazebo_sim] Saved state '$SPAWN_STATE_NAME' belongs to world '$world', not '$WORLD'" >&2
+    exit 1
+  fi
+
+  if [ -z "$WORLD" ]; then
+    WORLD="${world:-}"
+  fi
+
+  if [ "$X_SET" = "false" ] && [ -n "${spawn_x:-}" ]; then
+    PASSTHROUGH_ARGS+=("x:=$spawn_x")
+  fi
+  if [ "$Y_SET" = "false" ] && [ -n "${spawn_y:-}" ]; then
+    PASSTHROUGH_ARGS+=("y:=$spawn_y")
+  fi
+  if [ "$Z_SET" = "false" ] && [ -n "${spawn_z:-}" ]; then
+    PASSTHROUGH_ARGS+=("z:=$spawn_z")
+  fi
+  if [ "$YAW_SET" = "false" ] && [ -n "${spawn_yaw:-}" ]; then
+    PASSTHROUGH_ARGS+=("yaw:=$spawn_yaw")
+  fi
+
+  if [ -n "${spawn_x:-}" ] && [ -n "${spawn_y:-}" ] && [ -n "${spawn_yaw:-}" ]; then
+    echo "[run_gazebo_sim] Using saved spawn pose from checkpoint '$SPAWN_STATE_NAME': x=${spawn_x} y=${spawn_y} z=${spawn_z} yaw=${spawn_yaw}"
+  else
+    echo "[run_gazebo_sim] Warning: checkpoint '$SPAWN_STATE_NAME' has no saved spawn pose; using defaults/explicit args" >&2
+  fi
+fi
+
+if [ -z "$WORLD" ]; then
+  WORLD="warehouse"
+fi
+
+if [ "$WORLD" = "baylands" ] && \
+   [ -z "$SPAWN_STATE_NAME" ] && \
+   [ "$X_SET" = "false" ] && \
+   [ "$Y_SET" = "false" ] && \
+   [ "$Z_SET" = "false" ] && \
+   [ "$YAW_SET" = "false" ]; then
+  PASSTHROUGH_ARGS+=(
+    "x:=$BAYLANDS_DEFAULT_X"
+    "y:=$BAYLANDS_DEFAULT_Y"
+    "z:=$BAYLANDS_DEFAULT_Z"
+    "yaw:=$BAYLANDS_DEFAULT_YAW"
+  )
+  echo "[run_gazebo_sim] Using Baylands default road spawn: x=${BAYLANDS_DEFAULT_X} y=${BAYLANDS_DEFAULT_Y} z=${BAYLANDS_DEFAULT_Z} yaw=${BAYLANDS_DEFAULT_YAW}"
 fi
 
 cleanup() {
@@ -77,4 +196,4 @@ ros2 launch lrs_halmstad managed_clearpath_sim.launch.py \
   setup_path:="$WS_ROOT/src/lrs_halmstad/clearpath" \
   use_sim_time:=true \
   gui:="$GUI" \
-  "$@"
+  "${PASSTHROUGH_ARGS[@]}"

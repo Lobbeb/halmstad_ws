@@ -322,6 +322,8 @@ def _build_omnet_nodes(context, *args, **kwargs):
             }],
         ),
         # TCP server (port 5555): serves Gazebo UGV+UAV poses to OMNeT GazeboPositionScheduler.
+        # Keep OMNeT on raw sim odom for the UGV even though the main follow/dataset
+        # path uses AMCL-derived odom elsewhere in this workspace.
         Node(
             package='lrs_halmstad',
             executable='gazebo_pose_tcp_bridge',
@@ -330,7 +332,7 @@ def _build_omnet_nodes(context, *args, **kwargs):
             parameters=[{
                 'use_sim_time': True,
                 'port': port,
-                'odom_topics': [f'/{ugv_ns}/amcl_pose_odom', f'/{uav_name}/pose/odom'],
+                'odom_topics': [f'/{ugv_ns}/platform/odom', f'/{uav_name}/pose/odom'],
                 'model_names': ['robot', uav_name],
                 'auto_discover_pose_cmd_odom': False,
             }],
@@ -377,6 +379,7 @@ def _build_visual_actuation_bridge_node(context, *args, **kwargs):
                     'planned_target_topic': LaunchConfiguration('leader_planned_target_topic'),
                     'uav_pose_topic': LaunchConfiguration('leader_uav_pose_topic'),
                     'status_topic': LaunchConfiguration('leader_visual_actuation_bridge_status_topic'),
+                    'start_delay_s': ParameterValue(LaunchConfiguration('uav_start_delay_s'), value_type=float),
                 },
                 LaunchConfiguration('params_file'),
             ],
@@ -539,6 +542,7 @@ def generate_launch_description():
     tracker_config_arg = DeclareLaunchArgument('tracker_config', default_value='botsort.yaml')
     event_topic_arg = DeclareLaunchArgument('event_topic', default_value='/coord/events')
     ugv_start_delay_arg = DeclareLaunchArgument('ugv_start_delay_s', default_value='0.0')
+    uav_start_delay_arg = DeclareLaunchArgument('uav_start_delay_s', default_value='0.0')
     start_omnet_bridge_arg = DeclareLaunchArgument(
         'start_omnet_bridge',
         default_value='false',
@@ -734,6 +738,7 @@ def generate_launch_description():
                 'follow_yaw': _bool_param('follow_yaw'),
                 'publish_debug_topics': _bool_param('publish_follow_debug_topics'),
                 'publish_pose_cmd_topics': _bool_param('publish_pose_cmd_topics'),
+                'start_delay_s': ParameterValue(LaunchConfiguration('uav_start_delay_s'), value_type=float),
             },
             LaunchConfiguration('params_file'),
         ],
@@ -758,6 +763,7 @@ def generate_launch_description():
                 'follow_yaw': _bool_param('follow_yaw'),
                 'publish_debug_topics': _bool_param('publish_follow_debug_topics'),
                 'publish_pose_cmd_topics': _bool_param('publish_pose_cmd_topics'),
+                'start_delay_s': ParameterValue(LaunchConfiguration('uav_start_delay_s'), value_type=float),
             },
             LaunchConfiguration('params_file'),
         ],
@@ -1014,6 +1020,7 @@ def generate_launch_description():
         tracker_config_arg,
         event_topic_arg,
         ugv_start_delay_arg,
+        uav_start_delay_arg,
         start_omnet_bridge_arg,
         omnet_bridge_port_arg,
         start_visual_follow_controller_arg,

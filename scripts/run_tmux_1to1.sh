@@ -29,6 +29,15 @@ UAV_NAME="dji0"
 ROS_DOMAIN_ID_EFFECTIVE="${ROS_DOMAIN_ID:-3}"
 RMW_IMPLEMENTATION_EFFECTIVE="${RMW_IMPLEMENTATION:-rmw_fastrtps_cpp}"
 UGV_NAMESPACE="a201_0000"
+OMNET_NETWORK="wifi"
+OMNET_UI="cmdenv"
+OMNET_PROJECT=""
+OMNET_RESULT_DIR=""
+OMNET_BRIDGE_PORT="5555"
+OMNET_START_DELAY_OVERRIDE=""
+DEFAULT_OMNET_START_DELAY_S="3.0"
+UGV_START_DELAY_OVERRIDE=""
+UAV_START_DELAY_OVERRIDE=""
 SPAWN_ARGS=()
 FOLLOW_ARGS=()
 GAZEBO_ARGS=()
@@ -160,9 +169,34 @@ for arg in "$@"; do
           ;;
       esac
       ;;
+    omnet_network:=*|omnet_config:=*)
+      OMNET_NETWORK="${arg#*:=}"
+      ;;
+    omnet_ui:=*|omnet_env:=*)
+      OMNET_UI="${arg#*:=}"
+      ;;
+    omnet_project:=*)
+      OMNET_PROJECT="${arg#omnet_project:=}"
+      ;;
+    omnet_result_dir:=*)
+      OMNET_RESULT_DIR="${arg#omnet_result_dir:=}"
+      ;;
+    omnet_bridge_port:=*)
+      OMNET_BRIDGE_PORT="${arg#omnet_bridge_port:=}"
+      FOLLOW_ARGS+=("$arg")
+      ;;
+    omnet_start_delay_s:=*|omnet_warmup_s:=*)
+      OMNET_START_DELAY_OVERRIDE="${arg#*:=}"
+      ;;
+    ugv_start_delay_s:=*)
+      UGV_START_DELAY_OVERRIDE="${arg#ugv_start_delay_s:=}"
+      ;;
+    uav_start_delay_s:=*)
+      UAV_START_DELAY_OVERRIDE="${arg#uav_start_delay_s:=}"
+      ;;
     *)
       echo "Unknown argument: $arg" >&2
-      echo "Usage: $0 [world] [mode:=follow|yolo] [record:=true|false] [record_profile:=default|step2_light|vision] [record_tag:=name] [record_out:=bags/experiments/...] [camera:=attached] [follow_yaw:=true|false] [pan_enable:=true|false] [use_tilt:=true|false] [use_actual_heading:=true|false] [leader_actual_pose_enable:=true|false] [publish_follow_debug_topics:=true|false] [publish_pose_cmd_topics:=true|false] [publish_camera_debug_topics:=true|false] [height:=7] [mount_pitch_deg:=45] [uav_name:=dji0] [weights:=...] [target:=...] [use_estimate:=true|false] [obb:=true|false] [tracker:=true|false] [external_detection_node:=detector|tracker] [tracker_config:=botsort.yaml] [start_visual_actuation_bridge:=true|false] [start_visual_follow_point_generator:=true|false] [start_visual_follow_planner:=true|false] [start_visual_follow_controller:=true|false] [folder:=...] [map:=/path/map.yaml] [gui:=true|false] [rtf:=1.0] [delay_s:=9] [spawn_delay_s:=9] [localization_delay_s:=11] [nav2_delay_s:=11] [follow_delay_s:=13] [record_delay_s:=13] [session:=name] [tmux_attach:=true|false] [dry_run:=true|false] [layout:=windows|panes] [omnet:=true|false]" >&2
+      echo "Usage: $0 [world] [mode:=follow|yolo] [record:=true|false] [record_profile:=default|step2_light|vision] [record_tag:=name] [record_out:=bags/experiments/...] [camera:=attached] [follow_yaw:=true|false] [pan_enable:=true|false] [use_tilt:=true|false] [use_actual_heading:=true|false] [leader_actual_pose_enable:=true|false] [publish_follow_debug_topics:=true|false] [publish_pose_cmd_topics:=true|false] [publish_camera_debug_topics:=true|false] [height:=7] [mount_pitch_deg:=45] [uav_name:=dji0] [weights:=...] [target:=...] [use_estimate:=true|false] [obb:=true|false] [tracker:=true|false] [external_detection_node:=detector|tracker] [tracker_config:=botsort.yaml] [start_visual_actuation_bridge:=true|false] [start_visual_follow_point_generator:=true|false] [start_visual_follow_planner:=true|false] [start_visual_follow_controller:=true|false] [folder:=...] [map:=/path/map.yaml] [gui:=true|false] [rtf:=1.0] [delay_s:=9] [spawn_delay_s:=9] [localization_delay_s:=11] [nav2_delay_s:=11] [follow_delay_s:=13] [record_delay_s:=13] [session:=name] [tmux_attach:=true|false] [dry_run:=true|false] [layout:=windows|panes] [omnet:=true|false] [omnet_network:=wifi|5g|lora] [omnet_ui:=cmdenv|qtenv] [omnet_project:=/path/UAV_UGV] [omnet_result_dir:=/path] [omnet_bridge_port:=5555] [omnet_start_delay_s:=3.0] [ugv_start_delay_s:=3.0] [uav_start_delay_s:=3.0]" >&2
       exit 2
       ;;
   esac
@@ -237,6 +271,7 @@ esac
 SESSION_SAFE="$(printf '%s' "$SESSION" | tr -c 'A-Za-z0-9_.-' '_')"
 SESSION_STATE_FILE="$TMUX_STATE_DIR/${SESSION_SAFE}.env"
 record_pane=""
+omnet_pane=""
 
 apply_default_delays() {
   if [ "$EFFECTIVE_GUI" = false ]; then
@@ -346,6 +381,14 @@ done
 EOF
 }
 
+build_omnet_ready_cmd() {
+  cat <<EOF
+while ! { exec 3<>/dev/tcp/127.0.0.1/$OMNET_BRIDGE_PORT; } 2>/dev/null; do sleep 1; done
+exec 3>&-
+exec 3<&-
+EOF
+}
+
 signal_processes_by_pattern() {
   local pattern="$1"
   if pkill -INT -f "$pattern" 2>/dev/null; then
@@ -370,6 +413,7 @@ prelaunch_safety_cleanup() {
   signal_processes_by_pattern 'ros2 launch lrs_halmstad spawn_uav_1to1\.launch\.py'
   signal_processes_by_pattern 'ros2 launch lrs_halmstad managed_clearpath_sim\.launch\.py'
   signal_named_nodes 'amcl|map_server|planner_server|controller_server|behavior_server|bt_navigator|waypoint_follower|velocity_smoother|smoother_server|route_server|lifecycle_manager_localization|lifecycle_manager_navigation|ugv_nav2_driver|ugv_amcl_to_odom|ugv_amcl_to_platform_odom|ugv_amcl_to_platform_filtered_odom|ugv_platform_odom_to_tf|uav_simulator|leader_detector|leader_estimator|selected_target_filter|visual_target_estimator|follow_point_generator|follow_point_planner|visual_actuation_bridge|camera_tracker'
+  signal_processes_by_pattern '(^|/)UAV_UGV($| ).*-c Communication-GazeboBridge-'
   signal_processes_by_pattern '(^|/)gz sim($| )'
 }
 
@@ -391,6 +435,11 @@ write_session_state() {
     printf 'ROS_DOMAIN_ID_EFFECTIVE=%q\n' "$ROS_DOMAIN_ID_EFFECTIVE"
     printf 'RMW_IMPLEMENTATION_EFFECTIVE=%q\n' "$RMW_IMPLEMENTATION_EFFECTIVE"
     printf 'RECORD=%q\n' "$RECORD"
+    printf 'OMNET=%q\n' "$OMNET"
+    printf 'OMNET_NETWORK=%q\n' "$OMNET_NETWORK"
+    printf 'OMNET_UI=%q\n' "$OMNET_UI"
+    printf 'OMNET_PROJECT=%q\n' "$OMNET_PROJECT"
+    printf 'OMNET_RESULT_DIR=%q\n' "$OMNET_RESULT_DIR"
     printf 'FOLLOW_CMD_STR=%q\n' "$(shell_join "${FOLLOW_CMD[@]}")"
     printf 'RECORD_CMD_STR=%q\n' "$_record_cmd_str"
     printf 'GAZEBO_PANE_ID=%q\n' "$gazebo_pane"
@@ -398,6 +447,7 @@ write_session_state() {
     printf 'LOCALIZATION_PANE_ID=%q\n' "$localization_pane"
     printf 'NAV2_PANE_ID=%q\n' "$nav2_pane"
     printf 'FOLLOW_PANE_ID=%q\n' "$follow_pane"
+    printf 'OMNET_PANE_ID=%q\n' "$omnet_pane"
     printf 'RECORD_PANE_ID=%q\n' "$record_pane"
   } > "$SESSION_STATE_FILE"
 }
@@ -405,6 +455,20 @@ write_session_state() {
 apply_default_delays
 
 FOLLOW_ARGS+=("start_omnet_bridge:=$OMNET")
+shared_start_delay_s="$DEFAULT_OMNET_START_DELAY_S"
+if [ -n "$OMNET_START_DELAY_OVERRIDE" ]; then
+  shared_start_delay_s="$OMNET_START_DELAY_OVERRIDE"
+fi
+if [ -n "$UGV_START_DELAY_OVERRIDE" ]; then
+  FOLLOW_ARGS+=("ugv_start_delay_s:=$UGV_START_DELAY_OVERRIDE")
+elif [ "$OMNET" = true ]; then
+  FOLLOW_ARGS+=("ugv_start_delay_s:=$shared_start_delay_s")
+fi
+if [ -n "$UAV_START_DELAY_OVERRIDE" ]; then
+  FOLLOW_ARGS+=("uav_start_delay_s:=$UAV_START_DELAY_OVERRIDE")
+elif [ "$OMNET" = true ]; then
+  FOLLOW_ARGS+=("uav_start_delay_s:=$shared_start_delay_s")
+fi
 
 GAZEBO_CMD=(./run.sh gazebo_sim "$WORLD")
 if [ -n "$GUI" ]; then
@@ -439,11 +503,25 @@ if [ "$RECORD" = true ]; then
   fi
 fi
 
+if [ "$OMNET" = true ]; then
+  OMNET_CMD=(./run.sh omnet "network:=$OMNET_NETWORK" "ui:=$OMNET_UI")
+  if [ -n "$OMNET_PROJECT" ]; then
+    OMNET_CMD+=("project:=$OMNET_PROJECT")
+  fi
+  if [ -n "$OMNET_RESULT_DIR" ]; then
+    OMNET_CMD+=("result_dir:=$OMNET_RESULT_DIR")
+  fi
+  OMNET_READY_CMD="$(build_omnet_ready_cmd)"
+fi
+
 GAZEBO_LINE="$(build_line 0 false "" "${GAZEBO_CMD[@]}")"
 SPAWN_LINE="$(build_line "$SPAWN_DELAY_S" true "" "${SPAWN_CMD[@]}")"
 LOCALIZATION_LINE="$(build_line "$LOCALIZATION_DELAY_S" true "" "${LOCALIZATION_CMD[@]}")"
 NAV2_LINE="$(build_line "$NAV2_DELAY_S" true "" "${NAV2_CMD[@]}")"
 FOLLOW_LINE="$(build_line "$FOLLOW_DELAY_S" true "" "${FOLLOW_CMD[@]}")"
+if [ "$OMNET" = true ]; then
+  OMNET_LINE="$(build_line "$FOLLOW_DELAY_S" true "$OMNET_READY_CMD" "${OMNET_CMD[@]}")"
+fi
 if [ "$RECORD" = true ]; then
   RECORD_LINE="$(build_line "$RECORD_DELAY_S" true "$LOCALIZATION_READY_CMD" "${RECORD_CMD[@]}")"
 fi
@@ -464,12 +542,18 @@ if [ "$DRY_RUN" = true ]; then
   echo "Record: $RECORD"
   echo "Base delay: $BASE_DELAY_S"
   echo "Overrides: spawn=${SPAWN_DELAY_OVERRIDE:-default} localization=${LOCALIZATION_DELAY_OVERRIDE:-default} nav2=${NAV2_DELAY_OVERRIDE:-default} follow=${FOLLOW_DELAY_OVERRIDE:-default} record=${RECORD_DELAY_OVERRIDE:-default}"
+  if [ "$OMNET" = true ] || [ -n "$OMNET_START_DELAY_OVERRIDE" ] || [ -n "$UGV_START_DELAY_OVERRIDE" ] || [ -n "$UAV_START_DELAY_OVERRIDE" ]; then
+    echo "Startup holds: shared=${OMNET_START_DELAY_OVERRIDE:-$DEFAULT_OMNET_START_DELAY_S} ugv=${UGV_START_DELAY_OVERRIDE:-${OMNET:+$shared_start_delay_s}} uav=${UAV_START_DELAY_OVERRIDE:-${OMNET:+$shared_start_delay_s}}"
+  fi
   echo "Delays: spawn=$SPAWN_DELAY_S localization=$LOCALIZATION_DELAY_S nav2=$NAV2_DELAY_S follow=$FOLLOW_DELAY_S record=$RECORD_DELAY_S"
   echo "[gazebo]       $GAZEBO_LINE"
   echo "[spawn]        $SPAWN_LINE"
   echo "[localization] $LOCALIZATION_LINE"
   echo "[nav2]         $NAV2_LINE"
   echo "[follow]       $FOLLOW_LINE"
+  if [ "$OMNET" = true ]; then
+    echo "[omnet]        $OMNET_LINE"
+  fi
   if [ "$RECORD" = true ]; then
     echo "[record]       $RECORD_LINE"
   fi
@@ -482,6 +566,9 @@ if [ "$LAYOUT" = "windows" ]; then
   tmux new-window -t "$SESSION" -n localization
   tmux new-window -t "$SESSION" -n nav2
   tmux new-window -t "$SESSION" -n follow
+  if [ "$OMNET" = true ]; then
+    tmux new-window -t "$SESSION" -n omnet
+  fi
   if [ "$RECORD" = true ]; then
     tmux new-window -t "$SESSION" -n record
   fi
@@ -494,6 +581,9 @@ if [ "$LAYOUT" = "windows" ]; then
   localization_pane="$(tmux display-message -p -t "$SESSION:localization" '#{pane_id}')"
   nav2_pane="$(tmux display-message -p -t "$SESSION:nav2" '#{pane_id}')"
   follow_pane="$(tmux display-message -p -t "$SESSION:follow" '#{pane_id}')"
+  if [ "$OMNET" = true ]; then
+    omnet_pane="$(tmux display-message -p -t "$SESSION:omnet" '#{pane_id}')"
+  fi
   if [ "$RECORD" = true ]; then
     record_pane="$(tmux display-message -p -t "$SESSION:record" '#{pane_id}')"
   fi
@@ -505,6 +595,9 @@ if [ "$LAYOUT" = "windows" ]; then
   tmux send-keys -t "$SESSION:localization" "$LOCALIZATION_LINE" C-m
   tmux send-keys -t "$SESSION:nav2" "$NAV2_LINE" C-m
   tmux send-keys -t "$SESSION:follow" "$FOLLOW_LINE" C-m
+  if [ "$OMNET" = true ]; then
+    tmux send-keys -t "$SESSION:omnet" "$OMNET_LINE" C-m
+  fi
   if [ "$RECORD" = true ]; then
     tmux send-keys -t "$SESSION:record" "$RECORD_LINE" C-m
   fi
@@ -516,12 +609,19 @@ else
   localization_pane="$(tmux split-window -d -P -F '#{pane_id}' -t "$gazebo_pane" -v -l 50%)"
   spawn_pane="$(tmux split-window -d -P -F '#{pane_id}' -t "$gazebo_pane" -h -l 50%)"
   nav2_pane="$(tmux split-window -d -P -F '#{pane_id}' -t "$localization_pane" -h -l 50%)"
+  if [ "$OMNET" = true ]; then
+    tmux new-window -t "$SESSION" -n omnet
+    omnet_pane="$(tmux display-message -p -t "$SESSION:omnet" '#{pane_id}')"
+  fi
 
   tmux select-pane -t "$gazebo_pane" -T gazebo
   tmux select-pane -t "$spawn_pane" -T spawn
   tmux select-pane -t "$localization_pane" -T localization
   tmux select-pane -t "$nav2_pane" -T nav2
   tmux select-pane -t "$follow_pane" -T follow
+  if [ "$OMNET" = true ]; then
+    tmux select-pane -t "$omnet_pane" -T omnet
+  fi
   if [ "$RECORD" = true ]; then
     tmux new-window -t "$SESSION" -n record
     record_pane="$(tmux display-message -p -t "$SESSION:record" '#{pane_id}')"
@@ -535,6 +635,9 @@ else
   tmux send-keys -t "$localization_pane" "$LOCALIZATION_LINE" C-m
   tmux send-keys -t "$nav2_pane" "$NAV2_LINE" C-m
   tmux send-keys -t "$follow_pane" "$FOLLOW_LINE" C-m
+  if [ "$OMNET" = true ]; then
+    tmux send-keys -t "$omnet_pane" "$OMNET_LINE" C-m
+  fi
   if [ "$RECORD" = true ]; then
     tmux send-keys -t "$record_pane" "$RECORD_LINE" C-m
   fi
