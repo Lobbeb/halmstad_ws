@@ -6,11 +6,16 @@ from typing import Optional
 
 import rclpy
 from geometry_msgs.msg import PoseStamped, TwistStamped
+from nav_msgs.msg import Odometry
 from rclpy.node import Node
 from rclpy.time import Time
 from sensor_msgs.msg import Joy
 from std_msgs.msg import String
 
+from lrs_halmstad.common.visual_target_estimate import (
+    VisualTargetEstimate,
+    decode_visual_target_estimate_msg,
+)
 from lrs_halmstad.follow.follow_math import Pose2D, coerce_bool, quat_from_yaw, wrap_pi, yaw_from_quat
 
 
@@ -25,6 +30,7 @@ class VisualActuationBridge(Node):
         self.declare_parameter("visual_control_topic", "/coord/leader_visual_control")
         self.declare_parameter("follow_point_topic", "/coord/leader_follow_point")
         self.declare_parameter("planned_target_topic", "/coord/leader_planned_target")
+        self.declare_parameter("target_estimate_topic", "/coord/leader_visual_target_estimate")
         self.declare_parameter("uav_pose_topic", "")
         self.declare_parameter("out_topic", "")
         self.declare_parameter("pose_cmd_topic", "")
@@ -42,12 +48,18 @@ class VisualActuationBridge(Node):
         self.declare_parameter("use_current_altitude", False)
         self.declare_parameter("fixed_z_m", 7.0)
         self.declare_parameter("yaw_cmd_sign", 1.0)
+        self.declare_parameter("target_estimate_timeout_s", 1.0)
+        self.declare_parameter("predicted_step_scale", 0.80)
+        self.declare_parameter("degraded_step_scale", 0.55)
+        self.declare_parameter("lost_recovery_hold_s", 0.30)
+        self.declare_parameter("lost_step_scale", 0.35)
 
         self.uav_name = str(self.get_parameter("uav_name").value).strip() or "dji0"
         self.input_mode = str(self.get_parameter("input_mode").value).strip().lower() or "auto"
         self.visual_control_topic = str(self.get_parameter("visual_control_topic").value).strip()
         self.follow_point_topic = str(self.get_parameter("follow_point_topic").value).strip()
         self.planned_target_topic = str(self.get_parameter("planned_target_topic").value).strip()
+        self.target_estimate_topic = str(self.get_parameter("target_estimate_topic").value).strip()
         self.uav_pose_topic = (
             str(self.get_parameter("uav_pose_topic").value).strip()
             or f"/{self.uav_name}/pose"
@@ -74,6 +86,11 @@ class VisualActuationBridge(Node):
         self.use_current_altitude = coerce_bool(self.get_parameter("use_current_altitude").value)
         self.fixed_z_m = float(self.get_parameter("fixed_z_m").value)
         self.yaw_cmd_sign = float(self.get_parameter("yaw_cmd_sign").value)
+        self.target_estimate_timeout_s = float(self.get_parameter("target_estimate_timeout_s").value)
+        self.predicted_step_scale = max(0.0, min(1.0, float(self.get_parameter("predicted_step_scale").value)))
+        self.degraded_step_scale = max(0.0, min(1.0, float(self.get_parameter("degraded_step_scale").value)))
+        self.lost_recovery_hold_s = max(0.0, float(self.get_parameter("lost_recovery_hold_s").value))
+        self.lost_step_scale = max(0.0, min(1.0, float(self.get_parameter("lost_step_scale").value)))
         if self.yaw_cmd_sign not in (1.0, -1.0):
             raise ValueError("yaw_cmd_sign must be 1.0 or -1.0")
 
@@ -87,6 +104,8 @@ class VisualActuationBridge(Node):
             raise ValueError("follow_point_timeout_s must be >= 0")
         if self.planned_target_timeout_s < 0.0:
             raise ValueError("planned_target_timeout_s must be >= 0")
+        if self.target_estimate_timeout_s <= 0.0:
+            raise ValueError("target_estimate_timeout_s must be > 0")
         if self.pose_timeout_s <= 0.0:
             raise ValueError("pose_timeout_s must be > 0")
         if self.max_xy_step_m < 0.0:
@@ -106,11 +125,15 @@ class VisualActuationBridge(Node):
         self.last_follow_point_stamp: Optional[Time] = None
         self.last_planned_target: Optional[PoseStamped] = None
         self.last_planned_target_stamp: Optional[Time] = None
+        self.last_target_estimate = VisualTargetEstimate(stamp=self.get_clock().now().to_msg(), frame_id="", valid=False)
+        self.last_target_estimate_stamp: Optional[Time] = None
+        self.last_trackable_estimate_time: Optional[Time] = None
         self.last_tick_time: Optional[Time] = None
 
         self.create_subscription(TwistStamped, self.visual_control_topic, self.on_visual_control, 1)
         self.create_subscription(PoseStamped, self.follow_point_topic, self.on_follow_point, 1)
         self.create_subscription(PoseStamped, self.planned_target_topic, self.on_planned_target, 1)
+        self.create_subscription(Odometry, self.target_estimate_topic, self.on_target_estimate, 1)
         self.create_subscription(PoseStamped, self.uav_pose_topic, self.on_uav_pose, 10)
         self.uav_cmd_pub = self.create_publisher(Joy, self.out_topic, 10)
         self.pose_cmd_pub = (
@@ -151,6 +174,19 @@ class VisualActuationBridge(Node):
             self.last_planned_target_stamp = Time.from_msg(msg.header.stamp)
         except Exception:
             self.last_planned_target_stamp = self.get_clock().now()
+
+    def on_target_estimate(self, msg: Odometry) -> None:
+        self.last_target_estimate = decode_visual_target_estimate_msg(msg)
+        try:
+            self.last_target_estimate_stamp = Time.from_msg(msg.header.stamp)
+        except Exception:
+            self.last_target_estimate_stamp = self.get_clock().now()
+        if self.last_target_estimate.valid and str(self.last_target_estimate.mode or "").upper() in {
+            "TRACKED",
+            "PREDICTED",
+            "DEGRADED",
+        }:
+            self.last_trackable_estimate_time = self.last_target_estimate_stamp
 
     def on_uav_pose(self, msg: PoseStamped) -> None:
         p = msg.pose.position
@@ -208,6 +244,8 @@ class VisualActuationBridge(Node):
         state: str,
         reason: str,
         active_input: str,
+        estimate_mode: str,
+        estimate_quality: float,
         forward_cmd_mps: float,
         yaw_rate_cmd_rad_s: float,
         dt_s: float,
@@ -242,16 +280,24 @@ class VisualActuationBridge(Node):
             if self.last_planned_target_stamp is None
             else max(0.0, (now - self.last_planned_target_stamp).nanoseconds * 1e-6)
         )
+        target_estimate_age_ms = (
+            float("nan")
+            if self.last_target_estimate_stamp is None
+            else max(0.0, (now - self.last_target_estimate_stamp).nanoseconds * 1e-6)
+        )
         msg = String()
         msg.data = (
             f"input_mode={self.input_mode} "
             f"active_input={active_input} "
             f"state={state} "
             f"reason={reason} "
+            f"estimate_mode={estimate_mode} "
+            f"estimate_quality={estimate_quality:.3f} "
             f"pose_age_ms={'na' if not math.isfinite(pose_age_ms) else f'{pose_age_ms:.1f}'} "
             f"control_age_ms={'na' if not math.isfinite(control_age_ms) else f'{control_age_ms:.1f}'} "
             f"follow_point_age_ms={'na' if not math.isfinite(follow_point_age_ms) else f'{follow_point_age_ms:.1f}'} "
             f"planned_target_age_ms={'na' if not math.isfinite(planned_target_age_ms) else f'{planned_target_age_ms:.1f}'} "
+            f"target_estimate_age_ms={'na' if not math.isfinite(target_estimate_age_ms) else f'{target_estimate_age_ms:.1f}'} "
             f"forward_cmd_mps={forward_cmd_mps:.3f} "
             f"yaw_rate_cmd_rad_s={yaw_rate_cmd_rad_s:.3f} "
             f"dt_s={dt_s:.3f} "
@@ -295,6 +341,24 @@ class VisualActuationBridge(Node):
         control_fresh = self._is_fresh(self.last_control_stamp, self.control_timeout_s, now)
         follow_point_fresh = self._is_fresh(self.last_follow_point_stamp, self.follow_point_timeout_s, now)
         planned_target_fresh = self._is_fresh(self.last_planned_target_stamp, self.planned_target_timeout_s, now)
+        estimate_fresh = (
+            self.last_target_estimate.valid
+            and self._is_fresh(self.last_target_estimate_stamp, self.target_estimate_timeout_s, now)
+        )
+        estimate_mode = self.last_target_estimate.mode if estimate_fresh else "LOST"
+        estimate_quality = self.last_target_estimate.quality if estimate_fresh else 0.0
+        estimate_lost = estimate_mode == "LOST"
+        step_scale = 1.0
+        if estimate_mode == "DEGRADED":
+            step_scale = self.degraded_step_scale * max(0.45, min(1.0, estimate_quality if estimate_quality > 0.0 else 0.6))
+        elif estimate_mode == "PREDICTED":
+            step_scale = self.predicted_step_scale * max(0.60, min(1.0, estimate_quality if estimate_quality > 0.0 else 0.75))
+        lost_recovery_active = False
+        if estimate_lost and self.last_trackable_estimate_time is not None and self.lost_recovery_hold_s > 0.0:
+            lost_age_s = max(0.0, (now - self.last_trackable_estimate_time).nanoseconds * 1e-9)
+            lost_recovery_active = lost_age_s <= self.lost_recovery_hold_s
+            if lost_recovery_active:
+                step_scale = max(step_scale, self.lost_step_scale)
 
         state = "WAIT_POSE"
         reason = "pose_missing"
@@ -313,25 +377,37 @@ class VisualActuationBridge(Node):
             reason = "input_stale"
 
             if self.input_mode == "planned_target":
-                use_planned_target = planned_target_fresh
+                use_planned_target = planned_target_fresh and (not estimate_lost or lost_recovery_active)
                 use_follow_point = False
                 active_input = "planned_target"
-                if not planned_target_fresh:
+                if estimate_lost and not lost_recovery_active:
+                    reason = "estimate_lost"
+                elif estimate_lost:
+                    reason = "estimate_lost_recovery"
+                elif not planned_target_fresh:
                     reason = "planned_target_stale"
             elif self.input_mode == "follow_point":
                 use_planned_target = False
-                use_follow_point = follow_point_fresh
+                use_follow_point = follow_point_fresh and (not estimate_lost or lost_recovery_active)
                 active_input = "follow_point"
-                if not follow_point_fresh:
+                if estimate_lost and not lost_recovery_active:
+                    reason = "estimate_lost"
+                elif estimate_lost:
+                    reason = "estimate_lost_recovery"
+                elif not follow_point_fresh:
                     reason = "follow_point_stale"
             elif self.input_mode == "control":
                 use_planned_target = False
                 use_follow_point = False
             else:
-                use_planned_target = planned_target_fresh
-                use_follow_point = not use_planned_target and follow_point_fresh
+                use_planned_target = planned_target_fresh and (not estimate_lost or lost_recovery_active)
+                use_follow_point = not use_planned_target and follow_point_fresh and (not estimate_lost or lost_recovery_active)
                 if not use_planned_target and not use_follow_point:
-                    if self.last_planned_target_stamp is not None:
+                    if estimate_lost and not lost_recovery_active:
+                        reason = "estimate_lost"
+                    elif estimate_lost:
+                        reason = "estimate_lost_recovery"
+                    elif self.last_planned_target_stamp is not None:
                         reason = "planned_target_stale"
                     elif self.last_follow_point_stamp is not None:
                         reason = "follow_point_stale"
@@ -353,25 +429,31 @@ class VisualActuationBridge(Node):
                     dx = float(plan_x) - self.uav_pose.x
                     dy = float(plan_y) - self.uav_pose.y
                     dist_xy = math.hypot(dx, dy)
-                    if self.max_xy_step_m > 0.0 and dist_xy > self.max_xy_step_m:
-                        scale = self.max_xy_step_m / max(dist_xy, 1e-9)
+                    max_xy_step = self.max_xy_step_m * step_scale
+                    max_yaw_step = self.max_yaw_step_rad * step_scale
+                    if max_xy_step > 0.0 and dist_xy > max_xy_step:
+                        scale = max_xy_step / max(dist_xy, 1e-9)
                         dx *= scale
                         dy *= scale
-                        step_xy_m = self.max_xy_step_m
+                        step_xy_m = max_xy_step
                     else:
                         step_xy_m = dist_xy
                     yaw_error = wrap_pi(float(plan_yaw) - self.uav_pose.yaw) * self.yaw_cmd_sign
-                    step_yaw_rad = self._clamp_symmetric(yaw_error, self.max_yaw_step_rad)
+                    step_yaw_rad = self._clamp_symmetric(yaw_error, max_yaw_step)
 
                     target_x = self.uav_pose.x + dx
                     target_y = self.uav_pose.y + dy
                     target_z = self.uav_z if self.use_current_altitude else float(plan_z)
                     target_yaw = wrap_pi(self.uav_pose.yaw + step_yaw_rad)
                     if step_xy_m > 1e-6 or abs(step_yaw_rad) > 1e-6:
-                        state = "ACTIVE"
-                        reason = "planned_target"
+                        if lost_recovery_active and estimate_lost:
+                            state = "DEGRADED"
+                            reason = "planned_target_lost_recovery"
+                        else:
+                            state = "DEGRADED" if estimate_mode == "DEGRADED" else ("PREDICTED" if estimate_mode == "PREDICTED" else "ACTIVE")
+                            reason = "planned_target_degraded" if estimate_mode == "DEGRADED" else ("planned_target_predicted" if estimate_mode == "PREDICTED" else "planned_target")
                     else:
-                        reason = "planned_target_hold"
+                        reason = "planned_target_lost_recovery_hold" if lost_recovery_active and estimate_lost else "planned_target_hold"
                 else:
                     reason = "planned_target_invalid"
             elif use_follow_point:
@@ -390,25 +472,31 @@ class VisualActuationBridge(Node):
                         dx = float(follow_x) - self.uav_pose.x
                         dy = float(follow_y) - self.uav_pose.y
                         dist_xy = math.hypot(dx, dy)
-                        if self.max_xy_step_m > 0.0 and dist_xy > self.max_xy_step_m:
-                            scale = self.max_xy_step_m / max(dist_xy, 1e-9)
+                        max_xy_step = self.max_xy_step_m * step_scale
+                        max_yaw_step = self.max_yaw_step_rad * step_scale
+                        if max_xy_step > 0.0 and dist_xy > max_xy_step:
+                            scale = max_xy_step / max(dist_xy, 1e-9)
                             dx *= scale
                             dy *= scale
-                            step_xy_m = self.max_xy_step_m
+                            step_xy_m = max_xy_step
                         else:
                             step_xy_m = dist_xy
                         yaw_error = wrap_pi(float(follow_yaw) - self.uav_pose.yaw)
-                        step_yaw_rad = self._clamp_symmetric(yaw_error, self.max_yaw_step_rad)
+                        step_yaw_rad = self._clamp_symmetric(yaw_error, max_yaw_step)
 
                         target_x = self.uav_pose.x + dx
                         target_y = self.uav_pose.y + dy
                         target_z = self.uav_z if self.use_current_altitude else float(follow_z)
                         target_yaw = wrap_pi(self.uav_pose.yaw + step_yaw_rad)
                         if step_xy_m > 1e-6 or abs(step_yaw_rad) > 1e-6:
-                            state = "ACTIVE"
-                            reason = "follow_point"
+                            if lost_recovery_active and estimate_lost:
+                                state = "DEGRADED"
+                                reason = "follow_point_lost_recovery"
+                            else:
+                                state = "DEGRADED" if estimate_mode == "DEGRADED" else ("PREDICTED" if estimate_mode == "PREDICTED" else "ACTIVE")
+                                reason = "follow_point_degraded" if estimate_mode == "DEGRADED" else ("follow_point_predicted" if estimate_mode == "PREDICTED" else "follow_point")
                         else:
-                            reason = "follow_point_hold"
+                            reason = "follow_point_lost_recovery_hold" if lost_recovery_active and estimate_lost else "follow_point_hold"
                     else:
                         reason = "follow_point_invalid"
                 else:
@@ -459,6 +547,8 @@ class VisualActuationBridge(Node):
             state=state,
             reason=reason,
             active_input=active_input,
+            estimate_mode=estimate_mode,
+            estimate_quality=estimate_quality,
             forward_cmd_mps=forward_cmd,
             yaw_rate_cmd_rad_s=yaw_rate_cmd,
             dt_s=dt_s,

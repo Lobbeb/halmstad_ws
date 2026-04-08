@@ -131,6 +131,20 @@ class LeaderTracker(DetectionNodeMixin, EventEmitterMixin, Node):
         self.dropped_frame_count = 0
         self.stale_detection_count = 0
         self.last_infer_reason = "none"
+        self.last_selection_reason = "none"
+        self.last_raw_output_count = 0
+        self.last_conf_pass_count = 0
+        self.last_class_pass_count = 0
+        self.last_nms_keep_count = 0
+        self.last_candidate_count = 0
+        self.last_raw_best_conf = -1.0
+        self.last_class_best_conf = -1.0
+        self.audit_frames_total = 0
+        self.audit_ok_total = 0
+        self.audit_no_det_total = 0
+        self.audit_decode_fail_total = 0
+        self.audit_yolo_disabled_total = 0
+        self.audit_infer_fail_total = 0
         self.publish_rate_tracker = RollingRateTracker(self.metrics_window_s)
         self.benchmark_logger = CsvBenchmarkLogger(self.benchmark_csv_path) if self.benchmark_csv_path else None
         self.worker: Optional[LatestItemWorker] = None
@@ -376,19 +390,23 @@ class LeaderTracker(DetectionNodeMixin, EventEmitterMixin, Node):
     def _choose_candidate(self, candidates: list[Detection2D], stamp_ns_value: int) -> Optional[Detection2D]:
         if not candidates:
             self._reset_track_state()
+            self.last_selection_reason = "no_candidates"
             return None
         if self.active_track_id is not None:
             matches = [cand for cand in candidates if cand.track_id == self.active_track_id]
             if matches:
                 best = max(matches, key=lambda cand: cand.conf)
+                self.last_selection_reason = "active_track_match"
                 return self._annotate_track_metadata(best, stamp_ns_value)
         tracked = [cand for cand in candidates if cand.track_id is not None]
         if tracked:
             best = max(tracked, key=lambda cand: cand.conf)
+            self.last_selection_reason = "best_tracked_candidate"
             return self._annotate_track_metadata(best, stamp_ns_value)
 
         best = max(candidates, key=self._score_untracked_candidate)
         best = self._assign_pseudo_track_id(best)
+        self.last_selection_reason = "pseudo_track_candidate"
         return self._annotate_track_metadata(best, stamp_ns_value)
 
     def _track_detection_ultralytics(
@@ -418,18 +436,42 @@ class LeaderTracker(DetectionNodeMixin, EventEmitterMixin, Node):
             return None
         timing.infer_end_ros_ns = int(self.get_clock().now().nanoseconds)
         timing.infer_end_perf_ns = perf_counter_ns()
+        self.last_raw_output_count = 0
+        self.last_conf_pass_count = 0
+        self.last_class_pass_count = 0
+        self.last_nms_keep_count = 0
+        self.last_candidate_count = 0
+        self.last_raw_best_conf = -1.0
+        self.last_class_best_conf = -1.0
         if not results:
-            self.last_infer_reason = "no_detection"
+            self.last_infer_reason = "no_result"
+            self.last_selection_reason = "no_result"
             self._reset_track_state()
             timing.postprocess_end_ros_ns = int(self.get_clock().now().nanoseconds)
             timing.postprocess_end_perf_ns = perf_counter_ns()
             return None
         result = results[0]
+        raw_obb_count = 0 if getattr(result, "obb", None) is None else int(len(result.obb))
+        raw_box_count = 0 if getattr(result, "boxes", None) is None else int(len(result.boxes))
         candidates = self._collect_obb_candidates(result)
         if not candidates:
             candidates = self._collect_box_candidates(result)
+        self.last_raw_output_count = raw_obb_count + raw_box_count
+        self.last_conf_pass_count = self.last_raw_output_count
+        self.last_class_pass_count = len(candidates)
+        self.last_nms_keep_count = len(candidates)
+        self.last_candidate_count = len(candidates)
+        self.last_raw_best_conf = max((float(cand.conf) for cand in candidates), default=-1.0)
+        self.last_class_best_conf = self.last_raw_best_conf
         det = self._choose_candidate(candidates, stamp_ns_value)
-        self.last_infer_reason = "none" if det is not None else "no_detection"
+        if det is not None:
+            self.last_infer_reason = "none"
+        elif self.last_raw_output_count <= 0:
+            self.last_infer_reason = "no_result"
+        elif self.last_class_pass_count <= 0:
+            self.last_infer_reason = "no_candidates_after_class_filter"
+        else:
+            self.last_infer_reason = "candidate_selection_failed"
         timing.postprocess_end_ros_ns = int(self.get_clock().now().nanoseconds)
         timing.postprocess_end_perf_ns = perf_counter_ns()
         return det
@@ -467,8 +509,26 @@ class LeaderTracker(DetectionNodeMixin, EventEmitterMixin, Node):
         candidates = list(result.detections)
         for det in candidates:
             det.source = "tracker"
+        self.last_raw_output_count = int(result.raw_prediction_count)
+        self.last_conf_pass_count = int(result.conf_pass_count)
+        self.last_class_pass_count = int(result.class_pass_count)
+        self.last_nms_keep_count = int(result.nms_keep_count)
+        self.last_candidate_count = len(candidates)
+        self.last_raw_best_conf = float(result.raw_best_conf)
+        self.last_class_best_conf = float(result.class_best_conf)
         det = self._choose_candidate(candidates, stamp_ns_value)
-        self.last_infer_reason = "none" if det is not None else "no_detection"
+        if det is not None:
+            self.last_infer_reason = "none"
+        elif self.last_raw_output_count <= 0:
+            self.last_infer_reason = "no_raw_predictions"
+        elif self.last_conf_pass_count <= 0:
+            self.last_infer_reason = "no_candidates_above_conf"
+        elif self.last_class_pass_count <= 0:
+            self.last_infer_reason = "no_candidates_after_class_filter"
+        elif self.last_nms_keep_count <= 0:
+            self.last_infer_reason = "no_candidates_after_nms"
+        else:
+            self.last_infer_reason = "candidate_selection_failed"
         return det
 
     def _track_detection(self, img_bgr: np.ndarray, stamp_ns_value: int, timing: FrameTiming) -> Optional[Detection2D]:
@@ -518,6 +578,20 @@ class LeaderTracker(DetectionNodeMixin, EventEmitterMixin, Node):
             "dropped_frames": self.dropped_frame_count,
             "stale_detections": self.stale_detection_count,
             "frame_index": timing.frame_index,
+            "raw_outputs": self.last_raw_output_count,
+            "raw_best_conf": self.last_raw_best_conf,
+            "conf_pass": self.last_conf_pass_count,
+            "class_best_conf": self.last_class_best_conf,
+            "class_pass": self.last_class_pass_count,
+            "nms_keep": self.last_nms_keep_count,
+            "candidates": self.last_candidate_count,
+            "selection": self.last_selection_reason,
+            "audit_frames": self.audit_frames_total,
+            "audit_ok": self.audit_ok_total,
+            "audit_no_det": self.audit_no_det_total,
+            "audit_decode_fail": self.audit_decode_fail_total,
+            "audit_yolo_disabled": self.audit_yolo_disabled_total,
+            "audit_infer_fail": self.audit_infer_fail_total,
         }
 
     def _publish_result(
@@ -529,6 +603,7 @@ class LeaderTracker(DetectionNodeMixin, EventEmitterMixin, Node):
         state: str,
         reason: str,
     ) -> None:
+        self.audit_frames_total += 1
         timing.publish_ros_ns = int(self.get_clock().now().nanoseconds)
         timing.publish_perf_ns = perf_counter_ns()
         timing.provider = self.current_provider or ""
@@ -545,6 +620,17 @@ class LeaderTracker(DetectionNodeMixin, EventEmitterMixin, Node):
         timing.stale_detections_total = self.stale_detection_count
         timing.valid_detection = det is not None
         timing.reason = reason
+        infer_failed = "infer_failed" in str(reason)
+        if state == "OK":
+            self.audit_ok_total += 1
+        elif state == "NO_DET":
+            self.audit_no_det_total += 1
+        elif state == "DECODE_FAIL":
+            self.audit_decode_fail_total += 1
+        elif state == "YOLO_DISABLED":
+            self.audit_yolo_disabled_total += 1
+        if infer_failed:
+            self.audit_infer_fail_total += 1
 
         if det is not None:
             self.last_selected_center = (det.u, det.v)

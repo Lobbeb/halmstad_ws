@@ -63,6 +63,11 @@ class FollowPointGenerator(Node):
         self.declare_parameter("follow_altitude_m", 7.0)
         self.declare_parameter("camera_x_offset_m", 0.0)
         self.declare_parameter("camera_y_offset_m", 0.0)
+        self.declare_parameter("predicted_lookahead_scale", 0.65)
+        self.declare_parameter("degraded_lookahead_scale", 0.35)
+        self.declare_parameter("degraded_point_alpha_scale", 0.45)
+        self.declare_parameter("predicted_recovery_blend", 0.18)
+        self.declare_parameter("degraded_recovery_blend", 0.42)
 
         self.uav_name = str(self.get_parameter("uav_name").value).strip() or "dji0"
         self.target_estimate_topic = str(self.get_parameter("target_estimate_topic").value).strip()
@@ -103,6 +108,11 @@ class FollowPointGenerator(Node):
         self.follow_altitude_m = float(self.get_parameter("follow_altitude_m").value)
         self.camera_x_offset_m = float(self.get_parameter("camera_x_offset_m").value)
         self.camera_y_offset_m = float(self.get_parameter("camera_y_offset_m").value)
+        self.predicted_lookahead_scale = float(self.get_parameter("predicted_lookahead_scale").value)
+        self.degraded_lookahead_scale = float(self.get_parameter("degraded_lookahead_scale").value)
+        self.degraded_point_alpha_scale = float(self.get_parameter("degraded_point_alpha_scale").value)
+        self.predicted_recovery_blend = float(self.get_parameter("predicted_recovery_blend").value)
+        self.degraded_recovery_blend = float(self.get_parameter("degraded_recovery_blend").value)
 
         if self.tick_hz <= 0.0:
             raise ValueError("tick_hz must be > 0")
@@ -128,6 +138,16 @@ class FollowPointGenerator(Node):
             raise ValueError("point_alpha must be within [0, 1]")
         if self.max_follow_point_jump_m < 0.0:
             raise ValueError("max_follow_point_jump_m must be >= 0")
+        if not (0.0 <= self.predicted_lookahead_scale <= 1.0):
+            raise ValueError("predicted_lookahead_scale must be within [0, 1]")
+        if not (0.0 <= self.degraded_lookahead_scale <= 1.0):
+            raise ValueError("degraded_lookahead_scale must be within [0, 1]")
+        if not (0.0 <= self.degraded_point_alpha_scale <= 1.0):
+            raise ValueError("degraded_point_alpha_scale must be within [0, 1]")
+        if not (0.0 <= self.predicted_recovery_blend <= 1.0):
+            raise ValueError("predicted_recovery_blend must be within [0, 1]")
+        if not (0.0 <= self.degraded_recovery_blend <= 1.0):
+            raise ValueError("degraded_recovery_blend must be within [0, 1]")
 
         now_msg = self.get_clock().now().to_msg()
         self.last_target_estimate = VisualTargetEstimate(stamp=now_msg, frame_id="", valid=False)
@@ -239,6 +259,8 @@ class FollowPointGenerator(Node):
         state: str,
         reason: str,
         policy_mode: str,
+        estimate_mode: str,
+        estimate_quality: float,
         target_x: Optional[float],
         target_y: Optional[float],
         target_speed_mps: float,
@@ -259,6 +281,8 @@ class FollowPointGenerator(Node):
             f"state={state} "
             f"reason={reason} "
             f"policy_mode={policy_mode} "
+            f"estimate_mode={estimate_mode} "
+            f"estimate_quality={estimate_quality:.3f} "
             f"estimate_age_ms={'na' if not math.isfinite(estimate_age_ms) else f'{estimate_age_ms:.1f}'} "
             f"track_id={self.last_target_estimate.track_id or 'none'} "
             f"target_speed_mps={target_speed_mps:.3f} "
@@ -329,12 +353,12 @@ class FollowPointGenerator(Node):
         self.last_target_world_stamp = now
         return math.hypot(self.target_world_vx_mps, self.target_world_vy_mps)
 
-    def _smooth_follow_xy(self, raw_x: float, raw_y: float) -> tuple[float, float]:
+    def _smooth_follow_xy(self, raw_x: float, raw_y: float, *, alpha_scale: float = 1.0) -> tuple[float, float]:
         if self.last_follow_point_msg is None:
             return raw_x, raw_y
         prev_x = float(self.last_follow_point_msg.pose.position.x)
         prev_y = float(self.last_follow_point_msg.pose.position.y)
-        alpha = self.point_alpha
+        alpha = max(0.0, min(1.0, self.point_alpha * alpha_scale))
         smooth_x = (1.0 - alpha) * prev_x + alpha * raw_x
         smooth_y = (1.0 - alpha) * prev_y + alpha * raw_y
         jump = math.hypot(smooth_x - prev_x, smooth_y - prev_y)
@@ -343,6 +367,22 @@ class FollowPointGenerator(Node):
             smooth_x = prev_x + (smooth_x - prev_x) * scale
             smooth_y = prev_y + (smooth_y - prev_y) * scale
         return smooth_x, smooth_y
+
+    @staticmethod
+    def _blend_follow_xy_toward_camera(
+        raw_x: float,
+        raw_y: float,
+        camera_pose: Pose2D,
+        blend: float,
+    ) -> tuple[float, float]:
+        blend = max(0.0, min(1.0, float(blend)))
+        if blend <= 0.0:
+            return raw_x, raw_y
+        keep = 1.0 - blend
+        return (
+            keep * float(raw_x) + blend * float(camera_pose.x),
+            keep * float(raw_y) + blend * float(camera_pose.y),
+        )
 
     def _update_heading_dir(self, now: Time, dir_x: float, dir_y: float) -> None:
         norm = math.hypot(dir_x, dir_y)
@@ -451,6 +491,8 @@ class FollowPointGenerator(Node):
         state = "INVALID"
         reason = "target_missing"
         policy_mode = "none"
+        estimate_mode = self.last_target_estimate.mode if self.last_target_estimate.valid else "LOST"
+        estimate_quality = self.last_target_estimate.quality if self.last_target_estimate.valid else 0.0
         camera_pose_src = "missing"
         target_x = None
         target_y = None
@@ -470,6 +512,8 @@ class FollowPointGenerator(Node):
         if estimate_fresh and uav_pose_fresh and camera_pose_ready:
             self.camera_pose = camera_pose
             self.camera_z = camera_z
+            estimate_mode = self.last_target_estimate.mode or "TRACKED"
+            estimate_quality = max(0.0, min(1.0, self.last_target_estimate.quality))
             target_xy = self._target_world_xy(self.last_target_estimate, now)
             if target_xy is not None:
                 target_x, target_y = target_xy
@@ -480,13 +524,33 @@ class FollowPointGenerator(Node):
                     state = "WAITING"
                     reason = "waiting_for_ugv_motion"
                 else:
-                    pred_target_x = float(target_x + self.target_world_vx_mps * self.lookahead_horizon_s)
-                    pred_target_y = float(target_y + self.target_world_vy_mps * self.lookahead_horizon_s)
-                    dir_x, dir_y, policy_mode = self._select_follow_heading(
+                    if estimate_mode == "DEGRADED":
+                        lookahead_scale = self.degraded_lookahead_scale
+                        alpha_scale = self.degraded_point_alpha_scale
+                        recovery_blend = self.degraded_recovery_blend
+                    elif estimate_mode == "PREDICTED":
+                        lookahead_scale = self.predicted_lookahead_scale
+                        alpha_scale = 0.75
+                        recovery_blend = self.predicted_recovery_blend
+                    else:
+                        lookahead_scale = 1.0
+                        alpha_scale = 1.0
+                        recovery_blend = 0.0
+                    effective_lookahead = self.lookahead_horizon_s * lookahead_scale * max(
+                        0.25, estimate_quality if estimate_mode != "TRACKED" else 1.0
+                    )
+                    pred_target_x = float(target_x + self.target_world_vx_mps * effective_lookahead)
+                    pred_target_y = float(target_y + self.target_world_vy_mps * effective_lookahead)
+                    dir_x, dir_y, _base_policy_mode = self._select_follow_heading(
                         now=now,
                         pred_target_x=pred_target_x,
                         pred_target_y=pred_target_y,
                         target_speed_mps=target_speed_mps,
+                    )
+                    policy_mode = (
+                        "recover"
+                        if estimate_mode == "DEGRADED"
+                        else ("predict" if estimate_mode == "PREDICTED" else _base_policy_mode)
                     )
 
                     perp_x = -dir_y
@@ -501,7 +565,17 @@ class FollowPointGenerator(Node):
                     horizontal_dist = horizontal_distance_for_euclidean(self.follow_distance_m, z_delta)
                     raw_follow_x = pred_target_x - horizontal_dist * dir_x + self.lateral_offset_m * perp_x
                     raw_follow_y = pred_target_y - horizontal_dist * dir_y + self.lateral_offset_m * perp_y
-                    follow_x, follow_y = self._smooth_follow_xy(raw_follow_x, raw_follow_y)
+                    raw_follow_x, raw_follow_y = self._blend_follow_xy_toward_camera(
+                        raw_follow_x,
+                        raw_follow_y,
+                        camera_pose,
+                        recovery_blend,
+                    )
+                    follow_x, follow_y = self._smooth_follow_xy(
+                        raw_follow_x,
+                        raw_follow_y,
+                        alpha_scale=alpha_scale,
+                    )
                     yaw_cmd = solve_yaw_to_target(
                         follow_x,
                         follow_y,
@@ -512,8 +586,8 @@ class FollowPointGenerator(Node):
                     )
                     follow_yaw = wrap_pi(float(yaw_cmd))
                     self._publish_follow_point(now, follow_x, follow_y, follow_z, follow_yaw)
-                    state = "ACTIVE"
-                    reason = "none"
+                    state = "DEGRADED" if estimate_mode == "DEGRADED" else ("PREDICTED" if estimate_mode == "PREDICTED" else "ACTIVE")
+                    reason = estimate_mode.lower()
             else:
                 reason = "target_projection_invalid"
         elif self.last_follow_point_msg is not None and self.last_valid_follow_point_time is not None:
@@ -549,6 +623,8 @@ class FollowPointGenerator(Node):
             state=state,
             reason=f"{reason}:{camera_pose_src}",
             policy_mode=policy_mode,
+            estimate_mode=estimate_mode,
+            estimate_quality=estimate_quality,
             target_x=target_x,
             target_y=target_y,
             target_speed_mps=target_speed_mps,

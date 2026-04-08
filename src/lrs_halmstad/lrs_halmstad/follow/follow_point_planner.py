@@ -6,10 +6,15 @@ from typing import Optional
 
 import rclpy
 from geometry_msgs.msg import PoseStamped
+from nav_msgs.msg import Odometry
 from rclpy.node import Node
 from rclpy.time import Time
 from std_msgs.msg import String
 
+from lrs_halmstad.common.visual_target_estimate import (
+    VisualTargetEstimate,
+    decode_visual_target_estimate_msg,
+)
 from lrs_halmstad.follow.follow_math import (
     Pose2D,
     clamp_point_to_radius,
@@ -28,12 +33,14 @@ class FollowPointPlanner(Node):
 
         self.declare_parameter("uav_name", "dji0")
         self.declare_parameter("follow_point_topic", "/coord/leader_follow_point")
+        self.declare_parameter("target_estimate_topic", "/coord/leader_visual_target_estimate")
         self.declare_parameter("uav_pose_topic", "")
         self.declare_parameter("out_topic", "/coord/leader_planned_target")
         self.declare_parameter("status_topic", "/coord/leader_planned_target_status")
         self.declare_parameter("publish_status", True)
         self.declare_parameter("tick_hz", 20.0)
         self.declare_parameter("follow_point_timeout_s", 0.5)
+        self.declare_parameter("target_estimate_timeout_s", 1.0)
         self.declare_parameter("pose_timeout_s", 0.5)
         self.declare_parameter("hold_timeout_s", 0.5)
         self.declare_parameter("xy_alpha", 0.45)
@@ -47,9 +54,15 @@ class FollowPointPlanner(Node):
         self.declare_parameter("fixed_z_m", 7.0)
         self.declare_parameter("stale_fp_thresh_m", 0.05)
         self.declare_parameter("stale_alpha_scale", 0.3)
+        self.declare_parameter("predicted_xy_alpha_scale", 0.70)
+        self.declare_parameter("degraded_xy_alpha_scale", 0.45)
+        self.declare_parameter("predicted_yaw_alpha_scale", 0.80)
+        self.declare_parameter("degraded_yaw_alpha_scale", 0.55)
+        self.declare_parameter("degraded_step_scale", 0.65)
 
         self.uav_name = str(self.get_parameter("uav_name").value).strip() or "dji0"
         self.follow_point_topic = str(self.get_parameter("follow_point_topic").value).strip()
+        self.target_estimate_topic = str(self.get_parameter("target_estimate_topic").value).strip()
         self.uav_pose_topic = (
             str(self.get_parameter("uav_pose_topic").value).strip()
             or f"/{self.uav_name}/pose"
@@ -59,6 +72,7 @@ class FollowPointPlanner(Node):
         self.publish_status = coerce_bool(self.get_parameter("publish_status").value)
         self.tick_hz = float(self.get_parameter("tick_hz").value)
         self.follow_point_timeout_s = float(self.get_parameter("follow_point_timeout_s").value)
+        self.target_estimate_timeout_s = float(self.get_parameter("target_estimate_timeout_s").value)
         self.pose_timeout_s = float(self.get_parameter("pose_timeout_s").value)
         self.hold_timeout_s = float(self.get_parameter("hold_timeout_s").value)
         self.xy_alpha = float(self.get_parameter("xy_alpha").value)
@@ -72,11 +86,26 @@ class FollowPointPlanner(Node):
         self.fixed_z_m = float(self.get_parameter("fixed_z_m").value)
         self.stale_fp_thresh_m = float(self.get_parameter("stale_fp_thresh_m").value)
         self.stale_alpha_scale = max(0.0, min(1.0, float(self.get_parameter("stale_alpha_scale").value)))
+        self.predicted_xy_alpha_scale = max(
+            0.0, min(1.0, float(self.get_parameter("predicted_xy_alpha_scale").value))
+        )
+        self.degraded_xy_alpha_scale = max(
+            0.0, min(1.0, float(self.get_parameter("degraded_xy_alpha_scale").value))
+        )
+        self.predicted_yaw_alpha_scale = max(
+            0.0, min(1.0, float(self.get_parameter("predicted_yaw_alpha_scale").value))
+        )
+        self.degraded_yaw_alpha_scale = max(
+            0.0, min(1.0, float(self.get_parameter("degraded_yaw_alpha_scale").value))
+        )
+        self.degraded_step_scale = max(0.0, min(1.0, float(self.get_parameter("degraded_step_scale").value)))
 
         if self.tick_hz <= 0.0:
             raise ValueError("tick_hz must be > 0")
         if self.follow_point_timeout_s <= 0.0:
             raise ValueError("follow_point_timeout_s must be > 0")
+        if self.target_estimate_timeout_s <= 0.0:
+            raise ValueError("target_estimate_timeout_s must be > 0")
         if self.pose_timeout_s <= 0.0:
             raise ValueError("pose_timeout_s must be > 0")
         if self.hold_timeout_s < 0.0:
@@ -99,11 +128,14 @@ class FollowPointPlanner(Node):
 
         self.last_follow_point: Optional[PoseStamped] = None
         self.last_follow_point_stamp: Optional[Time] = None
+        self.last_target_estimate = VisualTargetEstimate(stamp=self.get_clock().now().to_msg(), frame_id="", valid=False)
+        self.last_target_estimate_stamp: Optional[Time] = None
         self.last_planned_target: Optional[PoseStamped] = None
         self.last_planned_target_time: Optional[Time] = None
         self._prev_fp_xy: Optional[tuple[float, float]] = None
 
         self.create_subscription(PoseStamped, self.follow_point_topic, self.on_follow_point, 1)
+        self.create_subscription(Odometry, self.target_estimate_topic, self.on_target_estimate, 1)
         self.create_subscription(PoseStamped, self.uav_pose_topic, self.on_uav_pose, 10)
         self.planned_target_pub = self.create_publisher(PoseStamped, self.out_topic, 10)
         self.status_pub = self.create_publisher(String, self.status_topic, 10) if self.publish_status else None
@@ -120,6 +152,13 @@ class FollowPointPlanner(Node):
             self.last_follow_point_stamp = Time.from_msg(msg.header.stamp)
         except Exception:
             self.last_follow_point_stamp = self.get_clock().now()
+
+    def on_target_estimate(self, msg: Odometry) -> None:
+        self.last_target_estimate = decode_visual_target_estimate_msg(msg)
+        try:
+            self.last_target_estimate_stamp = Time.from_msg(msg.header.stamp)
+        except Exception:
+            self.last_target_estimate_stamp = self.get_clock().now()
 
     def on_uav_pose(self, msg: PoseStamped) -> None:
         p = msg.pose.position
@@ -218,6 +257,8 @@ class FollowPointPlanner(Node):
         state: str,
         reason: str,
         planner_mode: str,
+        estimate_mode: str,
+        estimate_quality: float,
         raw_x: Optional[float],
         raw_y: Optional[float],
         raw_z: Optional[float],
@@ -241,6 +282,11 @@ class FollowPointPlanner(Node):
             if self.last_follow_point_stamp is None
             else max(0.0, (now - self.last_follow_point_stamp).nanoseconds * 1e-6)
         )
+        target_estimate_age_ms = (
+            float("nan")
+            if self.last_target_estimate_stamp is None
+            else max(0.0, (now - self.last_target_estimate_stamp).nanoseconds * 1e-6)
+        )
         msg = String()
         msg.data = (
             f"state={state} "
@@ -248,6 +294,9 @@ class FollowPointPlanner(Node):
             f"planner_mode={planner_mode} "
             f"pose_age_ms={'na' if not math.isfinite(pose_age_ms) else f'{pose_age_ms:.1f}'} "
             f"follow_point_age_ms={'na' if not math.isfinite(follow_point_age_ms) else f'{follow_point_age_ms:.1f}'} "
+            f"target_estimate_age_ms={'na' if not math.isfinite(target_estimate_age_ms) else f'{target_estimate_age_ms:.1f}'} "
+            f"estimate_mode={estimate_mode} "
+            f"estimate_quality={estimate_quality:.3f} "
             f"raw_x={'na' if raw_x is None else f'{raw_x:.3f}'} "
             f"raw_y={'na' if raw_y is None else f'{raw_y:.3f}'} "
             f"raw_z={'na' if raw_z is None else f'{raw_z:.3f}'} "
@@ -265,7 +314,13 @@ class FollowPointPlanner(Node):
         now = self.get_clock().now()
         pose_fresh = self.have_pose and self._is_fresh(self.last_pose_stamp, self.pose_timeout_s, now)
         follow_point_fresh = self._is_fresh(self.last_follow_point_stamp, self.follow_point_timeout_s, now)
+        estimate_fresh = (
+            self.last_target_estimate.valid
+            and self._is_fresh(self.last_target_estimate_stamp, self.target_estimate_timeout_s, now)
+        )
         hold_active = self._is_fresh(self.last_planned_target_time, self.hold_timeout_s, now)
+        estimate_mode = self.last_target_estimate.mode if estimate_fresh else "LOST"
+        estimate_quality = self.last_target_estimate.quality if estimate_fresh else 0.0
 
         state = "WAIT_POSE"
         reason = "pose_missing"
@@ -284,28 +339,42 @@ class FollowPointPlanner(Node):
                     base_x, base_y, _, base_yaw, _ = self._base_plan()
                     # Adaptive alpha: reduce when follow point is stationary (cached upstream)
                     eff_alpha = self.xy_alpha
+                    eff_yaw_alpha = self.yaw_alpha
+                    step_limit = self.max_planned_step_m
+                    yaw_step_limit = self.max_planned_yaw_step_rad
+                    if estimate_mode == "PREDICTED":
+                        eff_alpha *= self.predicted_xy_alpha_scale
+                        eff_yaw_alpha *= self.predicted_yaw_alpha_scale
+                    elif estimate_mode == "DEGRADED":
+                        eff_alpha *= self.degraded_xy_alpha_scale
+                        eff_yaw_alpha *= self.degraded_yaw_alpha_scale
+                        step_limit *= self.degraded_step_scale
+                        yaw_step_limit *= self.degraded_step_scale
+                    if estimate_mode in ("PREDICTED", "DEGRADED"):
+                        eff_alpha *= max(0.35, min(1.0, estimate_quality if estimate_quality > 0.0 else 0.5))
+                        eff_yaw_alpha *= max(0.45, min(1.0, estimate_quality if estimate_quality > 0.0 else 0.6))
                     if self._prev_fp_xy is not None:
                         fp_delta = math.hypot(float(raw_x) - self._prev_fp_xy[0],
                                               float(raw_y) - self._prev_fp_xy[1])
                         if fp_delta < self.stale_fp_thresh_m:
-                            eff_alpha = self.xy_alpha * self.stale_alpha_scale
+                            eff_alpha *= self.stale_alpha_scale
                     self._prev_fp_xy = (float(raw_x), float(raw_y))
                     interp_x = base_x + eff_alpha * (float(raw_x) - base_x)
                     interp_y = base_y + eff_alpha * (float(raw_y) - base_y)
-                    if self.max_planned_step_m > 0.0:
+                    if step_limit > 0.0:
                         interp_x, interp_y = clamp_point_to_radius(
                             base_x,
                             base_y,
                             interp_x,
                             interp_y,
-                            self.max_planned_step_m,
+                            step_limit,
                         )
                     step_xy_m = math.hypot(interp_x - base_x, interp_y - base_y)
 
                     yaw_error = wrap_pi(float(raw_yaw) - base_yaw)
                     step_yaw_rad = self._clamp_symmetric(
-                        self.yaw_alpha * yaw_error,
-                        self.max_planned_yaw_step_rad,
+                        eff_yaw_alpha * yaw_error,
+                        yaw_step_limit,
                     )
                     planned_x = float(interp_x)
                     planned_y = float(interp_y)
@@ -328,9 +397,9 @@ class FollowPointPlanner(Node):
                         yaw_rad=planned_yaw,
                         refresh_valid_time=True,
                     )
-                    state = "ACTIVE"
-                    reason = "follow_point"
-                    planner_mode = "interpolate"
+                    state = "DEGRADED" if estimate_mode == "DEGRADED" else ("PREDICTED" if estimate_mode == "PREDICTED" else "ACTIVE")
+                    reason = "follow_point_degraded" if estimate_mode == "DEGRADED" else ("follow_point_predicted" if estimate_mode == "PREDICTED" else "follow_point")
+                    planner_mode = "degraded" if estimate_mode == "DEGRADED" else ("predicted" if estimate_mode == "PREDICTED" else "interpolate")
                 else:
                     reason = "follow_point_invalid"
             elif hold_active and self.last_planned_target is not None:
@@ -361,6 +430,8 @@ class FollowPointPlanner(Node):
             state=state,
             reason=reason,
             planner_mode=planner_mode,
+            estimate_mode=estimate_mode,
+            estimate_quality=estimate_quality,
             raw_x=raw_x,
             raw_y=raw_y,
             raw_z=raw_z,

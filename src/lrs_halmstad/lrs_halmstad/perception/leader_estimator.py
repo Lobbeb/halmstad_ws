@@ -182,6 +182,11 @@ class LeaderEstimator(EventEmitterMixin, Node):
         self.last_fault_stamp: Optional[Time] = None
         self.last_debug_state: str = "INIT"
         self.last_debug_det: Optional[Detection2D] = None
+        self.audit_ticks_total = 0
+        self.audit_ok_total = 0
+        self.audit_no_det_total = 0
+        self.audit_stale_total = 0
+        self.audit_estimate_fail_total = 0
 
         # ---- estimate caching (prevent re-projection of stale detections) ----
         self._last_projected_det_rx_ns: int = -1
@@ -301,6 +306,48 @@ class LeaderEstimator(EventEmitterMixin, Node):
         if self.last_external_det_stamp is None:
             return self.last_external_det_reject_reason if self.last_external_det_reject_reason != "none" else "none"
         return "ok" if self.external_detection_fresh(now) else "stale"
+
+    def _detector_status_fields(self, now: Time) -> dict[str, str]:
+        if not self.last_external_det_status_text:
+            return {}
+        if not self._is_fresh(self.last_external_det_status_stamp, self.external_detection_timeout_s, now):
+            return {}
+        return parse_status_line(self.last_external_det_status_text)
+
+    def _detector_state(self, now: Time) -> str:
+        return self._detector_status_fields(now).get("state", "na")
+
+    def _detector_status_reason(self, now: Time) -> str:
+        return self._detector_status_fields(now).get("reason", "na")
+
+    def _no_det_origin(self, now: Time) -> str:
+        if self.last_external_det_reject_reason != "none":
+            return "detector_message_rejected"
+        fields = self._detector_status_fields(now)
+        if not fields:
+            return "detector_missing" if self.last_external_det_stamp is None else "detector_stale"
+        det_state = fields.get("state", "").strip().upper()
+        if det_state == "NO_DET":
+            return "tracker_no_det"
+        if det_state == "OK":
+            return "detector_stale_to_estimator"
+        if det_state == "DECODE_FAIL":
+            return "tracker_decode_fail"
+        if det_state == "YOLO_DISABLED":
+            return "tracker_disabled"
+        return f"tracker_{det_state.lower()}" if det_state else "detector_unknown"
+
+    def _record_audit_state(self, state: str) -> None:
+        self.audit_ticks_total += 1
+        state = str(state).strip().upper()
+        if state == "OK":
+            self.audit_ok_total += 1
+        elif state == "NO_DET":
+            self.audit_no_det_total += 1
+        elif state == "STALE":
+            self.audit_stale_total += 1
+        else:
+            self.audit_estimate_fail_total += 1
 
     def _detection_publish_latency_ms(self, metadata: dict[str, object]) -> Optional[float]:
         raw = metadata.get("camera_to_publish_latency_ms")
@@ -794,7 +841,7 @@ class LeaderEstimator(EventEmitterMixin, Node):
         msg.vector.z = float(planar)
         self.estimate_error_pub.publish(msg)
 
-    def _status_line(self, state: str, reason: str, now: Time) -> str:
+    def _status_line(self, state: str, reason: str, now: Time, *, audit_origin: str = "none") -> str:
         reason = str(reason).strip() or "none"
         err_dx = "na" if self.last_estimate_error_dx_m is None else f"{self.last_estimate_error_dx_m:.2f}"
         err_dy = "na" if self.last_estimate_error_dy_m is None else f"{self.last_estimate_error_dy_m:.2f}"
@@ -808,12 +855,17 @@ class LeaderEstimator(EventEmitterMixin, Node):
         real_z_text = "na" if real_z is None else f"{real_z:.2f}"
         return (
             f"state={state} reason={reason} "
+            f"audit_origin={audit_origin} "
+            f"detector_state={self._detector_state(now)} detector_status_reason={self._detector_status_reason(now)} "
             f"detector_reason={self._detector_reason(now)} detector_age_ms={self._detector_age_ms(now):.1f} "
             f"detector_publish_latency_ms={self._detector_publish_latency_ms():.1f} "
             f"conf={self.last_det_conf:.3f} latency_ms={self.last_latency_ms:.1f} "
             f"range_src={self.last_range_source} range_mode={self.range_mode} range_m={self.last_range_used_m:.2f} "
             f"bearing_deg={self.last_bearing_used_deg:.1f} reject_reason={self.last_reject_reason} "
             f"heading_src={self.last_heading_source} "
+            f"audit_ticks={self.audit_ticks_total} audit_ok={self.audit_ok_total} "
+            f"audit_no_det={self.audit_no_det_total} audit_stale={self.audit_stale_total} "
+            f"audit_estimate_fail={self.audit_estimate_fail_total} "
             f"est_d_m={est_d_text} est_xy_m={est_xy_text} "
             f"real_d_m={real_d_text} real_xy_m={real_xy_text} real_z_m={real_z_text} "
             f"err_dx_m={err_dx} err_dy_m={err_dy} err_planar_m={err_planar}"
@@ -1062,8 +1114,9 @@ class LeaderEstimator(EventEmitterMixin, Node):
             # Same detection as last projection — republish cached estimate
             self._publish_estimate(
                 self._cached_estimate_pose, now, det.track_id)
+            self._record_audit_state("OK")
             self.publish_status_msg(
-                self._status_line("OK", "estimate_cached", now))
+                self._status_line("OK", "estimate_cached", now, audit_origin="estimate_cached"))
             self.last_debug_state = "OK"
             self._publish_debug_image("OK", "estimate_cached", det)
             return
@@ -1073,7 +1126,8 @@ class LeaderEstimator(EventEmitterMixin, Node):
             self.last_range_source = "none"
             self.last_range_used_m = -1.0
             self.last_heading_source = "none"
-            self.publish_status_msg(self._status_line("STALE", "camera_info_missing", now))
+            self._record_audit_state("STALE")
+            self.publish_status_msg(self._status_line("STALE", "camera_info_missing", now, audit_origin="estimator_prereq"))
             self.publish_distance_status_msg(now)
             self._record_fault("STALE", "camera_info_missing", now)
             self._publish_debug_image("STALE", "camera_info_missing", det)
@@ -1083,7 +1137,8 @@ class LeaderEstimator(EventEmitterMixin, Node):
             self.last_range_source = "none"
             self.last_range_used_m = -1.0
             self.last_heading_source = "none"
-            self.publish_status_msg(self._status_line("STALE", "image_stale", now))
+            self._record_audit_state("STALE")
+            self.publish_status_msg(self._status_line("STALE", "image_stale", now, audit_origin="estimator_prereq"))
             self.publish_distance_status_msg(now)
             self._record_fault("STALE", "image_stale", now)
             self._publish_debug_image("STALE", "image_stale", det)
@@ -1093,7 +1148,8 @@ class LeaderEstimator(EventEmitterMixin, Node):
             self.last_range_source = "none"
             self.last_range_used_m = -1.0
             self.last_heading_source = "none"
-            self.publish_status_msg(self._status_line("STALE", "uav_pose_stale", now))
+            self._record_audit_state("STALE")
+            self.publish_status_msg(self._status_line("STALE", "uav_pose_stale", now, audit_origin="estimator_prereq"))
             self.publish_distance_status_msg(now)
             self._record_fault("STALE", "uav_pose_stale", now)
             self._publish_debug_image("STALE", "uav_pose_stale", det)
@@ -1106,7 +1162,8 @@ class LeaderEstimator(EventEmitterMixin, Node):
             reason = "no_detection" if self.last_external_det_stamp is not None else "detection_missing"
             if self.last_external_det_reject_reason != "none":
                 reason = self.last_external_det_reject_reason
-            self.publish_status_msg(self._status_line("NO_DET", reason, now))
+            self._record_audit_state("NO_DET")
+            self.publish_status_msg(self._status_line("NO_DET", reason, now, audit_origin=self._no_det_origin(now)))
             self.publish_distance_status_msg(now)
             self._record_fault("NO_DET", reason, now)
             self._publish_debug_image("NO_DET", reason, None)
@@ -1118,7 +1175,8 @@ class LeaderEstimator(EventEmitterMixin, Node):
         except ValueError as exc:
             reason = str(exc) or "estimate_failed"
             self.last_heading_source = "none"
-            self.publish_status_msg(self._status_line("STALE", reason, now))
+            self._record_audit_state("STALE")
+            self.publish_status_msg(self._status_line("STALE", reason, now, audit_origin="estimator_reject"))
             self.publish_distance_status_msg(now)
             self._record_fault("STALE", reason, now)
             self._publish_debug_image("STALE", reason, det)
@@ -1126,7 +1184,8 @@ class LeaderEstimator(EventEmitterMixin, Node):
         except Exception as exc:
             reason = f"estimate_failed:{exc}"
             self.last_heading_source = "none"
-            self.publish_status_msg(self._status_line("STALE", reason, now))
+            self._record_audit_state("STALE")
+            self.publish_status_msg(self._status_line("STALE", reason, now, audit_origin="estimator_exception"))
             self.publish_distance_status_msg(now)
             self._record_fault("STALE", reason, now)
             self._publish_debug_image("STALE", reason, det)
@@ -1139,7 +1198,8 @@ class LeaderEstimator(EventEmitterMixin, Node):
         self._last_projected_det_rx_ns = det_rx_ns
 
         self._publish_estimate(pose, now, det.track_id)
-        self.publish_status_msg(self._status_line("OK", "none", now))
+        self._record_audit_state("OK")
+        self.publish_status_msg(self._status_line("OK", "none", now, audit_origin="estimate_ok"))
         self.publish_distance_status_msg(now)
         self.last_debug_state = "OK"
         self.last_debug_det = det

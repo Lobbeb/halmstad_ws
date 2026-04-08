@@ -52,6 +52,17 @@ class VisualTargetEstimator(Node):
         self.declare_parameter("velocity_beta_projected", 0.35)
         self.declare_parameter("velocity_beta_area", 0.18)
         self.declare_parameter("max_velocity_mps", 8.0)
+        self.declare_parameter("degraded_after_s", 0.75)
+        self.declare_parameter("hard_lost_after_s", 1.35)
+        self.declare_parameter("continuity_hit_gain", 0.18)
+        self.declare_parameter("continuity_miss_decay_per_s", 1.10)
+        self.declare_parameter("predicted_velocity_decay", 0.92)
+        self.declare_parameter("degraded_velocity_decay", 0.65)
+        self.declare_parameter("visibility_center_weight", 0.35)
+        self.declare_parameter("visibility_edge_weight", 0.40)
+        self.declare_parameter("visibility_area_weight", 0.25)
+        self.declare_parameter("visibility_center_soft_radius_norm", 0.60)
+        self.declare_parameter("visibility_edge_soft_margin_norm", 0.18)
 
         self.uav_name = str(self.get_parameter("uav_name").value).strip() or "dji0"
         self.selected_target_topic = str(self.get_parameter("selected_target_topic").value).strip()
@@ -83,6 +94,21 @@ class VisualTargetEstimator(Node):
         self.velocity_beta_projected = float(self.get_parameter("velocity_beta_projected").value)
         self.velocity_beta_area = float(self.get_parameter("velocity_beta_area").value)
         self.max_velocity_mps = float(self.get_parameter("max_velocity_mps").value)
+        self.degraded_after_s = float(self.get_parameter("degraded_after_s").value)
+        self.hard_lost_after_s = float(self.get_parameter("hard_lost_after_s").value)
+        self.continuity_hit_gain = float(self.get_parameter("continuity_hit_gain").value)
+        self.continuity_miss_decay_per_s = float(self.get_parameter("continuity_miss_decay_per_s").value)
+        self.predicted_velocity_decay = float(self.get_parameter("predicted_velocity_decay").value)
+        self.degraded_velocity_decay = float(self.get_parameter("degraded_velocity_decay").value)
+        self.visibility_center_weight = float(self.get_parameter("visibility_center_weight").value)
+        self.visibility_edge_weight = float(self.get_parameter("visibility_edge_weight").value)
+        self.visibility_area_weight = float(self.get_parameter("visibility_area_weight").value)
+        self.visibility_center_soft_radius_norm = float(
+            self.get_parameter("visibility_center_soft_radius_norm").value
+        )
+        self.visibility_edge_soft_margin_norm = float(
+            self.get_parameter("visibility_edge_soft_margin_norm").value
+        )
 
         if self.tick_hz <= 0.0:
             raise ValueError("tick_hz must be > 0")
@@ -90,6 +116,10 @@ class VisualTargetEstimator(Node):
             raise ValueError("target_timeout_s must be > 0")
         if self.prediction_max_gap_s < 0.0:
             raise ValueError("prediction_max_gap_s must be >= 0")
+        if self.degraded_after_s < self.prediction_max_gap_s:
+            raise ValueError("degraded_after_s must be >= prediction_max_gap_s")
+        if self.hard_lost_after_s < self.degraded_after_s:
+            raise ValueError("hard_lost_after_s must be >= degraded_after_s")
         if self.range_signal_mode not in ("auto", "projected", "area"):
             raise ValueError("range_signal_mode must be one of: auto, projected, area")
         if self.reference_range_m <= 0.0 or self.reference_area_norm <= 0.0:
@@ -105,6 +135,20 @@ class VisualTargetEstimator(Node):
             raise ValueError("auto_projected_reacquire_ticks/auto_projected_loss_ticks must be >= 1")
         if self.max_velocity_mps < 0.0:
             raise ValueError("max_velocity_mps must be >= 0")
+        if self.continuity_hit_gain < 0.0:
+            raise ValueError("continuity_hit_gain must be >= 0")
+        if self.continuity_miss_decay_per_s < 0.0:
+            raise ValueError("continuity_miss_decay_per_s must be >= 0")
+        if not (0.0 <= self.predicted_velocity_decay <= 1.0):
+            raise ValueError("predicted_velocity_decay must be within [0, 1]")
+        if not (0.0 <= self.degraded_velocity_decay <= 1.0):
+            raise ValueError("degraded_velocity_decay must be within [0, 1]")
+        if self.visibility_center_weight < 0.0 or self.visibility_edge_weight < 0.0 or self.visibility_area_weight < 0.0:
+            raise ValueError("visibility weights must be >= 0")
+        if self.visibility_center_soft_radius_norm <= 0.0:
+            raise ValueError("visibility_center_soft_radius_norm must be > 0")
+        if self.visibility_edge_soft_margin_norm <= 0.0:
+            raise ValueError("visibility_edge_soft_margin_norm must be > 0")
 
         self.camera_fx: Optional[float] = None
         self.camera_fy: Optional[float] = None
@@ -127,6 +171,10 @@ class VisualTargetEstimator(Node):
         self.projected_reacquire_streak = 0
         self.projected_loss_streak = 0
         self.last_status_state = "INIT"
+        self.continuity_score = 0.0
+        self.consecutive_hits = 0
+        self.consecutive_misses = 0
+        self.last_visibility_score = 0.0
 
         self.create_subscription(Detection2DArray, self.selected_target_topic, self.on_selected_target, 1)
         self.create_subscription(CameraInfo, self.camera_info_topic, self.on_camera_info, 10)
@@ -214,6 +262,58 @@ class VisualTargetEstimator(Node):
             return None
         area_ratio = self.reference_area_norm / max(float(area_norm), 1e-9)
         return self.reference_range_m * math.sqrt(max(area_ratio, 1e-9))
+
+    def _visibility_score(
+        self,
+        target: SelectedTargetState,
+        area_norm: Optional[float],
+    ) -> float:
+        weighted_score = 0.0
+        total_weight = 0.0
+
+        if self.camera_width is not None and self.camera_height is not None:
+            half_w = max(1.0, 0.5 * float(self.camera_width))
+            half_h = max(1.0, 0.5 * float(self.camera_height))
+            norm_x = abs((float(target.bbox_center_x_px) - half_w) / half_w)
+            norm_y = abs((float(target.bbox_center_y_px) - half_h) / half_h)
+            center_radius = math.hypot(norm_x, norm_y)
+            center_score = self._clamp01(
+                1.0 - (center_radius / max(self.visibility_center_soft_radius_norm, 1e-6))
+            )
+
+            left_margin = float(target.bbox_center_x_px) - 0.5 * max(0.0, float(target.bbox_size_x_px))
+            right_margin = float(self.camera_width) - (
+                float(target.bbox_center_x_px) + 0.5 * max(0.0, float(target.bbox_size_x_px))
+            )
+            top_margin = float(target.bbox_center_y_px) - 0.5 * max(0.0, float(target.bbox_size_y_px))
+            bottom_margin = float(self.camera_height) - (
+                float(target.bbox_center_y_px) + 0.5 * max(0.0, float(target.bbox_size_y_px))
+            )
+            edge_margin_norm = min(
+                max(0.0, left_margin) / half_w,
+                max(0.0, right_margin) / half_w,
+                max(0.0, top_margin) / half_h,
+                max(0.0, bottom_margin) / half_h,
+            )
+            edge_score = self._clamp01(
+                edge_margin_norm / max(self.visibility_edge_soft_margin_norm, 1e-6)
+            )
+
+            weighted_score += self.visibility_center_weight * center_score
+            total_weight += self.visibility_center_weight
+            weighted_score += self.visibility_edge_weight * edge_score
+            total_weight += self.visibility_edge_weight
+
+        if self._area_available(area_norm):
+            area_score = self._clamp01(
+                math.sqrt(float(area_norm) / max(self.reference_area_norm, 1e-9))
+            )
+            weighted_score += self.visibility_area_weight * area_score
+            total_weight += self.visibility_area_weight
+
+        if total_weight <= 1e-9:
+            return 1.0
+        return self._clamp01(weighted_score / total_weight)
 
     def _select_range_source(self, projected_available: bool, area_available: bool) -> str:
         if self.range_signal_mode == "projected":
@@ -304,6 +404,55 @@ class VisualTargetEstimator(Node):
         limit = max(0.0, float(limit))
         return max(-limit, min(limit, float(value)))
 
+    @staticmethod
+    def _clamp01(value: float) -> float:
+        return max(0.0, min(1.0, float(value)))
+
+    def _bump_continuity_on_measurement(self, target: SelectedTargetState) -> None:
+        same_track = bool(
+            target.track_id
+            and self.estimate.track_id
+            and str(target.track_id) == str(self.estimate.track_id)
+        )
+        base_gain = self.continuity_hit_gain * (0.50 + 0.50 * max(0.0, min(1.0, float(target.confidence))))
+        if same_track:
+            self.consecutive_hits += 1
+            self.consecutive_misses = 0
+            self.continuity_score = self._clamp01(self.continuity_score + base_gain)
+        else:
+            self.consecutive_hits = 1
+            self.consecutive_misses = 0
+            self.continuity_score = self._clamp01(max(0.20, 0.35 + 0.45 * float(target.confidence)))
+
+    def _degrade_continuity_for_gap(self, dt_s: float) -> None:
+        self.consecutive_hits = 0
+        self.consecutive_misses += 1
+        self.continuity_score = self._clamp01(
+            self.continuity_score - self.continuity_miss_decay_per_s * max(0.0, dt_s)
+        )
+
+    def _tracked_quality(self, target: SelectedTargetState, visibility_score: float) -> float:
+        return self._clamp01(
+            0.18
+            + 0.34 * float(target.confidence)
+            + 0.23 * self.continuity_score
+            + 0.25 * visibility_score
+        )
+
+    def _gap_quality(self, gap_s: float, *, degraded: bool) -> float:
+        visibility_factor = 0.65 + 0.35 * self.last_visibility_score
+        if degraded:
+            horizon = max(1e-3, self.hard_lost_after_s - self.degraded_after_s)
+            progress = max(0.0, min(1.0, (gap_s - self.degraded_after_s) / horizon))
+            return self._clamp01(
+                (1.0 - progress) * (0.18 + 0.55 * self.continuity_score) * visibility_factor
+            )
+        horizon = max(1e-3, self.prediction_max_gap_s)
+        progress = max(0.0, min(1.0, gap_s / horizon))
+        return self._clamp01(
+            (1.0 - 0.60 * progress) * (0.35 + 0.55 * self.continuity_score) * visibility_factor
+        )
+
     def _publish_status(
         self,
         *,
@@ -336,6 +485,14 @@ class VisualTargetEstimator(Node):
             f"projected_loss_streak={self.projected_loss_streak} "
             f"track_id={self.estimate.track_id or target.track_id or 'none'} "
             f"conf={target.confidence:.3f} "
+            f"quality={self.estimate.quality:.3f} "
+            f"mode={self.estimate.mode or state} "
+            f"target_age_s={'na' if not math.isfinite(self.estimate.target_age_s) else f'{self.estimate.target_age_s:.2f}'} "
+            f"predicted_age_s={self.estimate.predicted_age_s:.2f} "
+            f"continuity={self.estimate.continuity_score:.3f} "
+            f"visibility={self.last_visibility_score:.3f} "
+            f"hits={self.estimate.consecutive_hits} "
+            f"misses={self.estimate.consecutive_misses} "
             f"range_m={'na' if range_m is None or not math.isfinite(range_m) else f'{range_m:.2f}'} "
             f"projected_range_m={'na' if projected_range_m is None or not math.isfinite(projected_range_m) else f'{projected_range_m:.2f}'} "
             f"area_norm={'na' if area_norm is None or not math.isfinite(area_norm) else f'{area_norm:.4f}'} "
@@ -351,14 +508,25 @@ class VisualTargetEstimator(Node):
         self.status_pub.publish(msg)
 
     def _publish_invalid(self, now: Time) -> None:
-        self.estimate = VisualTargetEstimate(stamp=now.to_msg(), frame_id=self.camera_frame_id, valid=False)
+        self.estimate = VisualTargetEstimate(
+            stamp=now.to_msg(),
+            frame_id=self.camera_frame_id,
+            valid=False,
+            mode="LOST",
+            quality=0.0,
+            target_age_s=math.nan,
+            predicted_age_s=0.0,
+            continuity_score=self.continuity_score,
+            consecutive_hits=self.consecutive_hits,
+            consecutive_misses=self.consecutive_misses,
+        )
         self.out_pub.publish(encode_visual_target_estimate_msg(self.estimate))
 
     def on_tick(self) -> None:
         now = self.get_clock().now()
         dt_s = self._dt_s(now)
         target = self._current_target(now)
-        state = "INVALID"
+        state = "LOST"
         reason = "target_missing"
         norm_mode = "missing"
         measurement_source = self.active_range_source
@@ -380,7 +548,7 @@ class VisualTargetEstimator(Node):
                     area_available,
                 ) = self._measurement_from_target(target)
                 if measurement is None:
-                    state = "INVALID"
+                    state = "DEGRADED"
                     reason = "range_unavailable"
             except RuntimeError:
                 state = "WAIT_CAMERA"
@@ -388,6 +556,9 @@ class VisualTargetEstimator(Node):
 
         if measurement is not None:
             mx, my, mz = measurement
+            self._bump_continuity_on_measurement(target)
+            visibility_score = self._visibility_score(target, area_norm)
+            self.last_visibility_score = visibility_score
             if (
                 not self.estimate.valid
                 or self.last_estimate_update is None
@@ -408,8 +579,15 @@ class VisualTargetEstimator(Node):
                     rel_vx_mps=0.0,
                     rel_vy_mps=0.0,
                     rel_vz_mps=0.0,
+                    mode="TRACKED",
+                    quality=self._tracked_quality(target, visibility_score),
+                    target_age_s=0.0,
+                    predicted_age_s=0.0,
+                    continuity_score=self.continuity_score,
+                    consecutive_hits=self.consecutive_hits,
+                    consecutive_misses=self.consecutive_misses,
                 )
-                state = "MEASURED"
+                state = "TRACKED"
                 reason = "seed"
             else:
                 pred_x = self.estimate.rel_x_m + self.estimate.rel_vx_mps * dt_s
@@ -445,8 +623,15 @@ class VisualTargetEstimator(Node):
                     rel_vx_mps=next_vx,
                     rel_vy_mps=next_vy,
                     rel_vz_mps=next_vz,
+                    mode="TRACKED",
+                    quality=self._tracked_quality(target, visibility_score),
+                    target_age_s=0.0,
+                    predicted_age_s=0.0,
+                    continuity_score=self.continuity_score,
+                    consecutive_hits=self.consecutive_hits,
+                    consecutive_misses=self.consecutive_misses,
                 )
-                state = "MEASURED"
+                state = "TRACKED"
                 reason = "update"
 
             self.last_estimate_update = now
@@ -467,35 +652,72 @@ class VisualTargetEstimator(Node):
         elif (
             self.estimate.valid
             and self.last_measurement_time is not None
-            and self.prediction_max_gap_s > 0.0
-            and (now - self.last_measurement_time).nanoseconds * 1e-9 <= self.prediction_max_gap_s
+            and self.hard_lost_after_s > 0.0
         ):
-            self.estimate = VisualTargetEstimate(
-                stamp=now.to_msg(),
-                frame_id=self.estimate.frame_id or self.camera_frame_id,
-                valid=True,
-                track_id=self.estimate.track_id,
-                rel_x_m=float(self.estimate.rel_x_m + self.estimate.rel_vx_mps * dt_s),
-                rel_y_m=float(self.estimate.rel_y_m + self.estimate.rel_vy_mps * dt_s),
-                rel_z_m=max(1e-3, float(self.estimate.rel_z_m + self.estimate.rel_vz_mps * dt_s)),
-                rel_vx_mps=float(self.estimate.rel_vx_mps),
-                rel_vy_mps=float(self.estimate.rel_vy_mps),
-                rel_vz_mps=float(self.estimate.rel_vz_mps),
-            )
-            self.last_estimate_update = now
-            self.out_pub.publish(encode_visual_target_estimate_msg(self.estimate))
-            self._publish_status(
-                state="PREDICTED",
-                reason="measurement_gap",
-                norm_mode=norm_mode,
-                target=target,
-                measurement_source=self.active_range_source,
-                projected_range_m=projected_range_m,
-                area_norm=area_norm,
-                range_available=range_available,
-                area_available=area_available,
-            )
+            gap_s = max(0.0, (now - self.last_measurement_time).nanoseconds * 1e-9)
+            if gap_s <= self.hard_lost_after_s:
+                self._degrade_continuity_for_gap(dt_s)
+                degraded = gap_s > self.prediction_max_gap_s
+                vel_decay = self.degraded_velocity_decay if degraded else self.predicted_velocity_decay
+                next_vx = float(self.estimate.rel_vx_mps * vel_decay)
+                next_vy = float(self.estimate.rel_vy_mps * vel_decay)
+                next_vz = float(self.estimate.rel_vz_mps * vel_decay)
+                next_x = float(self.estimate.rel_x_m + next_vx * dt_s)
+                next_y = float(self.estimate.rel_y_m + next_vy * dt_s)
+                next_z = max(1e-3, float(self.estimate.rel_z_m + next_vz * dt_s))
+                state = "DEGRADED" if degraded else "PREDICTED"
+                reason = "measurement_gap_degraded" if degraded else "measurement_gap"
+                self.estimate = VisualTargetEstimate(
+                    stamp=now.to_msg(),
+                    frame_id=self.estimate.frame_id or self.camera_frame_id,
+                    valid=True,
+                    track_id=self.estimate.track_id,
+                    rel_x_m=next_x,
+                    rel_y_m=next_y,
+                    rel_z_m=next_z,
+                    rel_vx_mps=next_vx,
+                    rel_vy_mps=next_vy,
+                    rel_vz_mps=next_vz,
+                    mode=state,
+                    quality=self._gap_quality(gap_s, degraded=degraded),
+                    target_age_s=gap_s,
+                    predicted_age_s=gap_s,
+                    continuity_score=self.continuity_score,
+                    consecutive_hits=self.consecutive_hits,
+                    consecutive_misses=self.consecutive_misses,
+                )
+                self.last_estimate_update = now
+                self.last_status_state = state
+                self.out_pub.publish(encode_visual_target_estimate_msg(self.estimate))
+                self._publish_status(
+                    state=state,
+                    reason=reason,
+                    norm_mode=norm_mode,
+                    target=target,
+                    measurement_source=self.active_range_source,
+                    projected_range_m=projected_range_m,
+                    area_norm=area_norm,
+                    range_available=range_available,
+                    area_available=area_available,
+                )
+            else:
+                self._degrade_continuity_for_gap(dt_s)
+                self._publish_invalid(now)
+                self.last_status_state = state
+                self._publish_status(
+                    state=state,
+                    reason=reason,
+                    norm_mode=norm_mode,
+                    target=target,
+                    measurement_source=self.active_range_source,
+                    projected_range_m=projected_range_m,
+                    area_norm=area_norm,
+                    range_available=range_available,
+                    area_available=area_available,
+                )
         else:
+            if target.valid:
+                self._degrade_continuity_for_gap(dt_s)
             self._publish_invalid(now)
             self.last_status_state = state
             self._publish_status(

@@ -70,6 +70,15 @@ class VisualFollowController(Node):
         self.declare_parameter("forward_slew_rate_mps2", 2.0)
         self.declare_parameter("yaw_release_rate_rad_s2", 6.0)
         self.declare_parameter("forward_release_rate_mps2", 4.0)
+        self.declare_parameter("predicted_control_scale", 0.70)
+        self.declare_parameter("degraded_control_scale", 0.40)
+        self.declare_parameter("predicted_yaw_scale", 0.85)
+        self.declare_parameter("degraded_yaw_scale", 0.55)
+        self.declare_parameter("recovery_recenter_error_norm", 0.16)
+        self.declare_parameter("recovery_quality_threshold", 0.45)
+        self.declare_parameter("predicted_forward_suppress_scale", 0.55)
+        self.declare_parameter("degraded_forward_suppress_scale", 0.20)
+        self.declare_parameter("recovery_yaw_boost_scale", 1.20)
 
         self.uav_name = str(self.get_parameter("uav_name").value).strip() or "dji0"
         self.camera_topic = (
@@ -116,6 +125,23 @@ class VisualFollowController(Node):
         self.forward_slew_rate = float(self.get_parameter("forward_slew_rate_mps2").value)
         self.yaw_release_rate = float(self.get_parameter("yaw_release_rate_rad_s2").value)
         self.forward_release_rate = float(self.get_parameter("forward_release_rate_mps2").value)
+        self.predicted_control_scale = float(self.get_parameter("predicted_control_scale").value)
+        self.degraded_control_scale = float(self.get_parameter("degraded_control_scale").value)
+        self.predicted_yaw_scale = float(self.get_parameter("predicted_yaw_scale").value)
+        self.degraded_yaw_scale = float(self.get_parameter("degraded_yaw_scale").value)
+        self.recovery_recenter_error_norm = float(
+            self.get_parameter("recovery_recenter_error_norm").value
+        )
+        self.recovery_quality_threshold = float(
+            self.get_parameter("recovery_quality_threshold").value
+        )
+        self.predicted_forward_suppress_scale = float(
+            self.get_parameter("predicted_forward_suppress_scale").value
+        )
+        self.degraded_forward_suppress_scale = float(
+            self.get_parameter("degraded_forward_suppress_scale").value
+        )
+        self.recovery_yaw_boost_scale = float(self.get_parameter("recovery_yaw_boost_scale").value)
 
         if self.tick_hz <= 0.0:
             raise ValueError("tick_hz must be > 0")
@@ -127,6 +153,24 @@ class VisualFollowController(Node):
             raise ValueError("loss_hold_timeout_s must be >= 0")
         if self.distance_signal_mode not in ("auto", "range", "area"):
             raise ValueError("distance_signal_mode must be one of: auto, range, area")
+        if not (0.0 <= self.predicted_control_scale <= 1.0):
+            raise ValueError("predicted_control_scale must be within [0, 1]")
+        if not (0.0 <= self.degraded_control_scale <= 1.0):
+            raise ValueError("degraded_control_scale must be within [0, 1]")
+        if not (0.0 <= self.predicted_yaw_scale <= 1.0):
+            raise ValueError("predicted_yaw_scale must be within [0, 1]")
+        if not (0.0 <= self.degraded_yaw_scale <= 1.0):
+            raise ValueError("degraded_yaw_scale must be within [0, 1]")
+        if self.recovery_recenter_error_norm < 0.0:
+            raise ValueError("recovery_recenter_error_norm must be >= 0")
+        if not (0.0 <= self.recovery_quality_threshold <= 1.0):
+            raise ValueError("recovery_quality_threshold must be within [0, 1]")
+        if not (0.0 <= self.predicted_forward_suppress_scale <= 1.0):
+            raise ValueError("predicted_forward_suppress_scale must be within [0, 1]")
+        if not (0.0 <= self.degraded_forward_suppress_scale <= 1.0):
+            raise ValueError("degraded_forward_suppress_scale must be within [0, 1]")
+        if self.recovery_yaw_boost_scale < 0.0:
+            raise ValueError("recovery_yaw_boost_scale must be >= 0")
         if self.target_range_m <= 0.0:
             raise ValueError("target_range_m must be > 0")
         if self.target_area_norm <= 0.0:
@@ -576,6 +620,7 @@ class VisualFollowController(Node):
         yaw_rate_rad_s: float,
         forward_speed_mps: float,
         target: SelectedTargetState,
+        target_estimate: VisualTargetEstimate,
     ) -> None:
         if self.status_pub is None:
             return
@@ -595,6 +640,10 @@ class VisualFollowController(Node):
             f"range_loss_streak={self.range_loss_streak} "
             f"track_id={track_id or 'none'} "
             f"conf={confidence:.3f} "
+            f"estimate_mode={target_estimate.mode or 'LOST'} "
+            f"estimate_quality={target_estimate.quality:.3f} "
+            f"estimate_age_s={'na' if not math.isfinite(target_estimate.target_age_s) else f'{target_estimate.target_age_s:.2f}'} "
+            f"continuity={target_estimate.continuity_score:.3f} "
             f"err_x_raw_px={raw_x_px:.2f} "
             f"err_y_raw_px={raw_y_px:.2f} "
             f"err_x_norm={norm_x:.4f} "
@@ -729,6 +778,7 @@ class VisualFollowController(Node):
                 raw_x_px, raw_y_px, norm_x, norm_y, norm_mode = self._raw_and_normalized_errors_from_estimate(
                     target_estimate
                 )
+                estimate_quality = max(0.0, min(1.0, target_estimate.quality))
                 area_norm = self._area_norm(target) if target.valid else None
                 projected_range_m = float(target_estimate.rel_z_m)
                 distance_mode = "estimate"
@@ -748,10 +798,42 @@ class VisualFollowController(Node):
                 if abs(norm_x) < self.yaw_error_deadband_norm:
                     norm_x = 0.0
                 desired_yaw = -self.yaw_gain * norm_x
+                recovery_recenter = False
+                if target_estimate.mode == "DEGRADED":
+                    desired_forward *= self.degraded_control_scale
+                    desired_yaw *= self.degraded_yaw_scale
+                    if (
+                        abs(norm_x) >= self.recovery_recenter_error_norm
+                        or estimate_quality < self.recovery_quality_threshold
+                    ):
+                        desired_forward *= self.degraded_forward_suppress_scale
+                        desired_yaw *= self.recovery_yaw_boost_scale
+                        recovery_recenter = True
+                elif target_estimate.mode == "PREDICTED":
+                    desired_forward *= self.predicted_control_scale
+                    desired_yaw *= self.predicted_yaw_scale
+                    if (
+                        abs(norm_x) >= self.recovery_recenter_error_norm
+                        or estimate_quality < self.recovery_quality_threshold
+                    ):
+                        desired_forward *= self.predicted_forward_suppress_scale
+                        desired_yaw *= self.recovery_yaw_boost_scale
+                        recovery_recenter = True
+                else:
+                    quality_scale = max(0.35, min(1.0, estimate_quality if estimate_quality > 0.0 else 1.0))
+                    desired_forward *= quality_scale
+                    desired_yaw *= quality_scale
                 desired_yaw = self._clamp_symmetric(desired_yaw, self.yaw_rate_max)
                 desired_forward = self._clamp_symmetric(desired_forward, self.forward_speed_max)
-                state = "TRACK" if range_available else "TRACK_YAW_ONLY"
-                reason = "none"
+                if target_estimate.mode == "DEGRADED":
+                    state = "DEGRADED"
+                    reason = "estimate_degraded_recenter" if recovery_recenter else "estimate_degraded"
+                elif target_estimate.mode == "PREDICTED":
+                    state = "PREDICTED"
+                    reason = "estimate_predicted_recenter" if recovery_recenter else "estimate_predicted"
+                else:
+                    state = "TRACK" if range_available else "TRACK_YAW_ONLY"
+                    reason = "none"
                 self.last_valid_forward = desired_forward
                 self.last_valid_yaw = desired_yaw
                 self.last_valid_target_time = now
@@ -849,6 +931,7 @@ class VisualFollowController(Node):
             yaw_rate_rad_s=cmd_yaw,
             forward_speed_mps=cmd_forward,
             target=target,
+            target_estimate=target_estimate,
         )
         self._publish_debug_image(
             state=state,

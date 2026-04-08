@@ -82,12 +82,14 @@ camera_tracker:
     default_tilt_deg: -45.0                # Tilt command held when tilt tracking is disabled or stale; negative = down; keep âˆ’90 to 0Â°.
     pan_enable: true                     # Enable geometric pan tracking; false = hold default_pan_deg.
     tilt_enable: true                      # Enable geometric tilt tracking; false = hold default_tilt_deg.
-    image_center_correction_enable: false   # Add image-space centering correction on top of geometry pan/tilt.
-    image_center_correction_timeout_s: 0.25  # Ignore detection boxes older than this for image correction; keep 0.1â€“0.5 s.
-    pan_image_center_gain: 0.15             # Gain scaling horizontal image error into extra pan correction; keep 0.05â€“0.5.
-    pan_image_center_max_deg: 1.0          # Maximum pan correction from image centering in degrees; keep 1â€“15Â°.
-    tilt_image_center_gain: 0.2           # Gain scaling vertical image error into extra tilt correction; keep 0.05â€“0.5.
-    tilt_image_center_max_deg: 4.0       # Maximum tilt correction from image centering in degrees; keep 1â€“15Â°.
+    image_center_correction_enable: true    # Add image-space centering correction on top of geometry pan/tilt so the UAV camera actively re-centres weak detections.
+    image_center_correction_timeout_s: 0.45  # Keep using the latest box long enough to bridge the current ~3 Hz detector cadence without over-holding stale corrections.
+    image_center_memory_timeout_s: 0.55      # After direct image correction times out, keep a small decaying memory of the last seen target direction so the camera still nudges toward reacquisition briefly.
+    pan_image_center_gain: 0.22             # Slightly stronger horizontal re-centering so the target spends less time near image borders.
+    pan_image_center_max_deg: 2.5           # Allow a modest extra pan correction before geometry-only tracking takes over again.
+    tilt_image_center_gain: 0.26            # Slightly stronger vertical re-centering to keep the UGV better framed through weak detections.
+    tilt_image_center_max_deg: 5.0          # Allow a modest extra tilt correction during recovery without making the camera twitchy.
+    visual_target_estimate_timeout_s: 0.75   # Let camera_tracker use fresh TRACKED/PREDICTED/DEGRADED visual target estimates as a reacquisition fallback before dropping to stale hold.
     publish_debug_topics: true          # Publish /<uav>/camera/{target,debug}/* geometry and image-centering topics.
     pose_timeout_s: 2.0                # UAV pose older than this is treated as stale; keep 1â€“4 s.
     actual_pose_reacquire_enable: false  # When estimate pose is unavailable, use the actual leader pose to re-aim the camera and recover detections.
@@ -124,7 +126,7 @@ leader_detector:
     image_qos_depth: 1                        # Detector image subscription depth; 1 keeps only the freshest frame in ROS.
     image_qos_reliability: best_effort        # Detector image QoS reliability; best_effort prioritises freshness for camera streams.
 
-    conf_threshold: 0.15                    # Minimum YOLO confidence to accept a detection; keep 0.2â€“0.5.
+    conf_threshold: 0.05                    # Minimum YOLO confidence to accept a detection; low values let weak-but-usable candidates reach the downstream filter.
     iou_threshold: 0.5                    # NMS IOU threshold; keep 0.3â€“0.7.
     target_class_id: -1                  # Restrict to this YOLO class ID; âˆ’1 = any class.
     target_class_name: ""               # Filter by class name; empty = any class.
@@ -155,7 +157,7 @@ leader_tracker:
     image_qos_reliability: best_effort                 # Tracker image QoS reliability; best_effort prioritises freshness for camera streams.
     pseudo_track_max_center_jump_px: 220.0             # ONNX fallback continuity gate before switching pseudo track IDs.
 
-    conf_threshold: 0.15                                   # Minimum detection confidence passed to Ultralytics tracker; keep 0.1â€“0.4.
+    conf_threshold: 0.05                                   # Minimum tracker confidence; kept low so ByteTrack-style continuity can salvage weak but plausible UGV detections.
     iou_threshold: 0.5                                     # IOU threshold passed into Ultralytics track(); keep 0.3â€“0.6.
     target_class_id: -1                                     # Restrict tracked detections to this YOLO class ID; âˆ’1 = any class.
     target_class_name: ""                                    # Filter by class name; empty = any class.
@@ -266,8 +268,9 @@ selected_target_filter:
     weak_confidence_threshold: 0.35  # Confidence below this triggers the prediction/hold path; keep 0.2â€“0.5.
     min_confidence_threshold: 0.08    # Absolute floor; detections below this are dropped entirely; keep 0.05â€“0.3.
     track_switch_min_confidence: 0.60  # Minimum confidence required to accept a track ID change; keep 0.4â€“0.8.
+    hold_timeout_s: 0.45             # Keep the last accepted target alive just long enough to bridge brief detector gaps without over-holding stale targets.
     prediction_enable: true           # Fill short dropout gaps by predicting the target state forward in time.
-    prediction_max_gap_s: 0.20       # Maximum gap duration to bridge with prediction; keep 0.1â€“0.5 s.
+    prediction_max_gap_s: 0.20       # Maximum gap duration to bridge with prediction; keep short so the filter does not over-commit to stale tracks.
 
 visual_target_estimator:
   ros__parameters:
@@ -278,6 +281,17 @@ visual_target_estimator:
     position_alpha_area: 0.45      # Position low-pass alpha for the area-based range path; keep 0.2â€“0.7.
     velocity_beta_projected: 0.35   # Velocity update beta for the projected-range path; keep 0.1â€“0.5.
     velocity_beta_area: 0.18       # Velocity update beta for the area-based range path; keep 0.05â€“0.3.
+    prediction_max_gap_s: 0.35     # Keep short-gap prediction alive briefly before entering the heavier degraded state.
+    degraded_after_s: 0.75         # Mark the estimate degraded after a short but meaningful loss window instead of holding predicted forever.
+    hard_lost_after_s: 1.35        # Collapse to LOST once the gap is genuinely too long for safe Chen-lite prediction.
+    continuity_miss_decay_per_s: 1.10  # Let continuity decay fast enough that recovery does not pretend weak vision is still trustworthy.
+    predicted_velocity_decay: 0.92     # Keep predicted motion alive briefly during short gaps.
+    degraded_velocity_decay: 0.65      # Slow degraded-mode velocity just enough to stay useful without letting it drift too far.
+    visibility_center_weight: 0.35   # Weight of image-centre proximity in estimate quality; higher = stronger penalty when the target drifts off-centre.
+    visibility_edge_weight: 0.40     # Weight of edge margin in estimate quality; stronger edge penalties make degraded handling kick in earlier when the target approaches the border.
+    visibility_area_weight: 0.25     # Weight of apparent target size in estimate quality; smaller/farther targets are treated more cautiously.
+    visibility_center_soft_radius_norm: 0.60  # Normalised radius at which centre-proximity quality fades to zero; smaller = more aggressive recentering bias.
+    visibility_edge_soft_margin_norm: 0.18    # Desired half-image margin between the bbox and the image border before edge quality starts collapsing.
 
 visual_follow_controller:
   ros__parameters:
@@ -286,7 +300,12 @@ visual_follow_controller:
     forward_area_gain: 6.0       # Proportional gain from area error to forward speed command; keep 2â€“10.
     yaw_rate_max_rad_s: 1.0       # Maximum yaw-rate command in rad/s; keep 0.3â€“2.0.
     forward_speed_max_mps: 2.0     # Maximum forward speed command in m/s; keep 0.5â€“3.0.
-    loss_hold_timeout_s: 0.35       # Hold the last valid command for this long after detection loss; keep 0.1â€“0.5 s.
+    loss_hold_timeout_s: 0.35       # Hold the last valid command only briefly after detection loss; longer recovery is handled upstream.
+    recovery_recenter_error_norm: 0.16  # When the estimated target is this far off-centre, degraded/predicted mode suppresses forward motion and prioritises yaw re-centering.
+    recovery_quality_threshold: 0.45    # When estimate quality falls below this, the controller switches into a more conservative recenter-first response.
+    predicted_forward_suppress_scale: 0.55  # Extra forward suppression applied in PREDICTED recovery mode; lower = more yaw-first behaviour.
+    degraded_forward_suppress_scale: 0.20   # Extra forward suppression applied in DEGRADED recovery mode; lower = more visibility-preserving behaviour.
+    recovery_yaw_boost_scale: 1.20          # Mild yaw boost used during recovery so the UAV recentres before chasing range again.
 
 follow_point_generator:
   ros__parameters:
@@ -299,10 +318,17 @@ follow_point_generator:
     heading_dir_alpha: 0.8        # Low-pass alpha for the estimated leader heading direction; higher = faster response to direction changes; keep 0.1â€“1.0.
     point_alpha: 0.35              # Low-pass alpha for the output follow point position; keep 0.2â€“0.7.
     max_follow_point_jump_m: 1.0    # Reject follow point updates that jump more than this distance; keep 0.5â€“5.0 m.
+    hold_timeout_s: 0.50            # Keep the last follow point through short-gap windows instead of collapsing immediately.
     require_motion_to_start: true    # Hold the follow point in WAITING state until the UGV has started moving; prevents UAV from lunging before UGV is underway.
     min_target_speed_mps: 0.10       # Minimum UGV speed before motion heading is trusted; lower = activates sooner at startup; keep 0.05â€“0.3 m/s.
     target_velocity_alpha: 0.5       # EMA alpha for world-frame velocity used to derive motion heading; keep 0.2â€“0.8.
     max_target_meas_speed_mps: 2.0   # Clamp raw measured UGV speed before EMA to reject position noise spikes; set to ~2â€“3Ã— max UGV speed; keep 1.5â€“4.0 m/s.
+    heading_hold_timeout_s: 1.00     # Preserve heading continuity through short gaps without letting old motion linger too long.
+    predicted_lookahead_scale: 0.65  # Reduce lookahead in predicted mode so the UAV keeps visual lock instead of chasing too hard on stale motion.
+    degraded_lookahead_scale: 0.35   # Reduce lookahead in degraded mode to prioritize recoverable geometry over aggressive pursuit.
+    degraded_point_alpha_scale: 0.45  # Slow degraded follow-point movement so the camera can recenter before the spatial target drifts too far.
+    predicted_recovery_blend: 0.18   # Blend predicted follow points slightly back toward the current camera pose so recovery does not over-translate on short gaps.
+    degraded_recovery_blend: 0.42    # Blend degraded follow points more strongly back toward the camera pose to preserve visibility instead of aggressively chasing.
 
 follow_point_planner:
   ros__parameters:
@@ -312,9 +338,15 @@ follow_point_planner:
     max_planned_step_m: 0.25      # Maximum XY step per planner tick; at 20 Hz: 0.25 m/tick = 5 m/s max; keep 0.1â€“0.6 m.
     max_planned_z_step_m: 0.40     # Maximum altitude step per planner tick; keep 0.1â€“0.6 m.
     max_planned_yaw_step_rad: 0.02  # Maximum yaw step per planner tick; at 20 Hz: 0.02 rad/tick â‰ˆ 23Â°/s; keep 0.02â€“0.15 rad.
-    hold_timeout_s: 0.5            # Hold the last planned target across short follow-point dropouts; keep 0.2â€“1.0 s.
+    target_estimate_timeout_s: 1.00  # Keep the planner aligned with the estimate validity window without stretching it too far.
+    hold_timeout_s: 0.50            # Hold the last planned target across short follow-point dropouts while recovery is still plausible.
     stale_fp_thresh_m: 0.05        # Follow-point movement below this is treated as stationary/cached upstream; triggers adaptive alpha.
     stale_alpha_scale: 0.3         # Scale applied to xy_alpha when the follow point is stationary (cached upstream estimate).
+    predicted_xy_alpha_scale: 0.70  # Keep predicted planned targets moving, but more conservatively than tracked mode.
+    degraded_xy_alpha_scale: 0.45   # Keep degraded planned targets cautious so recovery does not drag the camera away from the UGV.
+    predicted_yaw_alpha_scale: 0.80  # Preserve yaw continuity in predicted mode so the UAV keeps facing the likely target direction.
+    degraded_yaw_alpha_scale: 0.55   # Keep some yaw authority in degraded mode for visibility recovery.
+    degraded_step_scale: 0.65        # Cap degraded planned-target motion so the system stays cautious instead of chasing hard.
 
 visual_actuation_bridge:
   ros__parameters:
@@ -326,3 +358,8 @@ visual_actuation_bridge:
     use_current_altitude: false   # Use planner's follow_altitude_m for Z; true would ignore planner Z and break 3D follow distance geometry.
     publish_pose_cmd_mirror: true  # Also publish the issued command on /<uav>/pose_cmd for logging/debug.
     yaw_cmd_sign: 1.0             # Yaw rotation direction: 1.0 = normal, -1.0 = inverted; flip if UAV yaws the wrong way.
+    target_estimate_timeout_s: 1.00  # Keep the bridge aligned with the estimate validity window.
+    predicted_step_scale: 0.80       # Let predicted mode keep some motion without behaving like full tracked mode.
+    degraded_step_scale: 0.55        # Keep degraded mode cautious so the bridge helps recovery instead of dragging the camera off target.
+    lost_recovery_hold_s: 0.00       # Disabled by default; the bridge should hard-stop on LOST until we have stronger evidence this helps more than it hurts.
+    lost_step_scale: 0.25            # Motion scale reserved for optional lost-recovery experiments.

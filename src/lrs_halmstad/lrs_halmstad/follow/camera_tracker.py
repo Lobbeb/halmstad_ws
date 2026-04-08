@@ -15,6 +15,10 @@ from std_msgs.msg import Float32, Float64, String
 from tf_transformations import quaternion_from_euler
 
 from lrs_halmstad.common.ros_params import yaml_param
+from lrs_halmstad.common.visual_target_estimate import (
+    VisualTargetEstimate,
+    decode_visual_target_estimate_msg,
+)
 from lrs_halmstad.follow.follow_math import (
     Pose2D,
     camera_xy_from_uav_pose,
@@ -48,6 +52,9 @@ class CameraTracker(Node):
         self.leader_actual_pose_topic = str(self.get_parameter("leader_actual_pose_topic").value).strip()
         self.leader_status_topic = str(self.declare_parameter("leader_status_topic", "/coord/leader_estimate_status").value).strip()
         self.leader_detection_topic = str(self.declare_parameter("leader_detection_topic", "/coord/leader_detection").value).strip()
+        self.leader_visual_target_estimate_topic = str(
+            self.declare_parameter("leader_visual_target_estimate_topic", "/coord/leader_visual_target_estimate").value
+        ).strip()
         self.camera_info_topic = (
             str(self.declare_parameter("camera_info_topic", "").value).strip()
             or f"/{self.uav_name}/camera0/camera_info"
@@ -76,11 +83,19 @@ class CameraTracker(Node):
         self.tilt_deadband_deg = max(0.0, float(self.declare_parameter("tilt_deadband_deg", 0.0).value))
         self.image_center_correction_enable = coerce_bool(yaml_param(self, "image_center_correction_enable"))
         self.image_center_correction_timeout_s = max(0.0, float(yaml_param(self, "image_center_correction_timeout_s")))
+        self.image_center_memory_timeout_s = max(
+            0.0,
+            float(self.declare_parameter("image_center_memory_timeout_s", 0.55).value),
+        )
         self.image_center_deadband_deg = max(0.0, float(self.declare_parameter("image_center_deadband_deg", 0.75).value))
         self.pan_image_center_gain = float(yaml_param(self, "pan_image_center_gain"))
         self.pan_image_center_max_deg = max(0.0, float(yaml_param(self, "pan_image_center_max_deg")))
         self.tilt_image_center_gain = float(yaml_param(self, "tilt_image_center_gain"))
         self.tilt_image_center_max_deg = max(0.0, float(yaml_param(self, "tilt_image_center_max_deg")))
+        self.visual_target_estimate_timeout_s = max(
+            0.0,
+            float(self.declare_parameter("visual_target_estimate_timeout_s", 0.75).value),
+        )
         self.actual_pose_reacquire_enable = coerce_bool(self.declare_parameter("actual_pose_reacquire_enable", False).value)
         self.publish_debug_topics = coerce_bool(yaml_param(self, "publish_debug_topics"))
         self.gimbal_override_hold_s = max(0.0, float(yaml_param(self, "gimbal_override_hold_s")))
@@ -108,12 +123,23 @@ class CameraTracker(Node):
         self.last_trackable_leader_pose: Optional[Pose2D] = None
         self.last_trackable_leader_z: Optional[float] = None
         self.last_trackable_leader_stamp: Optional[Time] = None
+        self.last_visual_target_estimate = VisualTargetEstimate(
+            stamp=self.get_clock().now().to_msg(),
+            frame_id="",
+            valid=False,
+        )
+        self.last_visual_target_estimate_stamp: Optional[Time] = None
         self.have_actual_leader = False
         self.actual_leader_pose = Pose2D(0.0, 0.0, 0.0)
         self.actual_leader_z = 0.0
         self.last_actual_leader_stamp: Optional[Time] = None
         self.last_detection: Optional[Detection2D] = None
         self.last_detection_stamp: Optional[Time] = None
+        self.last_image_center_correction_stamp: Optional[Time] = None
+        self.last_pan_image_correction_deg = 0.0
+        self.last_tilt_image_correction_deg = 0.0
+        self.last_image_err_x_deg: Optional[float] = None
+        self.last_image_err_y_deg: Optional[float] = None
         self.camera_fx: Optional[float] = None
         self.camera_fy: Optional[float] = None
         self.camera_cx: Optional[float] = None
@@ -173,6 +199,16 @@ class CameraTracker(Node):
                 1,
             )
             if self.image_center_correction_enable and self.leader_detection_topic
+            else None
+        )
+        self.visual_target_estimate_sub = (
+            self.create_subscription(
+                Odometry,
+                self.leader_visual_target_estimate_topic,
+                self.on_visual_target_estimate,
+                1,
+            )
+            if self.leader_visual_target_estimate_topic
             else None
         )
         camera_info_qos = QoSProfile(
@@ -439,6 +475,13 @@ class CameraTracker(Node):
         self.last_detection = parsed.detection
         self.last_detection_stamp = self.get_clock().now()
 
+    def on_visual_target_estimate(self, msg: Odometry) -> None:
+        self.last_visual_target_estimate = decode_visual_target_estimate_msg(msg)
+        try:
+            self.last_visual_target_estimate_stamp = Time.from_msg(msg.header.stamp)
+        except Exception:
+            self.last_visual_target_estimate_stamp = self.get_clock().now()
+
     def on_camera_info(self, msg: CameraInfo) -> None:
         fx = float(msg.k[0])
         fy = float(msg.k[4])
@@ -508,6 +551,60 @@ class CameraTracker(Node):
         age_s = (now - self.last_trackable_leader_stamp).nanoseconds * 1e-9
         return age_s <= self.trackable_hold_timeout_s
 
+    def visual_target_estimate_is_fresh(self, now: Time) -> bool:
+        if (
+            not self.last_visual_target_estimate.valid
+            or self.last_visual_target_estimate_stamp is None
+            or self.visual_target_estimate_timeout_s <= 0.0
+        ):
+            return False
+        age_s = (now - self.last_visual_target_estimate_stamp).nanoseconds * 1e-9
+        if age_s > self.visual_target_estimate_timeout_s:
+            return False
+        return str(self.last_visual_target_estimate.mode or "").upper() in {"TRACKED", "PREDICTED", "DEGRADED"}
+
+    def _leader_pose_from_visual_target_estimate(
+        self,
+        now: Time,
+        uav_pose: Pose2D,
+        uav_z: float,
+    ) -> tuple[Optional[Pose2D], Optional[float]]:
+        if not self.visual_target_estimate_is_fresh(now):
+            return None, None
+        estimate = self.last_visual_target_estimate
+        if (
+            not math.isfinite(float(estimate.rel_x_m))
+            or not math.isfinite(float(estimate.rel_y_m))
+            or not math.isfinite(float(estimate.rel_z_m))
+            or float(estimate.rel_z_m) <= 0.0
+        ):
+            return None, None
+
+        camera_x, camera_y = camera_xy_from_uav_pose(
+            uav_pose.x,
+            uav_pose.y,
+            uav_pose.yaw,
+            self.camera_x_offset_m,
+            self.camera_y_offset_m,
+        )
+        horizontal_range = math.hypot(float(estimate.rel_x_m), float(estimate.rel_z_m))
+        bearing_world = wrap_pi(uav_pose.yaw - math.atan2(float(estimate.rel_x_m), float(estimate.rel_z_m)))
+        target_x = float(camera_x + horizontal_range * math.cos(bearing_world))
+        target_y = float(camera_y + horizontal_range * math.sin(bearing_world))
+        target_z = float((uav_z - self.camera_z_offset_m) - float(estimate.rel_y_m))
+        if not math.isfinite(target_z):
+            target_z = (
+                float(self.last_trackable_leader_z)
+                if self.last_trackable_leader_z is not None and math.isfinite(float(self.last_trackable_leader_z))
+                else float(self.leader_z)
+            )
+        target_yaw = (
+            float(self.last_trackable_leader_pose.yaw)
+            if self.last_trackable_leader_pose is not None
+            else (float(self.leader_pose.yaw) if self.have_leader else float(uav_pose.yaw))
+        )
+        return Pose2D(target_x, target_y, target_yaw), target_z
+
     def actual_leader_pose_is_fresh(self, now: Time) -> bool:
         if (
             not self.actual_pose_reacquire_enable
@@ -568,28 +665,53 @@ class CameraTracker(Node):
     ) -> tuple[float, float, Optional[float], Optional[float]]:
         if not self.image_center_correction_enable:
             return 0.0, 0.0, None, None
-        if not self.detection_is_fresh(now):
-            return 0.0, 0.0, None, None
+        if self.detection_is_fresh(now):
+            if (
+                self.camera_fx is None
+                or self.camera_fy is None
+                or self.camera_cx is None
+                or self.camera_cy is None
+                or self.last_detection is None
+            ):
+                return 0.0, 0.0, None, None
+
+            det = self.last_detection
+            err_x_deg = math.degrees(math.atan2((det.u - self.camera_cx) / self.camera_fx, 1.0))
+            err_y_deg = math.degrees(math.atan2((det.v - self.camera_cy) / self.camera_fy, 1.0))
+
+            pan_corr_deg = self._clamp_symmetric(
+                -self.pan_image_center_gain * err_x_deg,
+                self.pan_image_center_max_deg,
+            )
+            tilt_corr_deg = self._clamp_symmetric(
+                -self.tilt_image_center_gain * err_y_deg,
+                self.tilt_image_center_max_deg,
+            )
+            self.last_image_center_correction_stamp = now
+            self.last_pan_image_correction_deg = float(pan_corr_deg)
+            self.last_tilt_image_correction_deg = float(tilt_corr_deg)
+            self.last_image_err_x_deg = float(err_x_deg)
+            self.last_image_err_y_deg = float(err_y_deg)
+            return pan_corr_deg, tilt_corr_deg, err_x_deg, err_y_deg
+
         if (
-            self.camera_fx is None
-            or self.camera_fy is None
-            or self.camera_cx is None
-            or self.camera_cy is None
-            or self.last_detection is None
+            self.image_center_memory_timeout_s <= 0.0
+            or self.last_image_center_correction_stamp is None
         ):
             return 0.0, 0.0, None, None
 
-        det = self.last_detection
-        err_x_deg = math.degrees(math.atan2((det.u - self.camera_cx) / self.camera_fx, 1.0))
-        err_y_deg = math.degrees(math.atan2((det.v - self.camera_cy) / self.camera_fy, 1.0))
+        age_s = (now - self.last_image_center_correction_stamp).nanoseconds * 1e-9
+        if age_s > self.image_center_memory_timeout_s:
+            return 0.0, 0.0, None, None
 
-        pan_corr_deg = self._clamp_symmetric(
-            -self.pan_image_center_gain * err_x_deg,
-            self.pan_image_center_max_deg,
+        decay = max(0.0, 1.0 - (age_s / max(self.image_center_memory_timeout_s, 1e-6)))
+        pan_corr_deg = float(self.last_pan_image_correction_deg * decay)
+        tilt_corr_deg = float(self.last_tilt_image_correction_deg * decay)
+        err_x_deg = (
+            None if self.last_image_err_x_deg is None else float(self.last_image_err_x_deg * decay)
         )
-        tilt_corr_deg = self._clamp_symmetric(
-            -self.tilt_image_center_gain * err_y_deg,
-            self.tilt_image_center_max_deg,
+        err_y_deg = (
+            None if self.last_image_err_y_deg is None else float(self.last_image_err_y_deg * decay)
         )
         return pan_corr_deg, tilt_corr_deg, err_x_deg, err_y_deg
 
@@ -839,6 +961,11 @@ class CameraTracker(Node):
         tracked_leader_z: Optional[float] = None
         tilt_leader_pose: Optional[Pose2D] = None
         tilt_leader_z: Optional[float] = None
+        visual_leader_pose, visual_leader_z = self._leader_pose_from_visual_target_estimate(
+            now,
+            uav_pose,
+            uav_z,
+        )
         if leader_pan_trackable:
             self.last_trackable_leader_pose = Pose2D(
                 self.leader_pose.x,
@@ -849,6 +976,9 @@ class CameraTracker(Node):
             self.last_trackable_leader_stamp = self.last_leader_stamp or now
             tracked_leader_pose = self.last_trackable_leader_pose
             tracked_leader_z = self.last_trackable_leader_z
+        elif visual_leader_pose is not None and visual_leader_z is not None:
+            tracked_leader_pose = visual_leader_pose
+            tracked_leader_z = visual_leader_z
         elif self.last_trackable_leader_is_fresh(now):
             tracked_leader_pose = self.last_trackable_leader_pose
             tracked_leader_z = self.last_trackable_leader_z
@@ -862,6 +992,9 @@ class CameraTracker(Node):
                 self.leader_pose.yaw,
             )
             tilt_leader_z = float(self.leader_z)
+        elif visual_leader_pose is not None and visual_leader_z is not None:
+            tilt_leader_pose = visual_leader_pose
+            tilt_leader_z = visual_leader_z
         elif self.last_trackable_leader_is_fresh(now):
             tilt_leader_pose = self.last_trackable_leader_pose
             tilt_leader_z = self.last_trackable_leader_z

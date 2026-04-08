@@ -135,6 +135,12 @@ class OnnxInferenceResult:
     provider: str
     infer_end_perf_ns: int
     postprocess_end_perf_ns: int
+    raw_prediction_count: int = 0
+    conf_pass_count: int = 0
+    class_pass_count: int = 0
+    nms_keep_count: int = 0
+    raw_best_conf: float = -1.0
+    class_best_conf: float = -1.0
 
 
 class OnnxYoloRuntime:
@@ -185,10 +191,16 @@ class OnnxYoloRuntime:
         detections = self._postprocess(outputs, img_bgr.shape[:2], ratio, pad)
         postprocess_end_perf_ns = time.perf_counter_ns()
         return OnnxInferenceResult(
-            detections=detections,
+            detections=detections["detections"],
             provider=self.provider,
             infer_end_perf_ns=infer_end_perf_ns,
             postprocess_end_perf_ns=postprocess_end_perf_ns,
+            raw_prediction_count=int(detections["raw_prediction_count"]),
+            conf_pass_count=int(detections["conf_pass_count"]),
+            class_pass_count=int(detections["class_pass_count"]),
+            nms_keep_count=int(detections["nms_keep_count"]),
+            raw_best_conf=float(detections["raw_best_conf"]),
+            class_best_conf=float(detections["class_best_conf"]),
         )
 
     def _preprocess(self, img_bgr: np.ndarray) -> tuple[np.ndarray, float, tuple[float, float]]:
@@ -232,30 +244,66 @@ class OnnxYoloRuntime:
         original_hw: tuple[int, int],
         ratio: float,
         pad: tuple[float, float],
-    ) -> list[Detection2D]:
+    ) -> dict[str, object]:
         preds = self._normalize_prediction_array(outputs)
         if preds.size == 0:
-            return []
+            return {
+                "detections": [],
+                "raw_prediction_count": 0,
+                "conf_pass_count": 0,
+                "class_pass_count": 0,
+                "nms_keep_count": 0,
+                "raw_best_conf": -1.0,
+                "class_best_conf": -1.0,
+            }
         orig_h, orig_w = original_hw
+        raw_prediction_count = int(preds.shape[0])
 
         if self.task_type == "obb":
             if preds.shape[1] < 6:
-                return []
+                return {
+                    "detections": [],
+                    "raw_prediction_count": raw_prediction_count,
+                    "conf_pass_count": 0,
+                    "class_pass_count": 0,
+                    "nms_keep_count": 0,
+                    "raw_best_conf": -1.0,
+                    "class_best_conf": -1.0,
+                }
             boxes_xywh = preds[:, :4].astype(np.float32)
             class_scores = preds[:, 4:-1].astype(np.float32)
             angle = preds[:, -1].astype(np.float32)
         else:
             if preds.shape[1] < 5:
-                return []
+                return {
+                    "detections": [],
+                    "raw_prediction_count": raw_prediction_count,
+                    "conf_pass_count": 0,
+                    "class_pass_count": 0,
+                    "nms_keep_count": 0,
+                    "raw_best_conf": -1.0,
+                    "class_best_conf": -1.0,
+                }
             boxes_xywh = preds[:, :4].astype(np.float32)
             class_scores = preds[:, 4:].astype(np.float32)
             angle = None
 
         if class_scores.size == 0:
-            return []
+            return {
+                "detections": [],
+                "raw_prediction_count": raw_prediction_count,
+                "conf_pass_count": 0,
+                "class_pass_count": 0,
+                "nms_keep_count": 0,
+                "raw_best_conf": -1.0,
+                "class_best_conf": -1.0,
+            }
         cls_ids = np.argmax(class_scores, axis=1).astype(np.int64)
         confs = class_scores[np.arange(class_scores.shape[0]), cls_ids]
-        valid = confs >= float(self.conf_threshold)
+        raw_best_conf = float(np.max(confs)) if confs.size else -1.0
+        conf_valid = confs >= float(self.conf_threshold)
+        conf_pass_count = int(np.count_nonzero(conf_valid))
+        valid = conf_valid.copy()
         if self.target_class_id >= 0:
             valid &= cls_ids == self.target_class_id
         if self.target_class_name:
@@ -266,12 +314,22 @@ class OnnxYoloRuntime:
                 ],
                 dtype=bool,
             )
+        class_pass_count = int(np.count_nonzero(valid))
         if not np.any(valid):
-            return []
+            return {
+                "detections": [],
+                "raw_prediction_count": raw_prediction_count,
+                "conf_pass_count": conf_pass_count,
+                "class_pass_count": class_pass_count,
+                "nms_keep_count": 0,
+                "raw_best_conf": raw_best_conf,
+                "class_best_conf": -1.0,
+            }
 
         boxes_xywh = boxes_xywh[valid]
         cls_ids = cls_ids[valid]
         confs = confs[valid]
+        class_best_conf = float(np.max(confs)) if confs.size else -1.0
         if angle is not None:
             angle = angle[valid]
 
@@ -307,7 +365,15 @@ class OnnxYoloRuntime:
                 kwargs["obb_corners"] = _xywhr_to_corners(cx, cy, w, h, theta)
                 kwargs["obb_heading_yaw"] = theta
             detections.append(Detection2D(**kwargs))
-        return detections
+        return {
+            "detections": detections,
+            "raw_prediction_count": raw_prediction_count,
+            "conf_pass_count": conf_pass_count,
+            "class_pass_count": class_pass_count,
+            "nms_keep_count": int(len(keep)),
+            "raw_best_conf": raw_best_conf,
+            "class_best_conf": class_best_conf,
+        }
 
     def _normalize_prediction_array(self, outputs: list[np.ndarray]) -> np.ndarray:
         arrays = [np.asarray(out) for out in outputs if isinstance(out, np.ndarray)]

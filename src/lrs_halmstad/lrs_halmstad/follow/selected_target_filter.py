@@ -52,7 +52,7 @@ class SelectedTargetFilter(Node):
         self.declare_parameter("max_predict_center_shift_px", 120.0)
         self.declare_parameter("strong_confidence_threshold", 0.65)
         self.declare_parameter("weak_confidence_threshold", 0.35)
-        self.declare_parameter("min_confidence_threshold", 0.12)
+        self.declare_parameter("min_confidence_threshold", 0.05)
         self.declare_parameter("track_switch_min_confidence", 0.60)
         self.declare_parameter("track_switch_min_age_s", 0.20)
         self.declare_parameter("same_track_center_jump_px_max", 140.0)
@@ -144,6 +144,14 @@ class SelectedTargetFilter(Node):
         self.current_track_id: str = ""
         self.center_vx_px_s = 0.0
         self.center_vy_px_s = 0.0
+        self.continuity_score = 0.0
+        self.consecutive_hits = 0
+        self.consecutive_misses = 0
+        self.audit_ticks_total = 0
+        self.audit_accept_total = 0
+        self.audit_predicted_total = 0
+        self.audit_held_total = 0
+        self.audit_invalid_total = 0
         self.last_decision = FilterDecision(
             output_state=self.filtered_target,
             output_mode="invalid",
@@ -570,6 +578,14 @@ class SelectedTargetFilter(Node):
             f"track_age_s={'na' if decision.output_state.track_age_s is None else f'{decision.output_state.track_age_s:.2f}'} "
             f"stable_age_s={decision.stable_age_s:.2f} "
             f"lost_age_s={decision.lost_age_s:.2f} "
+            f"continuity={self.continuity_score:.3f} "
+            f"hits={self.consecutive_hits} "
+            f"misses={self.consecutive_misses} "
+            f"audit_ticks={self.audit_ticks_total} "
+            f"audit_accept={self.audit_accept_total} "
+            f"audit_predicted={self.audit_predicted_total} "
+            f"audit_held={self.audit_held_total} "
+            f"audit_invalid={self.audit_invalid_total} "
             f"center_jump_px={'na' if decision.center_jump_px is None else f'{decision.center_jump_px:.1f}'} "
             f"area_ratio={'na' if decision.area_ratio is None else f'{decision.area_ratio:.2f}'} "
             f"range_jump_m={'na' if decision.range_jump_m is None else f'{decision.range_jump_m:.2f}'} "
@@ -578,9 +594,15 @@ class SelectedTargetFilter(Node):
         self.status_pub.publish(msg)
 
     def _commit_decision(self, decision: FilterDecision, now: Time) -> None:
+        self.audit_ticks_total += 1
         self.last_output = decision.output_state
         self.last_decision = decision
         if decision.accepted and decision.output_state.valid:
+            self.audit_accept_total += 1
+            self.consecutive_hits += 1
+            self.consecutive_misses = 0
+            continuity_gain = 0.18 * (0.50 + 0.50 * max(0.0, min(1.0, float(decision.output_state.confidence))))
+            self.continuity_score = min(1.0, self.continuity_score + continuity_gain)
             self.filtered_target = decision.output_state
             self._update_track_velocity(now, decision.output_state)
             self.prev_accept_target = self.last_accept_target
@@ -592,11 +614,23 @@ class SelectedTargetFilter(Node):
                 self.current_track_id = track_id
                 self.track_stable_since = now
         elif not decision.output_state.valid and decision.output_mode == "invalid":
+            self.audit_invalid_total += 1
+            self.consecutive_hits = 0
+            self.consecutive_misses += 1
+            self.continuity_score = max(0.0, self.continuity_score - 0.35)
             self.filtered_target = decision.output_state
             self.current_track_id = ""
             self.track_stable_since = None
             self.center_vx_px_s = 0.0
             self.center_vy_px_s = 0.0
+        else:
+            if decision.output_mode == "predicted":
+                self.audit_predicted_total += 1
+            elif decision.output_mode == "held":
+                self.audit_held_total += 1
+            self.consecutive_hits = 0
+            self.consecutive_misses += 1
+            self.continuity_score = max(0.0, self.continuity_score - 0.12)
 
     def on_tick(self) -> None:
         now = self.get_clock().now()
