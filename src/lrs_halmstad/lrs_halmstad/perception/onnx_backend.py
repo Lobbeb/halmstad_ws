@@ -141,6 +141,12 @@ class OnnxInferenceResult:
     nms_keep_count: int = 0
     raw_best_conf: float = -1.0
     class_best_conf: float = -1.0
+    target_raw_count: int = 0
+    target_best_conf: float = -1.0
+    target_best_area_norm: float = -1.0
+    target_best_u_norm: float = -1.0
+    target_best_v_norm: float = -1.0
+    target_best_center_error_norm: float = -1.0
 
 
 class OnnxYoloRuntime:
@@ -201,6 +207,12 @@ class OnnxYoloRuntime:
             nms_keep_count=int(detections["nms_keep_count"]),
             raw_best_conf=float(detections["raw_best_conf"]),
             class_best_conf=float(detections["class_best_conf"]),
+            target_raw_count=int(detections["target_raw_count"]),
+            target_best_conf=float(detections["target_best_conf"]),
+            target_best_area_norm=float(detections["target_best_area_norm"]),
+            target_best_u_norm=float(detections["target_best_u_norm"]),
+            target_best_v_norm=float(detections["target_best_v_norm"]),
+            target_best_center_error_norm=float(detections["target_best_center_error_norm"]),
         )
 
     def _preprocess(self, img_bgr: np.ndarray) -> tuple[np.ndarray, float, tuple[float, float]]:
@@ -258,6 +270,13 @@ class OnnxYoloRuntime:
             }
         orig_h, orig_w = original_hw
         raw_prediction_count = int(preds.shape[0])
+        frame_area = max(1.0, float(orig_w * orig_h))
+        target_raw_count = 0
+        target_best_conf = -1.0
+        target_best_area_norm = -1.0
+        target_best_u_norm = -1.0
+        target_best_v_norm = -1.0
+        target_best_center_error_norm = -1.0
 
         if self.task_type == "obb":
             if preds.shape[1] < 6:
@@ -269,6 +288,12 @@ class OnnxYoloRuntime:
                     "nms_keep_count": 0,
                     "raw_best_conf": -1.0,
                     "class_best_conf": -1.0,
+                    "target_raw_count": target_raw_count,
+                    "target_best_conf": target_best_conf,
+                    "target_best_area_norm": target_best_area_norm,
+                    "target_best_u_norm": target_best_u_norm,
+                    "target_best_v_norm": target_best_v_norm,
+                    "target_best_center_error_norm": target_best_center_error_norm,
                 }
             boxes_xywh = preds[:, :4].astype(np.float32)
             class_scores = preds[:, 4:-1].astype(np.float32)
@@ -283,6 +308,12 @@ class OnnxYoloRuntime:
                     "nms_keep_count": 0,
                     "raw_best_conf": -1.0,
                     "class_best_conf": -1.0,
+                    "target_raw_count": target_raw_count,
+                    "target_best_conf": target_best_conf,
+                    "target_best_area_norm": target_best_area_norm,
+                    "target_best_u_norm": target_best_u_norm,
+                    "target_best_v_norm": target_best_v_norm,
+                    "target_best_center_error_norm": target_best_center_error_norm,
                 }
             boxes_xywh = preds[:, :4].astype(np.float32)
             class_scores = preds[:, 4:].astype(np.float32)
@@ -297,23 +328,61 @@ class OnnxYoloRuntime:
                 "nms_keep_count": 0,
                 "raw_best_conf": -1.0,
                 "class_best_conf": -1.0,
+                "target_raw_count": target_raw_count,
+                "target_best_conf": target_best_conf,
+                "target_best_area_norm": target_best_area_norm,
+                "target_best_u_norm": target_best_u_norm,
+                "target_best_v_norm": target_best_v_norm,
+                "target_best_center_error_norm": target_best_center_error_norm,
             }
         cls_ids = np.argmax(class_scores, axis=1).astype(np.int64)
         confs = class_scores[np.arange(class_scores.shape[0]), cls_ids]
         raw_best_conf = float(np.max(confs)) if confs.size else -1.0
-        conf_valid = confs >= float(self.conf_threshold)
-        conf_pass_count = int(np.count_nonzero(conf_valid))
-        valid = conf_valid.copy()
+        target_mask = np.ones_like(cls_ids, dtype=bool)
         if self.target_class_id >= 0:
-            valid &= cls_ids == self.target_class_id
+            target_mask &= cls_ids == self.target_class_id
         if self.target_class_name:
-            valid &= np.asarray(
+            target_mask &= np.asarray(
                 [
                     str(self.class_names.get(int(cls_id), "")).lower() == self.target_class_name.lower()
                     for cls_id in cls_ids
                 ],
                 dtype=bool,
             )
+        target_raw_count = int(np.count_nonzero(target_mask))
+
+        boxes_xyxy_all = _xywh_to_xyxy(boxes_xywh.copy())
+        boxes_xyxy_all[:, [0, 2]] -= float(pad[0])
+        boxes_xyxy_all[:, [1, 3]] -= float(pad[1])
+        boxes_xyxy_all[:, :4] /= max(1e-6, float(ratio))
+        boxes_xyxy_all = _clip_boxes_xyxy(boxes_xyxy_all, orig_w, orig_h)
+
+        boxes_xywh_all = boxes_xywh.copy()
+        boxes_xywh_all[:, 0] = (boxes_xywh_all[:, 0] - float(pad[0])) / max(1e-6, float(ratio))
+        boxes_xywh_all[:, 1] = (boxes_xywh_all[:, 1] - float(pad[1])) / max(1e-6, float(ratio))
+        boxes_xywh_all[:, 2] = boxes_xywh_all[:, 2] / max(1e-6, float(ratio))
+        boxes_xywh_all[:, 3] = boxes_xywh_all[:, 3] / max(1e-6, float(ratio))
+
+        if target_raw_count > 0:
+            target_indices = np.flatnonzero(target_mask)
+            best_target_idx = int(target_indices[np.argmax(confs[target_indices])])
+            target_best_conf = float(confs[best_target_idx])
+            x1, y1, x2, y2 = [float(v) for v in boxes_xyxy_all[best_target_idx]]
+            u = 0.5 * (x1 + x2)
+            v = 0.5 * (y1 + y2)
+            target_best_area_norm = max(0.0, (x2 - x1) * (y2 - y1)) / frame_area
+            target_best_u_norm = u / max(1.0, float(orig_w))
+            target_best_v_norm = v / max(1.0, float(orig_h))
+            half_diag = max(1e-6, math.hypot(0.5 * float(orig_w), 0.5 * float(orig_h)))
+            target_best_center_error_norm = math.hypot(
+                u - 0.5 * float(orig_w),
+                v - 0.5 * float(orig_h),
+            ) / half_diag
+
+        conf_valid = confs >= float(self.conf_threshold)
+        conf_pass_count = int(np.count_nonzero(conf_valid))
+        valid = conf_valid.copy()
+        valid &= target_mask
         class_pass_count = int(np.count_nonzero(valid))
         if not np.any(valid):
             return {
@@ -324,25 +393,21 @@ class OnnxYoloRuntime:
                 "nms_keep_count": 0,
                 "raw_best_conf": raw_best_conf,
                 "class_best_conf": -1.0,
+                "target_raw_count": target_raw_count,
+                "target_best_conf": target_best_conf,
+                "target_best_area_norm": target_best_area_norm,
+                "target_best_u_norm": target_best_u_norm,
+                "target_best_v_norm": target_best_v_norm,
+                "target_best_center_error_norm": target_best_center_error_norm,
             }
 
-        boxes_xywh = boxes_xywh[valid]
+        boxes_xywh = boxes_xywh_all[valid]
         cls_ids = cls_ids[valid]
         confs = confs[valid]
         class_best_conf = float(np.max(confs)) if confs.size else -1.0
         if angle is not None:
             angle = angle[valid]
-
-        boxes_xyxy = _xywh_to_xyxy(boxes_xywh)
-        boxes_xyxy[:, [0, 2]] -= float(pad[0])
-        boxes_xyxy[:, [1, 3]] -= float(pad[1])
-        boxes_xyxy[:, :4] /= max(1e-6, float(ratio))
-        boxes_xyxy = _clip_boxes_xyxy(boxes_xyxy, orig_w, orig_h)
-
-        boxes_xywh[:, 0] = (boxes_xywh[:, 0] - float(pad[0])) / max(1e-6, float(ratio))
-        boxes_xywh[:, 1] = (boxes_xywh[:, 1] - float(pad[1])) / max(1e-6, float(ratio))
-        boxes_xywh[:, 2] = boxes_xywh[:, 2] / max(1e-6, float(ratio))
-        boxes_xywh[:, 3] = boxes_xywh[:, 3] / max(1e-6, float(ratio))
+        boxes_xyxy = boxes_xyxy_all[valid]
 
         keep = _nms_by_class(boxes_xyxy, confs, cls_ids, self.iou_threshold)
         detections: list[Detection2D] = []
@@ -373,6 +438,12 @@ class OnnxYoloRuntime:
             "nms_keep_count": int(len(keep)),
             "raw_best_conf": raw_best_conf,
             "class_best_conf": class_best_conf,
+            "target_raw_count": target_raw_count,
+            "target_best_conf": target_best_conf,
+            "target_best_area_norm": target_best_area_norm,
+            "target_best_u_norm": target_best_u_norm,
+            "target_best_v_norm": target_best_v_norm,
+            "target_best_center_error_norm": target_best_center_error_norm,
         }
 
     def _normalize_prediction_array(self, outputs: list[np.ndarray]) -> np.ndarray:

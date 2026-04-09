@@ -139,6 +139,12 @@ class LeaderTracker(DetectionNodeMixin, EventEmitterMixin, Node):
         self.last_candidate_count = 0
         self.last_raw_best_conf = -1.0
         self.last_class_best_conf = -1.0
+        self.last_target_raw_count = 0
+        self.last_target_best_conf = -1.0
+        self.last_target_best_area_norm = -1.0
+        self.last_target_best_u_norm = -1.0
+        self.last_target_best_v_norm = -1.0
+        self.last_target_best_center_error_norm = -1.0
         self.audit_frames_total = 0
         self.audit_ok_total = 0
         self.audit_no_det_total = 0
@@ -443,6 +449,12 @@ class LeaderTracker(DetectionNodeMixin, EventEmitterMixin, Node):
         self.last_candidate_count = 0
         self.last_raw_best_conf = -1.0
         self.last_class_best_conf = -1.0
+        self.last_target_raw_count = 0
+        self.last_target_best_conf = -1.0
+        self.last_target_best_area_norm = -1.0
+        self.last_target_best_u_norm = -1.0
+        self.last_target_best_v_norm = -1.0
+        self.last_target_best_center_error_norm = -1.0
         if not results:
             self.last_infer_reason = "no_result"
             self.last_selection_reason = "no_result"
@@ -463,6 +475,21 @@ class LeaderTracker(DetectionNodeMixin, EventEmitterMixin, Node):
         self.last_candidate_count = len(candidates)
         self.last_raw_best_conf = max((float(cand.conf) for cand in candidates), default=-1.0)
         self.last_class_best_conf = self.last_raw_best_conf
+        self.last_target_raw_count = len(candidates)
+        self.last_target_best_conf = self.last_class_best_conf
+        if candidates:
+            best_target = max(candidates, key=lambda cand: float(cand.conf))
+            x1, y1, x2, y2 = [float(v) for v in best_target.bbox]
+            u = 0.5 * (x1 + x2)
+            v = 0.5 * (y1 + y2)
+            self.last_target_best_area_norm = max(0.0, (x2 - x1) * (y2 - y1)) / max(1.0, float(img_bgr.shape[0] * img_bgr.shape[1]))
+            self.last_target_best_u_norm = u / max(1.0, float(img_bgr.shape[1]))
+            self.last_target_best_v_norm = v / max(1.0, float(img_bgr.shape[0]))
+            half_diag = max(1e-6, math.hypot(0.5 * float(img_bgr.shape[1]), 0.5 * float(img_bgr.shape[0])))
+            self.last_target_best_center_error_norm = math.hypot(
+                u - 0.5 * float(img_bgr.shape[1]),
+                v - 0.5 * float(img_bgr.shape[0]),
+            ) / half_diag
         det = self._choose_candidate(candidates, stamp_ns_value)
         if det is not None:
             self.last_infer_reason = "none"
@@ -516,6 +543,12 @@ class LeaderTracker(DetectionNodeMixin, EventEmitterMixin, Node):
         self.last_candidate_count = len(candidates)
         self.last_raw_best_conf = float(result.raw_best_conf)
         self.last_class_best_conf = float(result.class_best_conf)
+        self.last_target_raw_count = int(result.target_raw_count)
+        self.last_target_best_conf = float(result.target_best_conf)
+        self.last_target_best_area_norm = float(result.target_best_area_norm)
+        self.last_target_best_u_norm = float(result.target_best_u_norm)
+        self.last_target_best_v_norm = float(result.target_best_v_norm)
+        self.last_target_best_center_error_norm = float(result.target_best_center_error_norm)
         det = self._choose_candidate(candidates, stamp_ns_value)
         if det is not None:
             self.last_infer_reason = "none"
@@ -582,6 +615,12 @@ class LeaderTracker(DetectionNodeMixin, EventEmitterMixin, Node):
             "raw_best_conf": self.last_raw_best_conf,
             "conf_pass": self.last_conf_pass_count,
             "class_best_conf": self.last_class_best_conf,
+            "target_raw_count": self.last_target_raw_count,
+            "target_best_conf": self.last_target_best_conf,
+            "target_best_area_norm": self.last_target_best_area_norm,
+            "target_best_u_norm": self.last_target_best_u_norm,
+            "target_best_v_norm": self.last_target_best_v_norm,
+            "target_best_center_error_norm": self.last_target_best_center_error_norm,
             "class_pass": self.last_class_pass_count,
             "nms_keep": self.last_nms_keep_count,
             "candidates": self.last_candidate_count,

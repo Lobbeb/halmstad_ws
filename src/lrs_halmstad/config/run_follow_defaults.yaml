@@ -89,6 +89,11 @@ camera_tracker:
     pan_image_center_max_deg: 2.5           # Allow a modest extra pan correction before geometry-only tracking takes over again.
     tilt_image_center_gain: 0.26            # Slightly stronger vertical re-centering to keep the UGV better framed through weak detections.
     tilt_image_center_max_deg: 5.0          # Allow a modest extra tilt correction during recovery without making the camera twitchy.
+    weak_status_center_correction_enable: true  # When detections fall just below threshold, let camera_tracker use the weak raw target centre from detector status for gimbal-only recentering.
+    weak_status_center_correction_timeout_s: 0.35  # Only trust weak status centring briefly so stale low-confidence hints do not drag the gimbal around.
+    weak_status_center_conf_threshold: 0.02       # Minimum target_best_conf from leader_detection_status before we use it for camera-only weak recentering.
+    weak_status_center_min_area_norm: 0.002       # Ignore tiny weak-status candidates that are likely edge noise rather than the real UGV.
+    weak_status_center_correction_scale: 0.65     # Scale weak-status pan/tilt corrections below the direct-detection path so they help recenter without overreacting.
     visual_target_estimate_timeout_s: 0.75   # Let camera_tracker use fresh TRACKED/PREDICTED/DEGRADED visual target estimates as a reacquisition fallback before dropping to stale hold.
     prefer_visual_estimate_tilt_recovery: true  # Once direct detections drop out, let tilt recovery follow the visual target estimate earlier instead of waiting for the world-pose path to age out.
     publish_debug_topics: true          # Publish /<uav>/camera/{target,debug}/* geometry and image-centering topics.
