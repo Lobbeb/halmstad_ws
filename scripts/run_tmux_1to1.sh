@@ -36,19 +36,99 @@ OMNET_RESULT_DIR=""
 OMNET_BRIDGE_PORT="5555"
 OMNET_START_DELAY_OVERRIDE=""
 DEFAULT_OMNET_START_DELAY_S="3.0"
+DEFAULT_UAV_BODY_X_OFFSET="-7.0"
+DEFAULT_UAV_BODY_Y_OFFSET="0.0"
+DEFAULT_UAV_Z="7.0"
 UGV_START_DELAY_OVERRIDE=""
 UAV_START_DELAY_OVERRIDE=""
+UAV_HEIGHT_OVERRIDE=""
 BAYLANDS_NAV_SPAWN_X="-14.085738068"
 BAYLANDS_NAV_SPAWN_Y="-54.861874768"
 BAYLANDS_NAV_SPAWN_Z="0.100975479"
 BAYLANDS_NAV_SPAWN_YAW="0.484129496"
 BAYLANDS_NAV_LIDAR_MODE="3d"
+BAYLANDS_WAYPOINT_CSV="$WS_ROOT/maps/waypoints_baylands.csv"
+BAYLANDS_GROUP_WAYPOINT_CSV="$WS_ROOT/maps/waypoints_baylands_groups.csv"
 HAS_GAZEBO_SPAWN_OVERRIDE="false"
+GAZEBO_SPAWN_STATE_NAME=""
+GAZEBO_WAYPOINT_NAME=""
+GAZEBO_SPAWN_X_OVERRIDE=""
+GAZEBO_SPAWN_Y_OVERRIDE=""
+GAZEBO_SPAWN_Z_OVERRIDE=""
+GAZEBO_SPAWN_YAW_OVERRIDE=""
 SPAWN_ARGS=()
 FOLLOW_ARGS=()
 GAZEBO_ARGS=()
 RECORD_CMD=()
 OMNET="false"
+
+source "$SCRIPT_DIR/slam_state_common.sh"
+
+resolve_baylands_waypoint() {
+  local waypoint_name="$1"
+  python3 - "$waypoint_name" "$BAYLANDS_GROUP_WAYPOINT_CSV" "$BAYLANDS_WAYPOINT_CSV" <<'PY'
+import csv
+import sys
+
+name, *paths = sys.argv[1:]
+for path in paths:
+    try:
+        with open(path, "r", encoding="utf-8", newline="") as handle:
+            reader = csv.DictReader(handle)
+            for row in reader:
+                waypoint_name = str(row.get("place", "")).strip()
+                if waypoint_name != name:
+                    continue
+                x_val = row.get("x")
+                y_val = row.get("y")
+                if x_val in (None, "") or y_val in (None, ""):
+                    raise SystemExit(f"Waypoint '{name}' is missing world x/y in {path}")
+                print(f"spawn_x={float(x_val)}")
+                print(f"spawn_y={float(y_val)}")
+                z_val = row.get("z")
+                if z_val not in (None, ""):
+                    print(f"spawn_z={float(z_val)}")
+                yaw_val = row.get("yaw")
+                if yaw_val not in (None, ""):
+                    print(f"spawn_yaw={float(yaw_val)}")
+                raise SystemExit(0)
+    except FileNotFoundError:
+        continue
+raise SystemExit(f"Waypoint '{name}' was not found in the Baylands waypoint CSVs")
+PY
+}
+
+compute_uav_spawn_from_ugv_pose_env() {
+  local ugv_x="$1"
+  local ugv_y="$2"
+  local ugv_z="$3"
+  local ugv_yaw="$4"
+  local body_x_offset="${5:--7.0}"
+  local body_y_offset="${6:-0.0}"
+  local uav_z="${7:-7.0}"
+
+  python3 - "$ugv_x" "$ugv_y" "$ugv_z" "$ugv_yaw" "$body_x_offset" "$body_y_offset" "$uav_z" <<'PY'
+import math
+import sys
+
+ugv_x = float(sys.argv[1])
+ugv_y = float(sys.argv[2])
+ugv_z = float(sys.argv[3])
+ugv_yaw = float(sys.argv[4])
+body_x_offset = float(sys.argv[5])
+body_y_offset = float(sys.argv[6])
+uav_z = float(sys.argv[7])
+
+uav_x = ugv_x + body_x_offset * math.cos(ugv_yaw) - body_y_offset * math.sin(ugv_yaw)
+uav_y = ugv_y + body_x_offset * math.sin(ugv_yaw) + body_y_offset * math.cos(ugv_yaw)
+
+print(f"uav_x={uav_x:.9f}")
+print(f"uav_y={uav_y:.9f}")
+print(f"uav_z={uav_z:.9f}")
+print(f"uav_yaw={ugv_yaw:.9f}")
+print(f"uav_yaw_deg={math.degrees(ugv_yaw):.9f}")
+PY
+}
 
 if [ "$#" -gt 0 ] && [[ "$1" != *":="* ]] && [[ "$1" != *=* ]]; then
   WORLD="$1"
@@ -70,8 +150,44 @@ for arg in "$@"; do
     rtf:=*|real_time_factor:=*)
       GAZEBO_ARGS+=("$arg")
       ;;
-    x:=*|y:=*|z:=*|yaw:=*|state:=*|spawn_state:=*|state_name:=*)
+    x:=*)
       HAS_GAZEBO_SPAWN_OVERRIDE="true"
+      GAZEBO_SPAWN_X_OVERRIDE="${arg#x:=}"
+      GAZEBO_ARGS+=("$arg")
+      ;;
+    y:=*)
+      HAS_GAZEBO_SPAWN_OVERRIDE="true"
+      GAZEBO_SPAWN_Y_OVERRIDE="${arg#y:=}"
+      GAZEBO_ARGS+=("$arg")
+      ;;
+    z:=*)
+      HAS_GAZEBO_SPAWN_OVERRIDE="true"
+      GAZEBO_SPAWN_Z_OVERRIDE="${arg#z:=}"
+      GAZEBO_ARGS+=("$arg")
+      ;;
+    yaw:=*)
+      HAS_GAZEBO_SPAWN_OVERRIDE="true"
+      GAZEBO_SPAWN_YAW_OVERRIDE="${arg#yaw:=}"
+      GAZEBO_ARGS+=("$arg")
+      ;;
+    state:=*)
+      HAS_GAZEBO_SPAWN_OVERRIDE="true"
+      GAZEBO_SPAWN_STATE_NAME="${arg#state:=}"
+      GAZEBO_ARGS+=("$arg")
+      ;;
+    spawn_state:=*)
+      HAS_GAZEBO_SPAWN_OVERRIDE="true"
+      GAZEBO_SPAWN_STATE_NAME="${arg#spawn_state:=}"
+      GAZEBO_ARGS+=("$arg")
+      ;;
+    state_name:=*)
+      HAS_GAZEBO_SPAWN_OVERRIDE="true"
+      GAZEBO_SPAWN_STATE_NAME="${arg#state_name:=}"
+      GAZEBO_ARGS+=("$arg")
+      ;;
+    waypoint:=*)
+      HAS_GAZEBO_SPAWN_OVERRIDE="true"
+      GAZEBO_WAYPOINT_NAME="${arg#waypoint:=}"
       GAZEBO_ARGS+=("$arg")
       ;;
     tmux_attach:=*|attach:=*)
@@ -154,11 +270,13 @@ for arg in "$@"; do
     camera:=*|height:=*|mount_pitch_deg:=*|uav_name:=*)
       if [[ "$arg" == uav_name:=* ]]; then
         UAV_NAME="${arg#uav_name:=}"
+      elif [[ "$arg" == height:=* ]]; then
+        UAV_HEIGHT_OVERRIDE="${arg#height:=}"
       fi
       SPAWN_ARGS+=("$arg")
       FOLLOW_ARGS+=("$arg")
       ;;
-    follow_yaw:=*|pan_enable:=*|use_tilt:=*|tilt_enable:=*|camera_default_tilt_deg:=*|use_actual_heading:=*|leader_actual_heading_enable:=*|leader_actual_heading_topic:=*|leader_actual_pose_enable:=*|publish_follow_debug_topics:=*|publish_pose_cmd_topics:=*|publish_camera_debug_topics:=*)
+    follow_yaw:=*|pan_enable:=*|use_tilt:=*|tilt_enable:=*|camera_default_tilt_deg:=*|use_actual_heading:=*|leader_actual_heading_enable:=*|leader_actual_heading_topic:=*|leader_actual_pose_enable:=*|publish_follow_debug_topics:=*|publish_pose_cmd_topics:=*|publish_camera_debug_topics:=*|ugv_goal_sequence_file:=*|goal_sequence_file:=*|ugv_goal_sequence_csv:=*|goal_sequence_csv:=*|ugv_goal_sequence_randomize:=*|ugv_goal_sequence_random_reverse:=*|ugv_goal_sequence_relative_to_current_pose:=*)
       FOLLOW_ARGS+=("$arg")
       ;;
     weights:=*|target:=*|use_estimate:=*|obb:=*|folder:=*|dir:=*|subdir:=*|tracker:=*|external_detection_node:=*|tracker_config:=*|range_mode:=*|leader_range_mode:=*|start_visual_follow_controller:=*|start_visual_follow_point_generator:=*|start_visual_follow_planner:=*|start_visual_actuation_bridge:=*|leader_selected_target_topic:=*|leader_selected_target_filtered_topic:=*|leader_selected_target_filtered_status_topic:=*|leader_visual_target_estimate_topic:=*|leader_visual_target_estimate_status_topic:=*|leader_follow_point_topic:=*|leader_follow_point_status_topic:=*|leader_planned_target_topic:=*|leader_planned_target_status_topic:=*|leader_visual_control_topic:=*|leader_visual_control_status_topic:=*|leader_visual_actuation_bridge_status_topic:=*)
@@ -206,7 +324,7 @@ for arg in "$@"; do
       ;;
     *)
       echo "Unknown argument: $arg" >&2
-      echo "Usage: $0 [world] [mode:=follow|yolo] [record:=true|false] [record_profile:=default|step2_light|vision] [record_tag:=name] [record_out:=bags/experiments/...] [camera:=attached] [follow_yaw:=true|false] [pan_enable:=true|false] [use_tilt:=true|false] [use_actual_heading:=true|false] [leader_actual_pose_enable:=true|false] [publish_follow_debug_topics:=true|false] [publish_pose_cmd_topics:=true|false] [publish_camera_debug_topics:=true|false] [height:=7] [mount_pitch_deg:=45] [uav_name:=dji0] [weights:=...] [target:=...] [use_estimate:=true|false] [obb:=true|false] [tracker:=true|false] [external_detection_node:=detector|tracker] [tracker_config:=botsort.yaml] [start_visual_actuation_bridge:=true|false] [start_visual_follow_point_generator:=true|false] [start_visual_follow_planner:=true|false] [start_visual_follow_controller:=true|false] [folder:=...] [map:=/path/map.yaml] [gui:=true|false] [rtf:=1.0] [x:=...] [y:=...] [z:=...] [yaw:=...] [state:=checkpoint] [delay_s:=9] [spawn_delay_s:=9] [localization_delay_s:=11] [nav2_delay_s:=11] [follow_delay_s:=13] [record_delay_s:=13] [session:=name] [tmux_attach:=true|false] [dry_run:=true|false] [layout:=windows|panes] [omnet:=true|false] [omnet_network:=wifi|5g|lora] [omnet_ui:=cmdenv|qtenv] [omnet_project:=/path/UAV_UGV] [omnet_result_dir:=/path] [omnet_bridge_port:=5555] [omnet_start_delay_s:=3.0] [ugv_start_delay_s:=3.0] [uav_start_delay_s:=3.0]" >&2
+      echo "Usage: $0 [world] [mode:=follow|yolo] [record:=true|false] [record_profile:=default|step2_light|vision] [record_tag:=name] [record_out:=bags/experiments/...] [camera:=attached] [follow_yaw:=true|false] [pan_enable:=true|false] [use_tilt:=true|false] [use_actual_heading:=true|false] [leader_actual_pose_enable:=true|false] [publish_follow_debug_topics:=true|false] [publish_pose_cmd_topics:=true|false] [publish_camera_debug_topics:=true|false] [height:=7] [mount_pitch_deg:=45] [uav_name:=dji0] [weights:=...] [target:=...] [use_estimate:=true|false] [obb:=true|false] [tracker:=true|false] [external_detection_node:=detector|tracker] [tracker_config:=botsort.yaml] [start_visual_actuation_bridge:=true|false] [start_visual_follow_point_generator:=true|false] [start_visual_follow_planner:=true|false] [start_visual_follow_controller:=true|false] [ugv_goal_sequence_file:=/path/route.yaml] [ugv_goal_sequence_csv:=x,y,yaw;...] [ugv_goal_sequence_randomize:=true|false] [ugv_goal_sequence_random_reverse:=true|false] [ugv_goal_sequence_relative_to_current_pose:=true|false] [folder:=...] [map:=/path/map.yaml] [gui:=true|false] [rtf:=1.0] [x:=...] [y:=...] [z:=...] [yaw:=...] [state:=checkpoint] [waypoint:=name] [delay_s:=9] [spawn_delay_s:=9] [localization_delay_s:=11] [nav2_delay_s:=11] [follow_delay_s:=13] [record_delay_s:=13] [session:=name] [tmux_attach:=true|false] [dry_run:=true|false] [layout:=windows|panes] [omnet:=true|false] [omnet_network:=wifi|5g|lora] [omnet_ui:=cmdenv|qtenv] [omnet_project:=/path/UAV_UGV] [omnet_result_dir:=/path] [omnet_bridge_port:=5555] [omnet_start_delay_s:=3.0] [ugv_start_delay_s:=3.0] [uav_start_delay_s:=3.0]" >&2
       exit 2
       ;;
   esac
@@ -295,6 +413,16 @@ apply_default_delays() {
   NAV2_DELAY_S="$LOCALIZATION_DELAY_S"
   FOLLOW_DELAY_S=$((LOCALIZATION_DELAY_S + 2))
   RECORD_DELAY_S="$FOLLOW_DELAY_S"
+
+  if [[ "$WORLD" == baylands* ]]; then
+    # Baylands needs a bit more time for Gazebo startup/spawn settling before we
+    # derive the UAV-relative spawn and start the rest of the stack.
+    SPAWN_DELAY_S=$((SPAWN_DELAY_S + 2))
+    LOCALIZATION_DELAY_S=$((LOCALIZATION_DELAY_S + 2))
+    NAV2_DELAY_S="$LOCALIZATION_DELAY_S"
+    FOLLOW_DELAY_S=$((FOLLOW_DELAY_S + 2))
+    RECORD_DELAY_S="$FOLLOW_DELAY_S"
+  fi
 
   if [ -n "$SPAWN_DELAY_OVERRIDE" ]; then
     SPAWN_DELAY_S="$SPAWN_DELAY_OVERRIDE"
@@ -488,6 +616,72 @@ if [[ "$WORLD" == baylands* ]] && [ "$HAS_GAZEBO_SPAWN_OVERRIDE" = "false" ]; th
     "yaw:=$BAYLANDS_NAV_SPAWN_YAW"
   )
   echo "[run_tmux_1to1] Baylands detected: using navigation-ready UGV spawn x=${BAYLANDS_NAV_SPAWN_X} y=${BAYLANDS_NAV_SPAWN_Y} z=${BAYLANDS_NAV_SPAWN_Z} yaw=${BAYLANDS_NAV_SPAWN_YAW}"
+fi
+
+UGV_SPAWN_X=""
+UGV_SPAWN_Y=""
+UGV_SPAWN_Z=""
+UGV_SPAWN_YAW=""
+if [ -n "$GAZEBO_SPAWN_STATE_NAME" ]; then
+  METADATA_PATH="$(slam_metadata_path_for_name "$WS_ROOT" "$GAZEBO_SPAWN_STATE_NAME")"
+  if [ ! -f "$METADATA_PATH" ]; then
+    echo "[run_tmux_1to1] Saved SLAM state metadata not found: $METADATA_PATH" >&2
+    exit 1
+  fi
+  # shellcheck disable=SC1090
+  source "$METADATA_PATH"
+  UGV_SPAWN_X="${spawn_x:-}"
+  UGV_SPAWN_Y="${spawn_y:-}"
+  UGV_SPAWN_Z="${spawn_z:-}"
+  UGV_SPAWN_YAW="${spawn_yaw:-}"
+elif [ -n "$GAZEBO_WAYPOINT_NAME" ]; then
+  if [[ "$WORLD" != baylands* ]]; then
+    echo "[run_tmux_1to1] waypoint:=... is currently supported for Baylands only." >&2
+    exit 2
+  fi
+  WAYPOINT_ENV="$(resolve_baylands_waypoint "$GAZEBO_WAYPOINT_NAME")" || {
+    echo "[run_tmux_1to1] Failed to resolve waypoint '$GAZEBO_WAYPOINT_NAME'." >&2
+    exit 1
+  }
+  eval "$WAYPOINT_ENV"
+  UGV_SPAWN_X="${spawn_x:-}"
+  UGV_SPAWN_Y="${spawn_y:-}"
+  UGV_SPAWN_Z="${spawn_z:-}"
+  UGV_SPAWN_YAW="${spawn_yaw:-}"
+elif [ -n "$GAZEBO_SPAWN_X_OVERRIDE" ] || [ -n "$GAZEBO_SPAWN_Y_OVERRIDE" ] || [ -n "$GAZEBO_SPAWN_YAW_OVERRIDE" ]; then
+  UGV_SPAWN_X="$GAZEBO_SPAWN_X_OVERRIDE"
+  UGV_SPAWN_Y="$GAZEBO_SPAWN_Y_OVERRIDE"
+  UGV_SPAWN_Z="$GAZEBO_SPAWN_Z_OVERRIDE"
+  UGV_SPAWN_YAW="$GAZEBO_SPAWN_YAW_OVERRIDE"
+elif [[ "$WORLD" == baylands* ]]; then
+  UGV_SPAWN_X="$BAYLANDS_NAV_SPAWN_X"
+  UGV_SPAWN_Y="$BAYLANDS_NAV_SPAWN_Y"
+  UGV_SPAWN_Z="$BAYLANDS_NAV_SPAWN_Z"
+  UGV_SPAWN_YAW="$BAYLANDS_NAV_SPAWN_YAW"
+fi
+
+if [ -n "$UGV_SPAWN_X" ] && [ -n "$UGV_SPAWN_Y" ] && [ -n "$UGV_SPAWN_YAW" ]; then
+  EFFECTIVE_UAV_Z="${UAV_HEIGHT_OVERRIDE:-$DEFAULT_UAV_Z}"
+  UAV_SPAWN_ENV="$(compute_uav_spawn_from_ugv_pose_env \
+    "$UGV_SPAWN_X" \
+    "$UGV_SPAWN_Y" \
+    "${UGV_SPAWN_Z:-0.0}" \
+    "$UGV_SPAWN_YAW" \
+    "$DEFAULT_UAV_BODY_X_OFFSET" \
+    "$DEFAULT_UAV_BODY_Y_OFFSET" \
+    "$EFFECTIVE_UAV_Z")" || {
+    echo "[run_tmux_1to1] Failed to compute UAV-relative spawn from the selected UGV spawn pose." >&2
+    exit 1
+  }
+  eval "$UAV_SPAWN_ENV"
+  SPAWN_ARGS+=("x:=$uav_x" "y:=$uav_y" "z:=$uav_z" "yaw:=$uav_yaw")
+  FOLLOW_ARGS+=(
+    "uav_start_x:=$uav_x"
+    "uav_start_y:=$uav_y"
+    "uav_start_z:=$uav_z"
+    "uav_start_yaw_deg:=$uav_yaw_deg"
+  )
+  echo "[run_tmux_1to1] Using deterministic UAV spawn from UGV spawn x=${UGV_SPAWN_X} y=${UGV_SPAWN_Y} yaw=${UGV_SPAWN_YAW}: uav_x=${uav_x} uav_y=${uav_y} uav_z=${uav_z} uav_yaw_deg=${uav_yaw_deg}"
 fi
 
 GAZEBO_CMD=(./run.sh gazebo_sim "$WORLD")

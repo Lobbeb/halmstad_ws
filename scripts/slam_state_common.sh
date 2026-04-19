@@ -157,14 +157,22 @@ slam_state_capture_gazebo_pose_env() {
   local ws_root="$1"
   local world_name="${2:-$(slam_state_default_name)}"
   local timeout_s="${3:-5}"
-  local gz_world=""
   local entity_name=""
+
+  entity_name="$(slam_state_robot_entity_name "$ws_root")" || return 1
+  slam_state_capture_gazebo_named_pose_env "$world_name" "$entity_name" "$timeout_s"
+}
+
+slam_state_capture_gazebo_named_pose_env() {
+  local world_name="${1:-$(slam_state_default_name)}"
+  local entity_name="$2"
+  local timeout_s="${3:-5}"
+  local gz_world=""
   local topic=""
   local pose_json=""
   local gz_bin="/opt/ros/jazzy/opt/gz_tools_vendor/bin/gz"
 
   gz_world="$(slam_state_gazebo_world_name "$world_name")"
-  entity_name="$(slam_state_robot_entity_name "$ws_root")" || return 1
 
   for topic in "/world/${gz_world}/dynamic_pose/info" "/world/${gz_world}/pose/info"; do
     pose_json="$(timeout "$timeout_s" "$gz_bin" topic -e -n 1 -t "$topic" --json-output 2>/dev/null || true)"

@@ -9,6 +9,7 @@ WORLD="warehouse"
 DEFAULT_UAV_BODY_X_OFFSET="-7.0"
 DEFAULT_UAV_BODY_Y_OFFSET="0.0"
 DEFAULT_UAV_Z="7.0"
+UAV_NAME="dji0"
 
 source "$SCRIPT_DIR/slam_state_common.sh"
 
@@ -53,6 +54,10 @@ for arg in "$@"; do
       EXTRA_ARGS+=("uav_camera_mode:=$camera_mode")
           ;;
       esac
+      ;;
+    uav_name:=*)
+      UAV_NAME="${arg#uav_name:=}"
+      EXTRA_ARGS+=("$arg")
       ;;
     uav_start_x:=*)
       HAVE_UAV_START_X="true"
@@ -116,7 +121,25 @@ for arg in "$@"; do
 done
 
 if [ "$HAVE_UAV_START_X" = "false" ] && [ "$HAVE_UAV_START_Y" = "false" ]; then
-  if UAV_START_ENV="$(slam_state_capture_uav_spawn_from_ugv_env \
+  if UAV_START_ENV="$(slam_state_capture_gazebo_named_pose_env \
+    "$WORLD" \
+    "$UAV_NAME" \
+    5)"; then
+    eval "$UAV_START_ENV"
+    EXTRA_ARGS+=("uav_start_x:=$spawn_x" "uav_start_y:=$spawn_y")
+    if [ "$HAVE_UAV_START_Z" = "false" ]; then
+      EXTRA_ARGS+=("uav_start_z:=$spawn_z")
+    fi
+    if [ "$HAVE_UAV_START_YAW" = "false" ]; then
+      EXTRA_ARGS+=("uav_start_yaw_deg:=$(python3 - "$spawn_yaw" <<'PY'
+import math
+import sys
+print(f"{math.degrees(float(sys.argv[1])):.9f}")
+PY
+)")
+    fi
+    echo "[run_1to1_follow] Using live UAV pose for simulator start x=${spawn_x} y=${spawn_y} z=${spawn_z} yaw=${spawn_yaw}"
+  elif UAV_START_ENV="$(slam_state_capture_uav_spawn_from_ugv_env \
     "$WS_ROOT" \
     "$WORLD" \
     "$DEFAULT_UAV_BODY_X_OFFSET" \
