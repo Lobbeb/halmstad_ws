@@ -17,6 +17,8 @@ LEADER_RANGE_MODE="auto"
 WEIGHTS_REL=""
 MODEL_SUBDIR=""
 HAVE_UAV_START_X="false"
+HAVE_UAV_START_Y="false"
+HAVE_UAV_START_YAW="false"
 HAVE_UAV_START_Z="false"
 HAVE_LEADER_ACTUAL_POSE_ENABLE="false"
 HAVE_PUBLISH_FOLLOW_DEBUG_TOPICS="false"
@@ -26,6 +28,11 @@ DEFAULT_CUSTOM_WEIGHTS="detection/mymodels/warehouse_v1-v2-yolo26n.pt"
 DEFAULT_DETECTION_WEIGHTS="detection/mymodels/warehouse_v1-v2-yolo26n.pt"
 DEFAULT_OBB_WEIGHTS="obb/mymodels/warehouse-v1-yolo26n-obb.pt"
 MODELS_ROOT="${LRS_HALMSTAD_MODELS_ROOT:-$WS_ROOT/models}"
+DEFAULT_UAV_BODY_X_OFFSET="-7.0"
+DEFAULT_UAV_BODY_Y_OFFSET="0.0"
+DEFAULT_UAV_Z="7.0"
+
+source "$SCRIPT_DIR/slam_state_common.sh"
 
 case "$MODELS_ROOT" in
   "~")
@@ -143,6 +150,14 @@ for arg in "$@"; do
       ;;
     uav_start_x:=*)
       HAVE_UAV_START_X="true"
+      EXTRA_ARGS+=("$arg")
+      ;;
+    uav_start_y:=*)
+      HAVE_UAV_START_Y="true"
+      EXTRA_ARGS+=("$arg")
+      ;;
+    uav_start_yaw_deg:=*)
+      HAVE_UAV_START_YAW="true"
       EXTRA_ARGS+=("$arg")
       ;;
     uav_start_z:=*)
@@ -284,11 +299,27 @@ if [ "$USE_ESTIMATE" = true ]; then
   elif [ -n "$USE_ACTUAL_HEADING" ] && [ "$HAVE_LEADER_ACTUAL_HEADING_ENABLE" != true ]; then
     EXTRA_ARGS+=("leader_actual_heading_enable:=$USE_ACTUAL_HEADING")
   fi
-  if [ "$HAVE_UAV_START_X" != true ]; then
-    EXTRA_ARGS+=("uav_start_x:=-7.0")
-  fi
-  if [ "$HAVE_UAV_START_Z" != true ]; then
-    EXTRA_ARGS+=("uav_start_z:=7.0")
+fi
+
+if [ "$HAVE_UAV_START_X" = "false" ] && [ "$HAVE_UAV_START_Y" = "false" ]; then
+  if UAV_START_ENV="$(slam_state_capture_uav_spawn_from_ugv_env \
+    "$WS_ROOT" \
+    "$WORLD" \
+    "$DEFAULT_UAV_BODY_X_OFFSET" \
+    "$DEFAULT_UAV_BODY_Y_OFFSET" \
+    "$DEFAULT_UAV_Z" \
+    5)"; then
+    eval "$UAV_START_ENV"
+    EXTRA_ARGS+=("uav_start_x:=$uav_x" "uav_start_y:=$uav_y")
+    if [ "$HAVE_UAV_START_Z" = "false" ]; then
+      EXTRA_ARGS+=("uav_start_z:=$uav_z")
+    fi
+    if [ "$HAVE_UAV_START_YAW" = "false" ]; then
+      EXTRA_ARGS+=("uav_start_yaw_deg:=$uav_yaw_deg")
+    fi
+    echo "[run_1to1_yolo] Using UGV-relative UAV start x=${uav_x} y=${uav_y} z=${uav_z} yaw_deg=${uav_yaw_deg}"
+  else
+    echo "[run_1to1_yolo] Warning: could not read the live UGV pose; falling back to the launch defaults." >&2
   fi
 fi
 

@@ -1,4 +1,5 @@
 import hashlib
+import math
 import os
 import re
 from pathlib import Path
@@ -83,6 +84,35 @@ ARGUMENTS.append(
     )
 )
 
+ARGUMENTS.extend([
+    DeclareLaunchArgument(
+        'view_follow_spawn',
+        default_value='false',
+        choices=['true', 'false'],
+        description='Start the Gazebo GUI camera near the UGV spawn pose.',
+    ),
+    DeclareLaunchArgument(
+        'view_distance',
+        default_value='6.0',
+        description='Distance behind the spawn pose for the initial Gazebo GUI camera.',
+    ),
+    DeclareLaunchArgument(
+        'view_height',
+        default_value='6.0',
+        description='Height above the spawn pose for the initial Gazebo GUI camera.',
+    ),
+    DeclareLaunchArgument(
+        'view_pitch',
+        default_value='0.5',
+        description='Pitch angle in radians for the initial Gazebo GUI camera.',
+    ),
+    DeclareLaunchArgument(
+        'view_yaw_offset',
+        default_value='0.0',
+        description='Yaw offset in radians applied to the initial Gazebo GUI camera.',
+    ),
+])
+
 
 def _gz_launch(context, *args, **kwargs):
     pkg_lrs_halmstad = get_package_share_directory('lrs_halmstad')
@@ -90,10 +120,10 @@ def _gz_launch(context, *args, **kwargs):
     world_name = LaunchConfiguration('world').perform(context)
     real_time_factor = _resolve_real_time_factor(context)
     world_sdf_path = _resolve_world_sdf_path(pkg_lrs_halmstad, world_name)
-    world_launch_path = _prepare_world_launch_path(world_sdf_path, world_name, real_time_factor)
+    world_launch_path = _prepare_world_launch_path(context, world_sdf_path, world_name, real_time_factor)
 
     gz_sim_launch = PathJoinSubstitution([pkg_ros_gz_sim, 'launch', 'gz_sim.launch.py'])
-    gui_config_path = os.path.join(pkg_lrs_halmstad, 'config', 'gui.config')
+    gui_config_path = _prepare_gui_config_path(context, os.path.join(pkg_lrs_halmstad, 'config', 'gui.config'))
 
     auto_start_option = ''
     if LaunchConfiguration('auto_start').perform(context) == 'true':
@@ -151,27 +181,80 @@ def _resolve_world_sdf_path(pkg_lrs_halmstad: str, world_name: str) -> Path:
     return candidate
 
 
-def _prepare_world_launch_path(world_sdf_path: Path, world_name: str, real_time_factor: float) -> str:
-    if abs(real_time_factor - 1.0) <= 1e-9:
-        return str(world_sdf_path)
-
+def _prepare_world_launch_path(context, world_sdf_path: Path, world_name: str, real_time_factor: float) -> str:
     sdf_text = world_sdf_path.read_text(encoding='utf-8')
-    patched_text, count = re.subn(
-        r'(<real_time_factor>\s*)([^<]+)(\s*</real_time_factor>)',
-        rf'\g<1>{real_time_factor}\g<3>',
-        sdf_text,
-        count=1,
-    )
-    if count != 1:
-        raise RuntimeError(
-            f"Could not patch real_time_factor in world file: {world_sdf_path}"
+
+    patched_text = sdf_text
+    changed = False
+
+    if abs(real_time_factor - 1.0) > 1e-9:
+        patched_text, count = re.subn(
+            r'(<real_time_factor>\s*)([^<]+)(\s*</real_time_factor>)',
+            rf'\g<1>{real_time_factor}\g<3>',
+            patched_text,
+            count=1,
         )
+        if count != 1:
+            raise RuntimeError(
+                f"Could not patch real_time_factor in world file: {world_sdf_path}"
+            )
+        changed = True
+
+    if not changed:
+        return str(world_sdf_path)
 
     tmp_dir = Path('/tmp/halmstad_ws/generated_worlds')
     tmp_dir.mkdir(parents=True, exist_ok=True)
     source_hash = hashlib.sha1(str(world_sdf_path.resolve()).encode('utf-8')).hexdigest()[:10]
     rtf_token = f"{real_time_factor:g}".replace('.', 'p')
     tmp_path = tmp_dir / f"{Path(world_name).stem}_{source_hash}_rtf_{rtf_token}.sdf"
+    if not tmp_path.is_file() or tmp_path.read_text(encoding='utf-8') != patched_text:
+        tmp_path.write_text(patched_text, encoding='utf-8')
+    return str(tmp_path)
+
+
+def _parse_float_arg(context, name: str) -> float:
+    raw_value = LaunchConfiguration(name).perform(context).strip()
+    try:
+        return float(raw_value)
+    except ValueError as exc:
+        raise RuntimeError(f"Invalid {name} value: '{raw_value}'") from exc
+
+
+def _prepare_gui_config_path(context, base_gui_config_path: str) -> str:
+    if LaunchConfiguration('view_follow_spawn').perform(context) != 'true':
+        return base_gui_config_path
+
+    spawn_x = _parse_float_arg(context, 'x')
+    spawn_y = _parse_float_arg(context, 'y')
+    spawn_z = _parse_float_arg(context, 'z')
+    spawn_yaw = _parse_float_arg(context, 'yaw')
+    view_distance = _parse_float_arg(context, 'view_distance')
+    view_height = _parse_float_arg(context, 'view_height')
+    view_pitch = _parse_float_arg(context, 'view_pitch')
+    view_yaw_offset = _parse_float_arg(context, 'view_yaw_offset')
+
+    camera_yaw = spawn_yaw + view_yaw_offset
+    camera_x = spawn_x - view_distance * math.cos(camera_yaw)
+    camera_y = spawn_y - view_distance * math.sin(camera_yaw)
+    camera_z = spawn_z + view_height
+    camera_pose = f"{camera_x:.6f} {camera_y:.6f} {camera_z:.6f} 0 {view_pitch:.6f} {camera_yaw:.6f}"
+
+    gui_text = Path(base_gui_config_path).read_text(encoding='utf-8')
+    patched_text, count = re.subn(
+        r'(<camera_pose>\s*)([^<]+)(\s*</camera_pose>)',
+        rf'\g<1>{camera_pose}\g<3>',
+        gui_text,
+        count=1,
+    )
+    if count != 1:
+        raise RuntimeError(f"Could not patch camera_pose in GUI config: {base_gui_config_path}")
+
+    tmp_dir = Path('/tmp/halmstad_ws/generated_gui_configs')
+    tmp_dir.mkdir(parents=True, exist_ok=True)
+    source_hash = hashlib.sha1(str(Path(base_gui_config_path).resolve()).encode('utf-8')).hexdigest()[:10]
+    pose_hash = hashlib.sha1(camera_pose.encode('utf-8')).hexdigest()[:10]
+    tmp_path = tmp_dir / f"gui_{source_hash}_{pose_hash}.config"
     if not tmp_path.is_file() or tmp_path.read_text(encoding='utf-8') != patched_text:
         tmp_path.write_text(patched_text, encoding='utf-8')
     return str(tmp_path)

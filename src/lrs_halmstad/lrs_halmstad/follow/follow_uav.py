@@ -107,6 +107,7 @@ class FollowUav(FollowControllerCoreMixin, Node):
         declare_yaml_param(self, "estimate_heading_from_motion_enable")
         declare_yaml_param(self, "estimate_heading_min_speed_mps")
         declare_yaml_param(self, "estimate_heading_max_dt_s")
+        self.declare_parameter("start_delay_s", 0.0)
 
         # ---------- Read params ----------
         self.world = str(self.get_parameter("world").value)
@@ -192,6 +193,7 @@ class FollowUav(FollowControllerCoreMixin, Node):
         self.estimate_heading_from_motion_enable = coerce_bool(required_param_value(self, "estimate_heading_from_motion_enable"))
         self.estimate_heading_min_speed_mps = float(required_param_value(self, "estimate_heading_min_speed_mps"))
         self.estimate_heading_max_dt_s = float(required_param_value(self, "estimate_heading_max_dt_s"))
+        self.start_delay_s = max(0.0, float(self.get_parameter("start_delay_s").value))
         self._refresh_xy_target()
         self.current_leader_distance_xy_m = max(0.01, self.xy_target)
         self.current_leader_distance_3d_m = math.hypot(
@@ -286,6 +288,8 @@ class FollowUav(FollowControllerCoreMixin, Node):
         self.last_debug_actual_yaw_unwrapped: Optional[float] = None
 
         self.last_cmd_time: Optional[Time] = None
+        self._start_time: Optional[Time] = None
+        self._startup_hold_logged = False
         self.last_leader_status_fields = {}
         self.last_leader_status_rx: Optional[Time] = None
         self.follow_state = "INIT"
@@ -1042,6 +1046,18 @@ class FollowUav(FollowControllerCoreMixin, Node):
 
     def on_tick(self):
         now = self.get_clock().now()
+        if self.start_delay_s > 0.0:
+            if self._start_time is None:
+                self._start_time = now
+            elapsed_s = max(0.0, (now - self._start_time).nanoseconds * 1e-9)
+            if elapsed_s < self.start_delay_s:
+                if not self._startup_hold_logged:
+                    self.get_logger().info(
+                        f"[follow_uav] Start delay {self.start_delay_s:.1f}s before UAV follow motion"
+                    )
+                    self._startup_hold_logged = True
+                self._update_follow_state("HOLD")
+                return
         current_uav = self._control_uav_pose()
         current_uav_z = self._control_uav_z()
         control_dt = self._control_dt_s(now)

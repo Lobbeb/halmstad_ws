@@ -69,6 +69,18 @@
       <elevation>38</elevation>
     </spherical_coordinates>
     <gui fullscreen="0">
+      <camera name="third_person_follower">
+        <view_controller>orbit</view_controller>
+        <!-- Start the user camera in a simple third-person follow mode behind and above the UGV. -->
+        <track_visual>
+          <name>a201_0000/robot</name>
+          <static>true</static>
+          <use_model_frame>true</use_model_frame>
+          <xyz>-10.0 0.0 10.0</xyz>
+          <inherit_yaw>true</inherit_yaw>
+        </track_visual>
+        <pose>-10 0 10 0 0.45 0</pose>
+      </camera>
       <plugin filename="MinimalScene" name="3D View">
         <gz-gui>
           <title>3D View</title>
@@ -131,7 +143,8 @@
         </gz-gui>
         <play_pause>true</play_pause>
         <step>true</step>
-        <start_paused>true</start_paused>
+        <!-- Start unpaused so ros2_control can activate before its startup timeout in this heavy world. -->
+        <start_paused>false</start_paused>
         <use_event>true</use_event>
       </plugin>
       <plugin filename="WorldStats" name="World stats">

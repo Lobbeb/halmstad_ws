@@ -1,0 +1,23 @@
+<?xml version="1.0"?>
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro">
+
+  <!-- Keep the Baylands mapping lidar local-range focused. The Clearpath
+       generator hardcodes 130 m for velodyne_lidar, so we re-add the sensor
+       here as a workspace-local override that survives regeneration. -->
+  <xacro:include filename="$(find clearpath_sensors_description)/urdf/velodyne_lidar.urdf.xacro"/>
+  <xacro:velodyne_lidar
+      name="lidar3d_0"
+      parent_link="default_mount"
+      ang_res_h="0.4"
+      ang_res_v="2.0"
+      min_ang_h="-3.141592"
+      max_ang_h="3.141592"
+      min_ang_v="-0.261799"
+      max_ang_v="0.261799"
+      min_range="0.5"
+      max_range="50.0"
+      update_rate="20">
+    <origin xyz="0.0 0.0 0.0" rpy="0.0 0.0 0.0"/>
+  </xacro:velodyne_lidar>
+
+</robot>

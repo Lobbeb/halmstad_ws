@@ -11,7 +11,7 @@ GROUP_GRACE_S=4
 FINAL_GRACE_S=4
 KILL_SESSION=true
 DRY_RUN=false
-CTRL_C_GROUP=(record follow localization nav2)
+CTRL_C_GROUP=(record omnet follow localization nav2)
 
 if [ "$#" -gt 0 ] && [[ "$1" != *":="* ]] && [[ "$1" != *=* ]]; then
   WORLD="$1"
@@ -53,6 +53,7 @@ SPAWN_PANE_ID=""
 LOCALIZATION_PANE_ID=""
 NAV2_PANE_ID=""
 FOLLOW_PANE_ID=""
+OMNET_PANE_ID=""
 RECORD_PANE_ID=""
 
 load_state_file() {
@@ -134,6 +135,9 @@ lookup_saved_pane_id() {
     follow)
       printf '%s\n' "$FOLLOW_PANE_ID"
       ;;
+    omnet)
+      printf '%s\n' "$OMNET_PANE_ID"
+      ;;
     record)
       printf '%s\n' "$RECORD_PANE_ID"
       ;;
@@ -206,6 +210,7 @@ run_fallback_cleanup() {
   signal_processes_by_pattern "localization launch" 'ros2 launch clearpath_nav2_demos localization\.launch\.py' || true
   signal_processes_by_pattern "spawn launch" 'ros2 launch lrs_halmstad spawn_uav_1to1\.launch\.py' || true
   signal_processes_by_pattern "Gazebo launch" 'ros2 launch lrs_halmstad managed_clearpath_sim\.launch\.py' || true
+  signal_processes_by_pattern "OMNeT bridge sim" '(^|/)UAV_UGV($| ).*-c Communication-GazeboBridge-' || true
   signal_named_nodes "stack child nodes" 'amcl|map_server|planner_server|controller_server|behavior_server|bt_navigator|waypoint_follower|velocity_smoother|smoother_server|route_server|lifecycle_manager_localization|lifecycle_manager_navigation|ugv_nav2_driver|ugv_amcl_to_odom|ugv_amcl_to_platform_odom|ugv_amcl_to_platform_filtered_odom|ugv_platform_odom_to_tf|uav_simulator|leader_detector|leader_estimator|selected_target_filter|visual_target_estimator|follow_point_generator|follow_point_planner|visual_actuation_bridge|camera_tracker' || true
   signal_processes_by_pattern "ros_gz_bridge" 'ros_gz_bridge/parameter_bridge' || true
   signal_processes_by_pattern "Gazebo sim" '(^|/)gz sim($| )' || true

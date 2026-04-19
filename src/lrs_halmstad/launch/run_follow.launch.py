@@ -179,13 +179,20 @@ def _default_world_value(
     walls_value: str,
     warehouse_value: str,
     default_value: str = '0.0',
+    baylands_value: str | None = None,
 ):
+    if baylands_value is None:
+        baylands_value = default_value
     return PythonExpression([
         "'",
         warehouse_value,
         "' if '",
         world_sub,
         "'.startswith('warehouse') else '",
+        baylands_value,
+        "' if '",
+        world_sub,
+        "'.startswith('baylands') else '",
         walls_value,
         "' if '",
         world_sub,
@@ -282,6 +289,11 @@ def _build_ugv_nav2_node(context, *args, **kwargs):
             'initial_pose_yaw_deg': float(LaunchConfiguration('ugv_initial_pose_yaw_deg').perform(context)),
             'goal_sequence_csv': LaunchConfiguration('ugv_goal_sequence_csv').perform(context),
             'goal_sequence_file': LaunchConfiguration('ugv_goal_sequence_file').perform(context),
+            'goal_sequence_randomize': _launch_bool(context, 'ugv_goal_sequence_randomize'),
+            'goal_sequence_random_reverse': _launch_bool(context, 'ugv_goal_sequence_random_reverse'),
+            'goal_sequence_relative_to_current_pose': _launch_bool(
+                context, 'ugv_goal_sequence_relative_to_current_pose'
+            ),
         }
     )
     return [
@@ -322,6 +334,8 @@ def _build_omnet_nodes(context, *args, **kwargs):
             }],
         ),
         # TCP server (port 5555): serves Gazebo UGV+UAV poses to OMNeT GazeboPositionScheduler.
+        # Keep OMNeT on raw sim odom for the UGV even though the main follow/dataset
+        # path uses AMCL-derived odom elsewhere in this workspace.
         Node(
             package='lrs_halmstad',
             executable='gazebo_pose_tcp_bridge',
@@ -330,7 +344,7 @@ def _build_omnet_nodes(context, *args, **kwargs):
             parameters=[{
                 'use_sim_time': True,
                 'port': port,
-                'odom_topics': [f'/{ugv_ns}/amcl_pose_odom', f'/{uav_name}/pose/odom'],
+                'odom_topics': [f'/{ugv_ns}/platform/odom', f'/{uav_name}/pose/odom'],
                 'model_names': ['robot', uav_name],
                 'auto_discover_pose_cmd_odom': False,
             }],
@@ -377,6 +391,7 @@ def _build_visual_actuation_bridge_node(context, *args, **kwargs):
                     'planned_target_topic': LaunchConfiguration('leader_planned_target_topic'),
                     'uav_pose_topic': LaunchConfiguration('leader_uav_pose_topic'),
                     'status_topic': LaunchConfiguration('leader_visual_actuation_bridge_status_topic'),
+                    'start_delay_s': ParameterValue(LaunchConfiguration('uav_start_delay_s'), value_type=float),
                 },
                 LaunchConfiguration('params_file'),
             ],
@@ -390,6 +405,9 @@ def generate_launch_description():
     )
     warehouse_waypoints_default = PathJoinSubstitution(
         [FindPackageShare('lrs_halmstad'), 'config', 'warehouse_waypoints.yaml']
+    )
+    baylands_waypoints_default = PathJoinSubstitution(
+        [FindPackageShare('lrs_halmstad'), 'config', 'baylands_waypoints.yaml']
     )
 
     params_file_arg = DeclareLaunchArgument(
@@ -411,11 +429,25 @@ def generate_launch_description():
     publish_pose_cmd_topics_arg = DeclareLaunchArgument('publish_pose_cmd_topics', default_value='true')
     uav_start_x_arg = DeclareLaunchArgument(
         'uav_start_x',
-        default_value='-7.0',
+        default_value=_default_world_value(
+            LaunchConfiguration('world'),
+            '-7.0',
+            '-7.0',
+            '-7.0',
+            '-7.0',
+            baylands_value='-21.085738068',
+        ),
     )
     uav_start_y_arg = DeclareLaunchArgument(
         'uav_start_y',
-        default_value='0.0',
+        default_value=_default_world_value(
+            LaunchConfiguration('world'),
+            '0.0',
+            '0.0',
+            '0.0',
+            '0.0',
+            baylands_value='-54.861874768',
+        ),
     )
     uav_start_z_arg = DeclareLaunchArgument('uav_start_z', default_value='7.0')
     uav_start_yaw_deg_arg = DeclareLaunchArgument('uav_start_yaw_deg', default_value='0.0')
@@ -441,23 +473,85 @@ def generate_launch_description():
     )
     ugv_initial_pose_x_arg = DeclareLaunchArgument(
         'ugv_initial_pose_x',
-        default_value=_default_world_value(LaunchConfiguration('world'), '0.449', '-0.048', '0.0'),
+        default_value=_default_world_value(
+            LaunchConfiguration('world'),
+            '0.449',
+            '-0.048',
+            '0.0',
+            '0.0',
+            baylands_value='-17.8523709280687',
+        ),
     )
     ugv_initial_pose_y_arg = DeclareLaunchArgument(
         'ugv_initial_pose_y',
-        default_value=_default_world_value(LaunchConfiguration('world'), '0.139', '-0.179', '0.0'),
+        default_value=_default_world_value(
+            LaunchConfiguration('world'),
+            '0.139',
+            '-0.179',
+            '0.0',
+            '0.0',
+            baylands_value='6.112792742664274',
+        ),
     )
     ugv_initial_pose_yaw_deg_arg = DeclareLaunchArgument(
         'ugv_initial_pose_yaw_deg',
-        default_value=_default_world_value(LaunchConfiguration('world'), '-4.6', '-53.9', '0.0'),
+        default_value=_default_world_value(
+            LaunchConfiguration('world'),
+            '-4.6',
+            '-53.9',
+            '0.0',
+            '0.0',
+            baylands_value='0.369799938471493',
+        ),
     )
     ugv_goal_sequence_csv_arg = DeclareLaunchArgument(
         'ugv_goal_sequence_csv',
         default_value='',
     )
+    ugv_goal_sequence_randomize_arg = DeclareLaunchArgument(
+        'ugv_goal_sequence_randomize',
+        default_value=_default_world_value(
+            LaunchConfiguration('world'),
+            'true',
+            'true',
+            'true',
+            'true',
+            baylands_value='false',
+        ),
+    )
+    ugv_goal_sequence_random_reverse_arg = DeclareLaunchArgument(
+        'ugv_goal_sequence_random_reverse',
+        default_value=_default_world_value(
+            LaunchConfiguration('world'),
+            'true',
+            'true',
+            'true',
+            'true',
+            baylands_value='false',
+        ),
+    )
+    ugv_goal_sequence_relative_to_current_pose_arg = DeclareLaunchArgument(
+        'ugv_goal_sequence_relative_to_current_pose',
+        default_value=_default_world_value(
+            LaunchConfiguration('world'),
+            'true',
+            'true',
+            'true',
+            'true',
+            baylands_value='false',
+        ),
+    )
     ugv_goal_sequence_file_arg = DeclareLaunchArgument(
         'ugv_goal_sequence_file',
-        default_value=warehouse_waypoints_default,
+        default_value=PythonExpression([
+            "'",
+            baylands_waypoints_default,
+            "' if '",
+            LaunchConfiguration('world'),
+            "'.startswith('baylands') else '",
+            warehouse_waypoints_default,
+            "'",
+        ]),
     )
     ugv_use_amcl_odom_fallback_arg = DeclareLaunchArgument(
         'ugv_use_amcl_odom_fallback',
@@ -539,6 +633,7 @@ def generate_launch_description():
     tracker_config_arg = DeclareLaunchArgument('tracker_config', default_value='botsort.yaml')
     event_topic_arg = DeclareLaunchArgument('event_topic', default_value='/coord/events')
     ugv_start_delay_arg = DeclareLaunchArgument('ugv_start_delay_s', default_value='0.0')
+    uav_start_delay_arg = DeclareLaunchArgument('uav_start_delay_s', default_value='0.0')
     start_omnet_bridge_arg = DeclareLaunchArgument(
         'start_omnet_bridge',
         default_value='false',
@@ -734,6 +829,7 @@ def generate_launch_description():
                 'follow_yaw': _bool_param('follow_yaw'),
                 'publish_debug_topics': _bool_param('publish_follow_debug_topics'),
                 'publish_pose_cmd_topics': _bool_param('publish_pose_cmd_topics'),
+                'start_delay_s': ParameterValue(LaunchConfiguration('uav_start_delay_s'), value_type=float),
             },
             LaunchConfiguration('params_file'),
         ],
@@ -758,6 +854,7 @@ def generate_launch_description():
                 'follow_yaw': _bool_param('follow_yaw'),
                 'publish_debug_topics': _bool_param('publish_follow_debug_topics'),
                 'publish_pose_cmd_topics': _bool_param('publish_pose_cmd_topics'),
+                'start_delay_s': ParameterValue(LaunchConfiguration('uav_start_delay_s'), value_type=float),
             },
             LaunchConfiguration('params_file'),
         ],
@@ -989,6 +1086,9 @@ def generate_launch_description():
         ugv_initial_pose_y_arg,
         ugv_initial_pose_yaw_deg_arg,
         ugv_goal_sequence_csv_arg,
+        ugv_goal_sequence_randomize_arg,
+        ugv_goal_sequence_random_reverse_arg,
+        ugv_goal_sequence_relative_to_current_pose_arg,
         ugv_goal_sequence_file_arg,
         ugv_use_amcl_odom_fallback_arg,
         leader_pose_topic_arg,
@@ -1014,6 +1114,7 @@ def generate_launch_description():
         tracker_config_arg,
         event_topic_arg,
         ugv_start_delay_arg,
+        uav_start_delay_arg,
         start_omnet_bridge_arg,
         omnet_bridge_port_arg,
         start_visual_follow_controller_arg,

@@ -1,0 +1,7 @@
+image: baylands_finished_v3_nav_20cm.pgm
+mode: trinary
+resolution: 0.200
+origin: [-227,-444.5, 0.0]
+negate: 0
+occupied_thresh: 0.65
+free_thresh: 0.196

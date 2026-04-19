@@ -101,7 +101,9 @@ If you want to test Nav2 goals from a separate node, use `ugv_mode:=external` in
 
 The Nav2 UGV driver now also auto-publishes `/a201_0000/initialpose` before sending goals. The `ugv_initial_pose_*` values are in the saved map frame, not Gazebo world coordinates.
 
-For `world:=orchard`, the launch defaults now auto-fill the current verified orchard map-frame initial pose, so you do not need to manually publish `/a201_0000/initialpose` for the normal Nav2 bring-up. The recommended orchard Nav2 map is `maps/orchard_nav.yaml`, which keeps black occupied cells and frees gray terrain/unknown cells from the raw SLAM map. Other worlds still default to `0,0,0` unless overridden.
+For `world:=orchard`, the launch defaults now auto-fill the current verified orchard map-frame initial pose, so you do not need to manually publish `/a201_0000/initialpose` for the normal Nav2 bring-up. The recommended orchard Nav2 map is `maps/orchard_nav.yaml`, which keeps black occupied cells and frees gray terrain/unknown cells from the raw SLAM map.
+
+For `world:=baylands`, the launch defaults now auto-fill the current verified Baylands AMCL startup pose and packaged Baylands waypoint route (`config/baylands_waypoints.yaml`). The actively supported Baylands Nav2 maps are `maps/baylands_finished_v3_nav_20cm.yaml` (the current default in `./run.sh localization baylands`) and `maps/baylands_finished_v3_nav_20cm_merged.yaml` (pose-compatible test variant). Other Baylands map files in `maps/` should be treated as experimental and are not part of the normal bring-up path.
 
 For standalone Nav2 testing without RViz goals:
 

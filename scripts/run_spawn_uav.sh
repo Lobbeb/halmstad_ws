@@ -9,6 +9,11 @@ SIM_WORLD_FILE="$STATE_DIR/gazebo_sim.world"
 FOLLOW_SIM=false
 LAUNCH_PID=""
 WATCH_PID=""
+DEFAULT_UAV_BODY_X_OFFSET="-7.0"
+DEFAULT_UAV_BODY_Y_OFFSET="0.0"
+DEFAULT_UAV_Z="7.0"
+
+source "$SCRIPT_DIR/slam_state_common.sh"
 
 sim_helper_running() {
   if [ ! -f "$SIM_PID_FILE" ]; then
@@ -111,8 +116,28 @@ if [ "$#" -gt 0 ] && [[ "$1" != *":="* ]] && [[ "$1" != *=* ]]; then
 fi
 
 ARGS=()
+HAVE_X="false"
+HAVE_Y="false"
+HAVE_Z="false"
+HAVE_YAW="false"
 for arg in "$@"; do
   case "$arg" in
+    x:=*)
+      HAVE_X="true"
+      ARGS+=("$arg")
+      ;;
+    y:=*)
+      HAVE_Y="true"
+      ARGS+=("$arg")
+      ;;
+    z:=*)
+      HAVE_Z="true"
+      ARGS+=("$arg")
+      ;;
+    yaw:=*)
+      HAVE_YAW="true"
+      ARGS+=("$arg")
+      ;;
     camera:=*)
       camera_mode="${arg#camera:=}"
       case "$camera_mode" in
@@ -132,6 +157,7 @@ for arg in "$@"; do
       ARGS+=("uav_name:=${arg#name:=}")
       ;;
     height:=*)
+      HAVE_Z="true"
       ARGS+=("z:=${arg#height:=}")
       ;;
     mount_pitch_deg:=*)
@@ -142,6 +168,28 @@ for arg in "$@"; do
       ;;
   esac
 done
+
+if [ "$HAVE_X" = "false" ] && [ "$HAVE_Y" = "false" ]; then
+  if UAV_SPAWN_ENV="$(slam_state_capture_uav_spawn_from_ugv_env \
+    "$WS_ROOT" \
+    "$WORLD" \
+    "$DEFAULT_UAV_BODY_X_OFFSET" \
+    "$DEFAULT_UAV_BODY_Y_OFFSET" \
+    "$DEFAULT_UAV_Z" \
+    5)"; then
+    eval "$UAV_SPAWN_ENV"
+    ARGS+=("x:=$uav_x" "y:=$uav_y")
+    if [ "$HAVE_Z" = "false" ]; then
+      ARGS+=("z:=$uav_z")
+    fi
+    if [ "$HAVE_YAW" = "false" ]; then
+      ARGS+=("yaw:=$uav_yaw")
+    fi
+    echo "[run_spawn_uav] Using UGV-relative UAV spawn x=${uav_x} y=${uav_y} z=${uav_z} yaw=${uav_yaw} from UGV x=${ugv_x} y=${ugv_y} yaw=${ugv_yaw}"
+  else
+    echo "[run_spawn_uav] Warning: could not read the live UGV pose; falling back to the launch defaults." >&2
+  fi
+fi
 
 set +u
 # ROS setup scripts may read unset variables while initializing the environment.

@@ -42,6 +42,7 @@ class VisualActuationBridge(Node):
         self.declare_parameter("use_current_altitude", False)
         self.declare_parameter("fixed_z_m", 7.0)
         self.declare_parameter("yaw_cmd_sign", 1.0)
+        self.declare_parameter("start_delay_s", 0.0)
 
         self.uav_name = str(self.get_parameter("uav_name").value).strip() or "dji0"
         self.input_mode = str(self.get_parameter("input_mode").value).strip().lower() or "auto"
@@ -74,6 +75,7 @@ class VisualActuationBridge(Node):
         self.use_current_altitude = coerce_bool(self.get_parameter("use_current_altitude").value)
         self.fixed_z_m = float(self.get_parameter("fixed_z_m").value)
         self.yaw_cmd_sign = float(self.get_parameter("yaw_cmd_sign").value)
+        self.start_delay_s = max(0.0, float(self.get_parameter("start_delay_s").value))
         if self.yaw_cmd_sign not in (1.0, -1.0):
             raise ValueError("yaw_cmd_sign must be 1.0 or -1.0")
 
@@ -107,6 +109,8 @@ class VisualActuationBridge(Node):
         self.last_planned_target: Optional[PoseStamped] = None
         self.last_planned_target_stamp: Optional[Time] = None
         self.last_tick_time: Optional[Time] = None
+        self._start_time: Optional[Time] = None
+        self._startup_hold_logged = False
 
         self.create_subscription(TwistStamped, self.visual_control_topic, self.on_visual_control, 10)
         self.create_subscription(PoseStamped, self.follow_point_topic, self.on_follow_point, 10)
@@ -177,6 +181,21 @@ class VisualActuationBridge(Node):
             return 1.0 / self.tick_hz
         dt_s = (now - self.last_tick_time).nanoseconds * 1e-9
         return max(1.0 / self.tick_hz, min(0.5, dt_s))
+
+    def _startup_hold_active(self, now: Time) -> bool:
+        if self.start_delay_s <= 0.0:
+            return False
+        if self._start_time is None:
+            self._start_time = now
+        elapsed_s = max(0.0, (now - self._start_time).nanoseconds * 1e-9)
+        if elapsed_s >= self.start_delay_s:
+            return False
+        if not self._startup_hold_logged:
+            self.get_logger().info(
+                f"[visual_actuation_bridge] Start delay {self.start_delay_s:.1f}s before UAV actuation"
+            )
+            self._startup_hold_logged = True
+        return True
 
     @staticmethod
     def _clamp_symmetric(value: float, limit: float) -> float:
@@ -292,6 +311,42 @@ class VisualActuationBridge(Node):
         now = self.get_clock().now()
         dt_s = self._dt_s(now)
         pose_fresh = self.have_pose and self._is_fresh(self.last_pose_stamp, self.pose_timeout_s, now)
+        if self._startup_hold_active(now):
+            if pose_fresh:
+                target_x = self.uav_pose.x
+                target_y = self.uav_pose.y
+                target_z = self.uav_z
+                target_yaw = self.uav_pose.yaw
+                joy = Joy()
+                joy.axes = [float(target_x), float(target_y), float(target_z), float(target_yaw)]
+                self.uav_cmd_pub.publish(joy)
+                self._publish_pose_cmd(now, target_x, target_y, target_z, target_yaw)
+            else:
+                target_x = None
+                target_y = None
+                target_z = None
+                target_yaw = None
+            self._publish_status(
+                now=now,
+                state="WAIT_START",
+                reason="startup_delay",
+                active_input="none",
+                forward_cmd_mps=0.0,
+                yaw_rate_cmd_rad_s=0.0,
+                dt_s=dt_s,
+                pose_x=self.uav_pose.x if pose_fresh else None,
+                pose_y=self.uav_pose.y if pose_fresh else None,
+                pose_z=self.uav_z if pose_fresh else None,
+                pose_yaw=self.uav_pose.yaw if pose_fresh else None,
+                target_x=target_x,
+                target_y=target_y,
+                target_z=target_z,
+                target_yaw=target_yaw,
+                step_xy_m=0.0,
+                step_yaw_rad=0.0,
+            )
+            self.last_tick_time = now
+            return
         control_fresh = self._is_fresh(self.last_control_stamp, self.control_timeout_s, now)
         follow_point_fresh = self._is_fresh(self.last_follow_point_stamp, self.follow_point_timeout_s, now)
         planned_target_fresh = self._is_fresh(self.last_planned_target_stamp, self.planned_target_timeout_s, now)

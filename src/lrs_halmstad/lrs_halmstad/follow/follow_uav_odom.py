@@ -78,6 +78,7 @@ class FollowUavOdom(EventEmitterMixin, FollowControllerCoreMixin, Node):
         declare_yaml_param(self, "camera_z_offset_m")
         declare_yaml_param(self, "leader_look_target_x_m")
         declare_yaml_param(self, "leader_look_target_y_m")
+        self.declare_parameter("start_delay_s", 0.0)
 
         self.world = str(self.get_parameter("world").value)
         self.uav_name = str(self.get_parameter("uav_name").value)
@@ -126,6 +127,7 @@ class FollowUavOdom(EventEmitterMixin, FollowControllerCoreMixin, Node):
         self.camera_z_offset_m = float(required_param_value(self, "camera_z_offset_m"))
         self.leader_look_target_x_m = float(required_param_value(self, "leader_look_target_x_m"))
         self.leader_look_target_y_m = float(required_param_value(self, "leader_look_target_y_m"))
+        self.start_delay_s = max(0.0, float(self.get_parameter("start_delay_s").value))
         if self.tick_hz <= 0.0:
             raise ValueError("tick_hz must be > 0")
         if self.z_min < 0.0:
@@ -177,6 +179,8 @@ class FollowUavOdom(EventEmitterMixin, FollowControllerCoreMixin, Node):
         self.current_leader_distance_xy_m = max(0.01, self.xy_target)
         self.current_leader_distance_3d_m = math.hypot(self.current_leader_distance_xy_m, self.uav_start_z)
         self.last_cmd_time: Optional[Time] = None
+        self._start_time: Optional[Time] = None
+        self._startup_hold_logged = False
 
         self.leader_sub = self.create_subscription(
             Odometry,
@@ -558,6 +562,17 @@ class FollowUavOdom(EventEmitterMixin, FollowControllerCoreMixin, Node):
 
     def on_tick(self) -> None:
         now = self.get_clock().now()
+        if self.start_delay_s > 0.0:
+            if self._start_time is None:
+                self._start_time = now
+            elapsed_s = max(0.0, (now - self._start_time).nanoseconds * 1e-9)
+            if elapsed_s < self.start_delay_s:
+                if not self._startup_hold_logged:
+                    self.get_logger().info(
+                        f"[follow_uav_odom] Start delay {self.start_delay_s:.1f}s before UAV follow motion"
+                    )
+                    self._startup_hold_logged = True
+                return
         current_uav = self._control_uav_pose()
         current_uav_z = self._control_uav_z()
         current_horizontal_distance, _current_distance_3d = self._current_follow_geometry()

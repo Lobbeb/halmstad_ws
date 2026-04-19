@@ -18,21 +18,53 @@ def _gazebo_world_name(world_sub):
     ])
 
 
+def _default_world_value(world_sub, warehouse_value: str, default_value: str, baylands_value: str | None = None):
+    if baylands_value is None:
+        baylands_value = default_value
+    return PythonExpression([
+        "'",
+        warehouse_value,
+        "' if '",
+        world_sub,
+        "'.startswith('warehouse') else '",
+        baylands_value,
+        "' if '",
+        world_sub,
+        "'.startswith('baylands') else '",
+        default_value,
+        "'",
+    ])
+
+
 def generate_launch_description():
     world_arg = DeclareLaunchArgument('world', default_value='warehouse')
     uav_name_arg = DeclareLaunchArgument('uav_name', default_value='dji0')
     uav_mode_arg = DeclareLaunchArgument('uav_mode', default_value='teleport')
     x_arg = DeclareLaunchArgument(
         'x',
-        default_value='-7.0',
+        default_value=_default_world_value(
+            LaunchConfiguration('world'),
+            '-7.0',
+            '-7.0',
+            baylands_value='-21.085738068',
+        ),
     )
     y_arg = DeclareLaunchArgument(
         'y',
-        default_value='0.0',
+        default_value=_default_world_value(
+            LaunchConfiguration('world'),
+            '0.0',
+            '0.0',
+            baylands_value='-54.861874768',
+        ),
     )
     z_arg = DeclareLaunchArgument(
         'z',
         default_value='7.0',
+    )
+    yaw_arg = DeclareLaunchArgument(
+        'yaw',
+        default_value='0.0',
     )
     camera_name_arg = DeclareLaunchArgument('camera_name', default_value='camera0')
     uav_camera_mode_arg = DeclareLaunchArgument('uav_camera_mode', default_value='integrated_joint')
@@ -57,6 +89,7 @@ def generate_launch_description():
             'x': LaunchConfiguration('x'),
             'y': LaunchConfiguration('y'),
             'z': LaunchConfiguration('z'),
+            'Y': LaunchConfiguration('yaw'),
         }.items(),
     )
 
@@ -76,6 +109,7 @@ def generate_launch_description():
         x_arg,
         y_arg,
         z_arg,
+        yaw_arg,
         camera_name_arg,
         uav_camera_mode_arg,
         camera_pitch_offset_deg_arg,
