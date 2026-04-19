@@ -11,6 +11,10 @@ Current tested baseline:
 4. `./run.sh nav2`
 5. `./run.sh 1to1_follow warehouse`
 
+Current Baylands follow baseline:
+1. `./run.sh tmux_1to1 baylands`
+2. For a grouped route: `./run.sh tmux_1to1 baylands waypoint:=parkinglot_east_0 mode:=follow ugv_goal_sequence_file:=/home/ruben/halmstad_ws/src/lrs_halmstad/config/baylands_waypoints/baylands_waypoints_parkinglot_east.yaml`
+
 Current real follow launch:
 - `src/lrs_halmstad/launch/run_follow.launch.py`
 - `run_follow_motion.launch.py` and `run_1to1_follow.launch.py` are compatibility shims only
@@ -37,7 +41,7 @@ Recommended tmux workflow:
 - stop the tmux-managed stack with `./stop.sh tmux_1to1 warehouse`
 
 Current important notes:
-- the 1-to-1 odom-follow path now uses AMCL-derived `/<ugv>/amcl_pose_odom`, not raw UGV odom
+- the 1-to-1 odom-follow path uses `/<ugv>/amcl_pose_odom` by default, but Baylands now overrides this to `/<ugv>/ground_truth/odom`
 - attached/integrated gimbal camera is the only simulation camera path
 - attached-camera teleport spawns now use a non-static UAV model with a kinematic base link so the gimbal joints visibly actuate while the UAV body still follows the simulator `set_pose` path
 - Gazebo sim time is guarded by `clock_guard`, and `/clock` should have exactly one publisher

@@ -105,6 +105,27 @@ For `world:=orchard`, the launch defaults now auto-fill the current verified orc
 
 For `world:=baylands`, the launch defaults now auto-fill the current verified Baylands AMCL startup pose and packaged Baylands waypoint route (`config/baylands_waypoints.yaml`). Baylands follow defaults also switch the UAV leader source to `/<ugv>/ground_truth/odom`, which is bridged directly from the Gazebo world pose so the UAV and UGV stay in the same coordinate frame. The actively supported Baylands Nav2 maps are `maps/baylands_finished_v3_nav_20cm.yaml` (the current default in `./run.sh localization baylands`) and `maps/baylands_finished_v3_nav_20cm_merged.yaml` (pose-compatible test variant). Other Baylands map files in `maps/` should be treated as experimental and are not part of the normal bring-up path.
 
+Current Baylands follow shortcuts:
+
+```bash
+cd /home/ruben/halmstad_ws
+./run.sh tmux_1to1 baylands
+./run.sh tmux_1to1 baylands waypoint:=parkinglot_east_0 mode:=follow \
+  ugv_goal_sequence_file:=/home/ruben/halmstad_ws/src/lrs_halmstad/config/baylands_waypoints/baylands_waypoints_parkinglot_east.yaml
+```
+
+Direct Baylands stack:
+
+```bash
+cd /home/ruben/halmstad_ws
+./run.sh gazebo_sim baylands true waypoint:=parkinglot_east_0
+./run.sh spawn_uav baylands
+./run.sh localization baylands lidar:=3d
+./run.sh nav2 lidar:=3d
+./run.sh 1to1_follow baylands \
+  ugv_goal_sequence_file:=/home/ruben/halmstad_ws/src/lrs_halmstad/config/baylands_waypoints/baylands_waypoints_parkinglot_east.yaml
+```
+
 For standalone Nav2 testing without RViz goals:
 
 ```bash
