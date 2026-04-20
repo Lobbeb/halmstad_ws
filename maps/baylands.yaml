@@ -1,4 +1,4 @@
-image: baylands_finished_v3_nav_20cm.pgm
+image: baylands.pgm
 mode: trinary
 resolution: 0.200
 origin: [-227,-444.5, 0.0]
