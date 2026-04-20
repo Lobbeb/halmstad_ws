@@ -125,6 +125,11 @@ def yaw_to_quaternion(yaw_rad: float):
     return [math.cos(yaw_rad / 2.0), 0.0, 0.0, math.sin(yaw_rad / 2.0)]
 
 
+def parse_bool(value) -> bool:
+    text = str(value or "").strip().lower()
+    return text in {"1", "true", "yes", "on"}
+
+
 rows = []
 with input_csv.open("r", encoding="utf-8", newline="") as handle:
     reader = csv.DictReader(handle)
@@ -152,6 +157,7 @@ with input_csv.open("r", encoding="utf-8", newline="") as handle:
                 "y": float(amcl_y),
                 "yaw_rad": float(amcl_yaw),
                 "yaw_deg": math.degrees(float(amcl_yaw)),
+                "loop": parse_bool(row.get("loop")),
             }
         )
 
@@ -197,8 +203,13 @@ for group_name, selected_rows in grouped.items():
     slug = slugify(group_name)
     rviz_filename = f"baylands_waypoints_{slug}_rviz.yaml"
     route_filename = f"baylands_waypoints_{slug}.yaml"
-    rviz_docs[rviz_filename] = build_rviz_doc(selected_rows)
-    route_docs[route_filename] = build_route_doc(selected_rows)
+    group_rows = list(selected_rows)
+    if any(row["loop"] for row in selected_rows) and selected_rows:
+        loop_row = dict(selected_rows[0])
+        loop_row["name"] = f'{selected_rows[0]["name"]}_loop'
+        group_rows.append(loop_row)
+    rviz_docs[rviz_filename] = build_rviz_doc(group_rows)
+    route_docs[route_filename] = build_route_doc(group_rows)
 
 if dry_run:
     print(f"# dry-run: would write route YAML to {route_output}")
