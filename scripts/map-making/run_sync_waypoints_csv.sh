@@ -2,7 +2,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-WS_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+WS_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 
 INPUT_CSV="$WS_ROOT/maps/waypoints_baylands_groups.csv"
 OUTPUT_ROUTE_YAML="$WS_ROOT/src/lrs_halmstad/config/baylands_waypoints.yaml"

@@ -22,15 +22,14 @@ _lrs_halmstad_dispatch_complete() {
       ;;
   esac
 
-  shopt -s nullglob
-  for path in "$script_dir"/"${prefix}"*.sh; do
+  while IFS= read -r path; do
+    [[ -n "$path" ]] || continue
     base="$(basename "$path")"
     names+=("${base%.sh}")
     short="${base#${prefix}}"
     short="${short%.sh}"
     names+=("$short")
-  done
-  shopt -u nullglob
+  done < <(find "$script_dir" -type f -name "${prefix}*.sh" -print 2>/dev/null | sort)
 
   COMPREPLY=($(compgen -W "${names[*]}" -- "$cur"))
 }

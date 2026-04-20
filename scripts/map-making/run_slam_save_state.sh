@@ -2,12 +2,13 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-WS_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+SHARED_SCRIPTS_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+WS_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 RUNTIME_STATE_DIR="/tmp/halmstad_ws"
 ACTIVE_SLAM_SCAN_TOPIC_FILE="$RUNTIME_STATE_DIR/slam.scan_topic"
 
-source "$SCRIPT_DIR/lidar_mode_common.sh"
-source "$SCRIPT_DIR/slam_state_common.sh"
+source "$SHARED_SCRIPTS_DIR/lidar_mode_common.sh"
+source "$SHARED_SCRIPTS_DIR/slam_state_common.sh"
 
 STATE_NAME="$(slam_state_default_name)"
 SAVE_SCAN_TOPIC=""

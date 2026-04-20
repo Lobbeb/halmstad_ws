@@ -2,9 +2,10 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-WS_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+SHARED_SCRIPTS_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+WS_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 
-source "$SCRIPT_DIR/slam_state_common.sh"
+source "$SHARED_SCRIPTS_DIR/slam_state_common.sh"
 
 NAME=""
 WORLD=""

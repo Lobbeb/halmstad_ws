@@ -2,13 +2,14 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-WS_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+SHARED_SCRIPTS_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+WS_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 LOCAL_SLAM_LAUNCH="$WS_ROOT/src/lrs_halmstad/launch/slam_with_params.launch.py"
 STATE_DIR="/tmp/halmstad_ws"
 ACTIVE_SLAM_SCAN_TOPIC_FILE="$STATE_DIR/slam.scan_topic"
 ACTIVE_SLAM_LIDAR_MODE_FILE="$STATE_DIR/slam.lidar_mode"
 
-source "$SCRIPT_DIR/lidar_mode_common.sh"
+source "$SHARED_SCRIPTS_DIR/lidar_mode_common.sh"
 
 lidar_mode_parse_args 2d "$@"
 
