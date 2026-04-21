@@ -32,7 +32,7 @@ platform:
       enabled: False
   extras:
     urdf:
-      path: /home/ruben/halmstad_ws/src/lrs_halmstad/clearpath/lidar3d_0_override.urdf.xacro
+      path: lidar3d_0_override.urdf.xacro
     ros_parameters:
       platform_velocity_controller:
         cmd_vel_timeout: 5.0

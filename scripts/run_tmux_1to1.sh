@@ -15,9 +15,14 @@ DRY_RUN=false
 LAYOUT="panes"
 MODE="follow"
 RECORD=false
-RECORD_PROFILE="default"
+RECORD_PROFILE="lab_full"
 RECORD_TAG=""
 RECORD_OUT=""
+RECORD_VALIDATE_PREFLIGHT="true"
+RECORD_PREFLIGHT_TIMEOUT_S="20"
+RECORD_PREFLIGHT_STRICT="true"
+GOAL_SEQUENCE_FILE=""
+GOAL_SEQUENCE_CSV=""
 BASE_DELAY_S=7
 BASE_DELAY_SET=false
 SPAWN_DELAY_OVERRIDE=""
@@ -61,9 +66,15 @@ SPAWN_ARGS=()
 FOLLOW_ARGS=()
 GAZEBO_ARGS=()
 RECORD_CMD=()
+OMNET_CMD=()
 OMNET="false"
+HAVE_LEADER_ACTUAL_POSE_ENABLE="false"
+HAVE_PUBLISH_FOLLOW_DEBUG_TOPICS="false"
+HAVE_PUBLISH_POSE_CMD_TOPICS="false"
+HAVE_PUBLISH_CAMERA_DEBUG_TOPICS="false"
 
 source "$SCRIPT_DIR/slam_state_common.sh"
+source "$SCRIPT_DIR/lidar_mode_common.sh"
 
 resolve_baylands_waypoint() {
   local waypoint_name="$1"
@@ -215,6 +226,15 @@ for arg in "$@"; do
     record_out:=*)
       RECORD_OUT="${arg#record_out:=}"
       ;;
+    record_validate_preflight:=*)
+      RECORD_VALIDATE_PREFLIGHT="${arg#record_validate_preflight:=}"
+      ;;
+    record_preflight_timeout_s:=*)
+      RECORD_PREFLIGHT_TIMEOUT_S="${arg#record_preflight_timeout_s:=}"
+      ;;
+    record_preflight_strict:=*)
+      RECORD_PREFLIGHT_STRICT="${arg#record_preflight_strict:=}"
+      ;;
     yolo:=*)
       case "${arg#yolo:=}" in
         true|yes|1)
@@ -278,6 +298,26 @@ for arg in "$@"; do
       FOLLOW_ARGS+=("$arg")
       ;;
     follow_yaw:=*|pan_enable:=*|use_tilt:=*|tilt_enable:=*|camera_default_tilt_deg:=*|use_actual_heading:=*|leader_actual_heading_enable:=*|leader_actual_heading_topic:=*|leader_actual_pose_enable:=*|publish_follow_debug_topics:=*|publish_pose_cmd_topics:=*|publish_camera_debug_topics:=*|ugv_goal_sequence_file:=*|goal_sequence_file:=*|ugv_goal_sequence_csv:=*|goal_sequence_csv:=*|ugv_goal_sequence_randomize:=*|ugv_goal_sequence_random_reverse:=*|ugv_goal_sequence_relative_to_current_pose:=*)
+      case "$arg" in
+        leader_actual_pose_enable:=*)
+          HAVE_LEADER_ACTUAL_POSE_ENABLE="true"
+          ;;
+        publish_follow_debug_topics:=*)
+          HAVE_PUBLISH_FOLLOW_DEBUG_TOPICS="true"
+          ;;
+        publish_pose_cmd_topics:=*)
+          HAVE_PUBLISH_POSE_CMD_TOPICS="true"
+          ;;
+        publish_camera_debug_topics:=*)
+          HAVE_PUBLISH_CAMERA_DEBUG_TOPICS="true"
+          ;;
+        ugv_goal_sequence_file:=*|goal_sequence_file:=*)
+          GOAL_SEQUENCE_FILE="${arg#*:=}"
+          ;;
+        ugv_goal_sequence_csv:=*|goal_sequence_csv:=*)
+          GOAL_SEQUENCE_CSV="${arg#*:=}"
+          ;;
+      esac
       FOLLOW_ARGS+=("$arg")
       ;;
     weights:=*|target:=*|use_estimate:=*|obb:=*|folder:=*|dir:=*|subdir:=*|tracker:=*|external_detection_node:=*|tracker_config:=*|range_mode:=*|leader_range_mode:=*|start_visual_follow_controller:=*|start_visual_follow_point_generator:=*|start_visual_follow_planner:=*|start_visual_actuation_bridge:=*|leader_selected_target_topic:=*|leader_selected_target_filtered_topic:=*|leader_selected_target_filtered_status_topic:=*|leader_visual_target_estimate_topic:=*|leader_visual_target_estimate_status_topic:=*|leader_follow_point_topic:=*|leader_follow_point_status_topic:=*|leader_planned_target_topic:=*|leader_planned_target_status_topic:=*|leader_visual_control_topic:=*|leader_visual_control_status_topic:=*|leader_visual_actuation_bridge_status_topic:=*)
@@ -325,7 +365,7 @@ for arg in "$@"; do
       ;;
     *)
       echo "Unknown argument: $arg" >&2
-      echo "Usage: $0 [world] [mode:=follow|yolo] [record:=true|false] [record_profile:=default|step2_light|vision] [record_tag:=name] [record_out:=bags/experiments/...] [camera:=attached] [follow_yaw:=true|false] [pan_enable:=true|false] [use_tilt:=true|false] [use_actual_heading:=true|false] [leader_actual_pose_enable:=true|false] [publish_follow_debug_topics:=true|false] [publish_pose_cmd_topics:=true|false] [publish_camera_debug_topics:=true|false] [height:=7] [mount_pitch_deg:=45] [uav_name:=dji0] [weights:=...] [target:=...] [use_estimate:=true|false] [obb:=true|false] [tracker:=true|false] [external_detection_node:=detector|tracker] [tracker_config:=botsort.yaml] [start_visual_actuation_bridge:=true|false] [start_visual_follow_point_generator:=true|false] [start_visual_follow_planner:=true|false] [start_visual_follow_controller:=true|false] [ugv_goal_sequence_file:=/path/route.yaml] [ugv_goal_sequence_csv:=x,y,yaw;...] [ugv_goal_sequence_randomize:=true|false] [ugv_goal_sequence_random_reverse:=true|false] [ugv_goal_sequence_relative_to_current_pose:=true|false] [folder:=...] [map:=/path/map.yaml] [gui:=true|false] [rtf:=1.0] [x:=...] [y:=...] [z:=...] [yaw:=...] [state:=checkpoint] [waypoint:=name] [delay_s:=9] [spawn_delay_s:=9] [localization_delay_s:=11] [nav2_delay_s:=11] [follow_delay_s:=13] [record_delay_s:=13] [session:=name] [tmux_attach:=true|false] [dry_run:=true|false] [layout:=windows|panes] [omnet:=true|false] [omnet_network:=wifi|5g|lora] [omnet_ui:=cmdenv|qtenv] [omnet_project:=/path/UAV_UGV] [omnet_result_dir:=/path] [omnet_bridge_port:=5555] [omnet_start_delay_s:=3.0] [ugv_start_delay_s:=3.0] [uav_start_delay_s:=12.0]" >&2
+      echo "Usage: $0 [world] [mode:=follow|yolo] [record:=true|false] [record_profile:=default|step2_light|vision|lab_full] [record_tag:=name] [record_out:=bags/experiments/...] [record_validate_preflight:=true|false] [record_preflight_timeout_s:=20] [record_preflight_strict:=true|false] [camera:=attached] [follow_yaw:=true|false] [pan_enable:=true|false] [use_tilt:=true|false] [use_actual_heading:=true|false] [leader_actual_pose_enable:=true|false] [publish_follow_debug_topics:=true|false] [publish_pose_cmd_topics:=true|false] [publish_camera_debug_topics:=true|false] [height:=7] [mount_pitch_deg:=45] [uav_name:=dji0] [weights:=...] [target:=...] [use_estimate:=true|false] [obb:=true|false] [tracker:=true|false] [external_detection_node:=detector|tracker] [tracker_config:=botsort.yaml] [start_visual_actuation_bridge:=true|false] [start_visual_follow_point_generator:=true|false] [start_visual_follow_planner:=true|false] [start_visual_follow_controller:=true|false] [ugv_goal_sequence_file:=/path/route.yaml] [ugv_goal_sequence_csv:=x,y,yaw;...] [ugv_goal_sequence_randomize:=true|false] [ugv_goal_sequence_random_reverse:=true|false] [ugv_goal_sequence_relative_to_current_pose:=true|false] [folder:=...] [map:=/path/map.yaml] [gui:=true|false] [rtf:=1.0] [x:=...] [y:=...] [z:=...] [yaw:=...] [state:=checkpoint] [waypoint:=name] [delay_s:=9] [spawn_delay_s:=9] [localization_delay_s:=11] [nav2_delay_s:=11] [follow_delay_s:=13] [record_delay_s:=13] [session:=name] [tmux_attach:=true|false] [dry_run:=true|false] [layout:=windows|panes] [omnet:=true|false] [omnet_network:=wifi|5g|lora] [omnet_ui:=cmdenv|qtenv] [omnet_project:=/path/UAV_UGV] [omnet_result_dir:=/path] [omnet_bridge_port:=5555] [omnet_start_delay_s:=3.0] [ugv_start_delay_s:=3.0] [uav_start_delay_s:=12.0]" >&2
       exit 2
       ;;
   esac
@@ -377,14 +417,40 @@ case "$RECORD" in
 esac
 
 case "$RECORD_PROFILE" in
-  default|step2_light|vision)
+  default|step2_light|vision|lab_full)
     ;;
   *)
     echo "Invalid record_profile: $RECORD_PROFILE" >&2
-    echo "Use record_profile:=default, step2_light, or vision" >&2
+    echo "Use record_profile:=default, step2_light, vision, or lab_full" >&2
     exit 2
     ;;
 esac
+
+case "$RECORD_VALIDATE_PREFLIGHT" in
+  true|false)
+    ;;
+  *)
+    echo "Invalid record_validate_preflight: $RECORD_VALIDATE_PREFLIGHT" >&2
+    echo "Use record_validate_preflight:=true or record_validate_preflight:=false" >&2
+    exit 2
+    ;;
+esac
+
+case "$RECORD_PREFLIGHT_STRICT" in
+  true|false)
+    ;;
+  *)
+    echo "Invalid record_preflight_strict: $RECORD_PREFLIGHT_STRICT" >&2
+    echo "Use record_preflight_strict:=true or record_preflight_strict:=false" >&2
+    exit 2
+    ;;
+esac
+
+if ! [[ "$RECORD_PREFLIGHT_TIMEOUT_S" =~ ^[0-9]+([.][0-9]+)?$ ]]; then
+  echo "Invalid record_preflight_timeout_s: $RECORD_PREFLIGHT_TIMEOUT_S" >&2
+  echo "Use record_preflight_timeout_s:=<positive number>" >&2
+  exit 2
+fi
 fi
 
 case "$LAYOUT" in
@@ -413,7 +479,9 @@ apply_default_delays() {
   LOCALIZATION_DELAY_S=$((BASE_DELAY_S + 2))
   NAV2_DELAY_S="$LOCALIZATION_DELAY_S"
   FOLLOW_DELAY_S=$((LOCALIZATION_DELAY_S + 2))
-  RECORD_DELAY_S="$FOLLOW_DELAY_S"
+  # Start recording a bit earlier than the follow stack so startup state and
+  # early events land in the bag.
+  RECORD_DELAY_S="$LOCALIZATION_DELAY_S"
 
   if [[ "$WORLD" == baylands* ]]; then
     # Baylands needs a bit more time for Gazebo startup/spawn settling before we
@@ -422,7 +490,7 @@ apply_default_delays() {
     LOCALIZATION_DELAY_S=$((LOCALIZATION_DELAY_S + 2))
     NAV2_DELAY_S="$LOCALIZATION_DELAY_S"
     FOLLOW_DELAY_S=$((FOLLOW_DELAY_S + 2))
-    RECORD_DELAY_S="$FOLLOW_DELAY_S"
+    RECORD_DELAY_S="$LOCALIZATION_DELAY_S"
   fi
 
   if [ -n "$SPAWN_DELAY_OVERRIDE" ]; then
@@ -480,9 +548,24 @@ source "$WS_ROOT/install/setup.bash" >/dev/null 2>&1
 export ROS_DOMAIN_ID="$ROS_DOMAIN_ID_EFFECTIVE"
 export RMW_IMPLEMENTATION="$RMW_IMPLEMENTATION_EFFECTIVE"
 set -u
-while ! ros2 lifecycle get /$UGV_NAMESPACE/map_server 2>/dev/null | grep -q 'active \[3\]'; do sleep 1; done
-# AMCL can be inactive here until nav2 lifecycle manager transitions it.
-while ! ros2 lifecycle get /$UGV_NAMESPACE/amcl 2>/dev/null | grep -Eq '(inactive \[2\]|active \[3\])'; do sleep 1; done
+until timeout 8s ros2 lifecycle get "/$UGV_NAMESPACE/amcl" 2>/dev/null | grep -q 'active \[3\]'; do sleep 2; done
+EOF
+}
+
+build_sim_ready_cmd() {
+  local sensor_topic="${1:-}"
+  cat <<EOF
+set +u
+source /opt/ros/jazzy/setup.bash >/dev/null 2>&1
+source "$WS_ROOT/install/setup.bash" >/dev/null 2>&1
+export ROS_DOMAIN_ID="$ROS_DOMAIN_ID_EFFECTIVE"
+export RMW_IMPLEMENTATION="$RMW_IMPLEMENTATION_EFFECTIVE"
+set -u
+until timeout 5s ros2 topic echo --once /clock >/dev/null 2>&1; do sleep 1; done
+if [ -n "$sensor_topic" ]; then
+  until timeout 5s ros2 topic echo --once "$sensor_topic" >/dev/null 2>&1; do sleep 1; done
+fi
+sleep 2
 EOF
 }
 
@@ -495,19 +578,11 @@ export ROS_DOMAIN_ID="$ROS_DOMAIN_ID_EFFECTIVE"
 export RMW_IMPLEMENTATION="$RMW_IMPLEMENTATION_EFFECTIVE"
 set -u
 while true; do
-  if ! ros2 lifecycle get /$UGV_NAMESPACE/map_server 2>/dev/null | grep -q 'active \[3\]'; then
+  if ! ros2 node list 2>/dev/null | grep -qx '/$UGV_NAMESPACE/controller_server'; then
     sleep 1
     continue
   fi
-  if ! ros2 lifecycle get /$UGV_NAMESPACE/amcl 2>/dev/null | grep -q 'active \[3\]'; then
-    sleep 1
-    continue
-  fi
-  if ! ros2 lifecycle get /$UGV_NAMESPACE/controller_server 2>/dev/null | grep -q 'active \[3\]'; then
-    sleep 1
-    continue
-  fi
-  if ! ros2 lifecycle get /$UGV_NAMESPACE/bt_navigator 2>/dev/null | grep -q 'active \[3\]'; then
+  if ! ros2 node list 2>/dev/null | grep -qx '/$UGV_NAMESPACE/bt_navigator'; then
     sleep 1
     continue
   fi
@@ -516,6 +591,25 @@ while true; do
     continue
   fi
   break
+done
+EOF
+}
+
+build_record_ready_cmd() {
+  cat <<EOF
+set +u
+source /opt/ros/jazzy/setup.bash >/dev/null 2>&1
+source "$WS_ROOT/install/setup.bash" >/dev/null 2>&1
+export ROS_DOMAIN_ID="$ROS_DOMAIN_ID_EFFECTIVE"
+export RMW_IMPLEMENTATION="$RMW_IMPLEMENTATION_EFFECTIVE"
+set -u
+contract_env=(
+  "UGV_NAMESPACE=$UGV_NAMESPACE"
+  "REQUIRE_FLOW=1"
+  "REQUIRE_UAV_ADAPTER=1"
+$(if [ "$MODE" = "follow" ] || [ "$MODE" = "yolo" ]; then printf '  "REQUIRE_FOLLOW_STACK=1"\n'; fi)$(if [ "$MODE" = "yolo" ]; then printf '  "REQUIRE_DETECTION=1"\n  "REQUIRE_ESTIMATOR=1"\n'; fi))
+while ! env "\${contract_env[@]}" ros2 run lrs_halmstad contract_check "$WORLD" "$UAV_NAME" "$RECORD_PREFLIGHT_TIMEOUT_S" >/dev/null 2>&1; do
+  sleep 2
 done
 EOF
 }
@@ -560,8 +654,12 @@ prelaunch_safety_cleanup() {
 write_session_state() {
   mkdir -p "$TMUX_STATE_DIR"
   local _record_cmd_str=""
+  local _omnet_cmd_str=""
   if [ "${#RECORD_CMD[@]}" -gt 0 ]; then
     _record_cmd_str="$(shell_join "${RECORD_CMD[@]}")"
+  fi
+  if [ "${#OMNET_CMD[@]}" -gt 0 ]; then
+    _omnet_cmd_str="$(shell_join "${OMNET_CMD[@]}")"
   fi
   {
     printf 'SESSION=%q\n' "$SESSION"
@@ -571,16 +669,47 @@ write_session_state() {
     printf 'MODE=%q\n' "$MODE"
     printf 'UAV_NAME=%q\n' "$UAV_NAME"
     printf 'UGV_NAMESPACE=%q\n' "$UGV_NAMESPACE"
+    printf 'MAP_PATH=%q\n' "$MAP_PATH"
+    printf 'GOAL_SEQUENCE_FILE=%q\n' "$GOAL_SEQUENCE_FILE"
+    printf 'GOAL_SEQUENCE_CSV=%q\n' "$GOAL_SEQUENCE_CSV"
     printf 'ROS_DOMAIN_ID_EFFECTIVE=%q\n' "$ROS_DOMAIN_ID_EFFECTIVE"
     printf 'RMW_IMPLEMENTATION_EFFECTIVE=%q\n' "$RMW_IMPLEMENTATION_EFFECTIVE"
     printf 'RECORD=%q\n' "$RECORD"
+    printf 'RECORD_PROFILE=%q\n' "$RECORD_PROFILE"
+    printf 'RECORD_TAG=%q\n' "$RECORD_TAG"
+    printf 'RECORD_OUT=%q\n' "$RECORD_OUT"
+    printf 'RECORD_VALIDATE_PREFLIGHT=%q\n' "$RECORD_VALIDATE_PREFLIGHT"
+    printf 'RECORD_PREFLIGHT_TIMEOUT_S=%q\n' "$RECORD_PREFLIGHT_TIMEOUT_S"
+    printf 'RECORD_PREFLIGHT_STRICT=%q\n' "$RECORD_PREFLIGHT_STRICT"
+    printf 'BASE_DELAY_S=%q\n' "$BASE_DELAY_S"
+    printf 'SPAWN_DELAY_S=%q\n' "$SPAWN_DELAY_S"
+    printf 'LOCALIZATION_DELAY_S=%q\n' "$LOCALIZATION_DELAY_S"
+    printf 'NAV2_DELAY_S=%q\n' "$NAV2_DELAY_S"
+    printf 'FOLLOW_DELAY_S=%q\n' "$FOLLOW_DELAY_S"
+    printf 'RECORD_DELAY_S=%q\n' "$RECORD_DELAY_S"
     printf 'OMNET=%q\n' "$OMNET"
     printf 'OMNET_NETWORK=%q\n' "$OMNET_NETWORK"
     printf 'OMNET_UI=%q\n' "$OMNET_UI"
     printf 'OMNET_PROJECT=%q\n' "$OMNET_PROJECT"
     printf 'OMNET_RESULT_DIR=%q\n' "$OMNET_RESULT_DIR"
+    printf 'GAZEBO_SPAWN_STATE_NAME=%q\n' "$GAZEBO_SPAWN_STATE_NAME"
+    printf 'GAZEBO_WAYPOINT_NAME=%q\n' "$GAZEBO_WAYPOINT_NAME"
+    printf 'UGV_SPAWN_X=%q\n' "$UGV_SPAWN_X"
+    printf 'UGV_SPAWN_Y=%q\n' "$UGV_SPAWN_Y"
+    printf 'UGV_SPAWN_Z=%q\n' "$UGV_SPAWN_Z"
+    printf 'UGV_SPAWN_YAW=%q\n' "$UGV_SPAWN_YAW"
+    printf 'UAV_SPAWN_X=%q\n' "${uav_x:-}"
+    printf 'UAV_SPAWN_Y=%q\n' "${uav_y:-}"
+    printf 'UAV_SPAWN_Z=%q\n' "${uav_z:-}"
+    printf 'UAV_SPAWN_YAW=%q\n' "${uav_yaw:-}"
+    printf 'UAV_SPAWN_YAW_DEG=%q\n' "${uav_yaw_deg:-}"
+    printf 'GAZEBO_CMD_STR=%q\n' "$(shell_join "${GAZEBO_CMD[@]}")"
+    printf 'SPAWN_CMD_STR=%q\n' "$(shell_join "${SPAWN_CMD[@]}")"
+    printf 'LOCALIZATION_CMD_STR=%q\n' "$(shell_join "${LOCALIZATION_CMD[@]}")"
+    printf 'NAV2_CMD_STR=%q\n' "$(shell_join "${NAV2_CMD[@]}")"
     printf 'FOLLOW_CMD_STR=%q\n' "$(shell_join "${FOLLOW_CMD[@]}")"
     printf 'RECORD_CMD_STR=%q\n' "$_record_cmd_str"
+    printf 'OMNET_CMD_STR=%q\n' "$_omnet_cmd_str"
     printf 'GAZEBO_PANE_ID=%q\n' "$gazebo_pane"
     printf 'SPAWN_PANE_ID=%q\n' "$spawn_pane"
     printf 'LOCALIZATION_PANE_ID=%q\n' "$localization_pane"
@@ -594,6 +723,20 @@ write_session_state() {
 apply_default_delays
 
 FOLLOW_ARGS+=("start_omnet_bridge:=$OMNET")
+if [ "$RECORD" = true ] && [ "$MODE" = "yolo" ]; then
+  if [ "$HAVE_LEADER_ACTUAL_POSE_ENABLE" != "true" ]; then
+    FOLLOW_ARGS+=("leader_actual_pose_enable:=true")
+  fi
+  if [ "$HAVE_PUBLISH_FOLLOW_DEBUG_TOPICS" != "true" ]; then
+    FOLLOW_ARGS+=("publish_follow_debug_topics:=true")
+  fi
+  if [ "$HAVE_PUBLISH_POSE_CMD_TOPICS" != "true" ]; then
+    FOLLOW_ARGS+=("publish_pose_cmd_topics:=true")
+  fi
+  if [ "$HAVE_PUBLISH_CAMERA_DEBUG_TOPICS" != "true" ]; then
+    FOLLOW_ARGS+=("publish_camera_debug_topics:=true")
+  fi
+fi
 shared_start_delay_s="$DEFAULT_OMNET_START_DELAY_S"
 if [ -n "$OMNET_START_DELAY_OVERRIDE" ]; then
   shared_start_delay_s="$OMNET_START_DELAY_OVERRIDE"
@@ -699,9 +842,11 @@ if [ -n "$MAP_PATH" ]; then
   LOCALIZATION_CMD+=("$MAP_PATH")
 fi
 NAV2_CMD=(./run.sh nav2)
+LOCALIZATION_START_TOPIC="$(lidar_mode_raw_scan_topic 2d)"
 if [[ "$WORLD" == baylands* ]]; then
   LOCALIZATION_CMD+=("lidar:=$BAYLANDS_NAV_LIDAR_MODE")
   NAV2_CMD+=("lidar:=$BAYLANDS_NAV_LIDAR_MODE")
+  LOCALIZATION_START_TOPIC="$(lidar_mode_pointcloud_topic "$BAYLANDS_NAV_LIDAR_MODE")"
 fi
 if [ "$MODE" = "yolo" ]; then
   FOLLOW_CMD=(./run.sh 1to1_yolo "$WORLD" "${FOLLOW_ARGS[@]}")
@@ -709,11 +854,28 @@ else
 FOLLOW_CMD=(./run.sh 1to1_follow "$WORLD" "${FOLLOW_ARGS[@]}")
 fi
 
+SIM_READY_CMD="$(build_sim_ready_cmd "$LOCALIZATION_START_TOPIC")"
 LOCALIZATION_READY_CMD="$(build_localization_ready_cmd)"
 NAV2_READY_CMD="$(build_nav2_ready_cmd)"
+RECORD_READY_CMD="$(build_record_ready_cmd)"
+if [ "$RECORD_VALIDATE_PREFLIGHT" != "true" ] || [ "$RECORD_PREFLIGHT_STRICT" != "true" ]; then
+  RECORD_READY_CMD=""
+fi
 
 if [ "$RECORD" = true ]; then
-  RECORD_CMD=(./run.sh record_experiment "$WORLD" "mode:=$MODE" "uav_name:=$UAV_NAME" "profile:=$RECORD_PROFILE")
+  RECORD_CMD=(
+    ./run.sh
+    record_experiment
+    "$WORLD"
+    "mode:=$MODE"
+    "uav_name:=$UAV_NAME"
+    "ugv_namespace:=$UGV_NAMESPACE"
+    "profile:=$RECORD_PROFILE"
+    "session_state:=$SESSION_STATE_FILE"
+    "validate_preflight:=$RECORD_VALIDATE_PREFLIGHT"
+    "preflight_timeout_s:=$RECORD_PREFLIGHT_TIMEOUT_S"
+    "preflight_strict:=$RECORD_PREFLIGHT_STRICT"
+  )
   if [ -n "$RECORD_TAG" ]; then
     RECORD_CMD+=("tag:=$RECORD_TAG")
   fi
@@ -735,14 +897,14 @@ fi
 
 GAZEBO_LINE="$(build_line 0 false "" "${GAZEBO_CMD[@]}")"
 SPAWN_LINE="$(build_line "$SPAWN_DELAY_S" true "" "${SPAWN_CMD[@]}")"
-LOCALIZATION_LINE="$(build_line "$LOCALIZATION_DELAY_S" true "" "${LOCALIZATION_CMD[@]}")"
-NAV2_LINE="$(build_line "$NAV2_DELAY_S" true "" "${NAV2_CMD[@]}")"
-FOLLOW_LINE="$(build_line "$FOLLOW_DELAY_S" true "" "${FOLLOW_CMD[@]}")"
+LOCALIZATION_LINE="$(build_line "$LOCALIZATION_DELAY_S" true "$SIM_READY_CMD" "${LOCALIZATION_CMD[@]}")"
+NAV2_LINE="$(build_line "$NAV2_DELAY_S" true "$LOCALIZATION_READY_CMD" "${NAV2_CMD[@]}")"
+FOLLOW_LINE="$(build_line "$FOLLOW_DELAY_S" true "$LOCALIZATION_READY_CMD" "${FOLLOW_CMD[@]}")"
 if [ "$OMNET" = true ]; then
   OMNET_LINE="$(build_line "$FOLLOW_DELAY_S" true "$OMNET_READY_CMD" "${OMNET_CMD[@]}")"
 fi
 if [ "$RECORD" = true ]; then
-  RECORD_LINE="$(build_line "$RECORD_DELAY_S" true "$LOCALIZATION_READY_CMD" "${RECORD_CMD[@]}")"
+  RECORD_LINE="$(build_line "$RECORD_DELAY_S" true "$RECORD_READY_CMD" "${RECORD_CMD[@]}")"
 fi
 
 if tmux has-session -t "$SESSION" 2>/dev/null; then

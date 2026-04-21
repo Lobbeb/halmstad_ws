@@ -163,7 +163,7 @@ fi
 if [ -z "$MAP_PATH" ]; then
   case "$WORLD" in
     warehouse*)
-      MAP_PATH="/opt/ros/jazzy/share/clearpath_nav2_demos/maps/warehouse.yaml"
+      MAP_PATH="$WS_ROOT/maps/warehouse.yaml"
       ;;
     baylands*)
       MAP_PATH="$DEFAULT_BAYLANDS_MAP"

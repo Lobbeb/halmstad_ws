@@ -16,7 +16,7 @@
       max_ang_v="0.261799"
       min_range="0.5"
       max_range="50.0"
-      update_rate="20">
+      update_rate="5">
     <origin xyz="0.0 0.0 0.0" rpy="0.0 0.0 0.0"/>
   </xacro:velodyne_lidar>
 

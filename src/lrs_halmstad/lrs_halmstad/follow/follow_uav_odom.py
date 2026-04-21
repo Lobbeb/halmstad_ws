@@ -438,15 +438,19 @@ class FollowUavOdom(EventEmitterMixin, FollowControllerCoreMixin, Node):
         return self._nominal_target_pair(leader_z)
 
     def _compute_anchor_target(self, target_horizontal_distance: float) -> Pose2D:
-        xt = self.ugv_pose.x - target_horizontal_distance * math.cos(self.ugv_follow_heading)
-        yt = self.ugv_pose.y - target_horizontal_distance * math.sin(self.ugv_follow_heading)
-        xt, yt = clamp_point_to_radius(
-            self.ugv_pose.x,
-            self.ugv_pose.y,
-            xt,
-            yt,
-            self.xy_anchor_max,
-        )
+        current_uav = self._current_uav_pose()
+        
+        # 1. Calculate the angle from the UGV directly to the UAV's current position
+        dx = current_uav.x - self.ugv_pose.x
+        dy = current_uav.y - self.ugv_pose.y
+        angle_to_uav = math.atan2(dy, dx)
+        
+        # 2. Put the target point along THAT angle, ignoring which way the UGV is facing!
+        xt = self.ugv_pose.x + target_horizontal_distance * math.cos(angle_to_uav)
+        yt = self.ugv_pose.y + target_horizontal_distance * math.sin(angle_to_uav)
+        
+        # ... keep the rest of the clamp and yaw math exactly as it is:
+        xt, yt = clamp_point_to_radius(self.ugv_pose.x, self.ugv_pose.y, xt, yt, self.xy_anchor_max)
         target_x, target_y = self._leader_look_target_xy()
         yaw_cmd = solve_yaw_to_target(
             xt,

@@ -53,6 +53,6 @@
 
   <!-- Extras -->
 
-  <xacro:include filename="/home/ruben/halmstad_ws/src/lrs_halmstad/clearpath/lidar3d_0_override.urdf.xacro"/>
+  <xacro:include filename="lidar3d_0_override.urdf.xacro"/>
 
 </robot>

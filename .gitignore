@@ -45,6 +45,18 @@ opt/omnetpp-*/
 
 # --- Editor / local history ---
 .history/
+Papers/
+tmp/
+
+# --- Experiment / lab run artifacts ---
+/bags/experiments/
+/bags/**/bag/
+/bags/**/metadata.json
+/bags/**/topics.txt
+/bags/**/bag_info.txt
+/bags/**/preflight_check.txt
+/bags/**/run_summary.json
+/bags/**/artifacts/
 
 # --- Windows download metadata ---
 *:Zone.Identifier

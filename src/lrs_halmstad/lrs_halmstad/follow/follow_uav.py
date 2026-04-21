@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+from enum import Enum, auto
 import math
 from typing import Optional, Tuple
 
@@ -29,6 +30,14 @@ from lrs_halmstad.follow.follow_math import (
     wrap_pi,
     yaw_from_quat,
 )
+
+
+class FollowState(Enum):
+    INIT = auto()
+    TRACK = auto()
+    REACQUIRE = auto()
+    HOLD = auto()
+    DEGRADED = auto()
 
 
 class FollowUav(FollowControllerCoreMixin, Node):
@@ -108,6 +117,8 @@ class FollowUav(FollowControllerCoreMixin, Node):
         declare_yaml_param(self, "estimate_heading_min_speed_mps")
         declare_yaml_param(self, "estimate_heading_max_dt_s")
         self.declare_parameter("start_delay_s", 0.0)
+            
+        declare_yaml_param(self, "use_actual_pose_for_control")
 
         # ---------- Read params ----------
         self.world = str(self.get_parameter("world").value)
@@ -199,6 +210,9 @@ class FollowUav(FollowControllerCoreMixin, Node):
         self.current_leader_distance_3d_m = math.hypot(
             self.current_leader_distance_xy_m,
             max(0.0, self.uav_start_z),
+        )
+        self.use_actual_pose_for_control = coerce_bool(
+        self.get_parameter("use_actual_pose_for_control").value
         )
         self.ugv_z = 0.0
         self.uav_actual_z = self.uav_start_z
@@ -292,8 +306,8 @@ class FollowUav(FollowControllerCoreMixin, Node):
         self._startup_hold_logged = False
         self.last_leader_status_fields = {}
         self.last_leader_status_rx: Optional[Time] = None
-        self.follow_state = "INIT"
-        self._desired_follow_state = "INIT"
+        self.follow_state = FollowState.INIT
+        self._desired_follow_state = FollowState.INIT
         self._state_good_ticks = 0
         self._state_bad_ticks = 0
         self.search_bad_state_since: Optional[Time] = None
@@ -598,18 +612,18 @@ class FollowUav(FollowControllerCoreMixin, Node):
         search_xy_trigger_m = max(2.0, self.xy_min + 1.0)
         return current_horizontal_distance <= search_xy_trigger_m
 
-    def _set_follow_state(self, new_state: str) -> None:
+    def _set_follow_state(self, new_state: FollowState) -> None:
         if new_state == self.follow_state:
             return
         self.follow_state = new_state
 
-    def _update_follow_state(self, desired_state: str) -> None:
+    def _update_follow_state(self, desired_state: FollowState) -> None:
         if not self.state_machine_enable:
             self._set_follow_state(desired_state)
             return
 
         if desired_state == self._desired_follow_state:
-            if desired_state in ("TRACK", "REACQUIRE"):
+            if desired_state in (FollowState.TRACK, FollowState.REACQUIRE):
                 self._state_good_ticks += 1
                 self._state_bad_ticks = 0
                 if self._state_good_ticks >= self.state_debounce_ticks:
@@ -621,16 +635,16 @@ class FollowUav(FollowControllerCoreMixin, Node):
                     self._set_follow_state(desired_state)
         else:
             self._desired_follow_state = desired_state
-            if desired_state in ("TRACK", "REACQUIRE"):
+            if desired_state in (FollowState.TRACK, FollowState.REACQUIRE):
                 self._state_good_ticks = 1
                 self._state_bad_ticks = 0
             else:
                 self._state_bad_ticks = 1
                 self._state_good_ticks = 0
 
-    def _classify_follow_state(self, quality_scale: float) -> str:
+    def _classify_follow_state(self, quality_scale: float) -> FollowState:
         if not self.quality_scale_enable:
-            return "TRACK"
+            return FollowState.TRACK
 
         st = self._leader_status_state()
         hard_bad_states = {
@@ -640,12 +654,12 @@ class FollowUav(FollowControllerCoreMixin, Node):
         soft_states = {"HOLD", "DEBOUNCE_HOLD", "REJECT_HOLD", "REJECT_DEBOUNCE_HOLD", "REACQUIRE", "REJECT"}
 
         if quality_scale <= self.quality_hold_step_scale:
-            return "HOLD"
+            return FollowState.HOLD
         if st in hard_bad_states:
-            return "DEGRADED"
+            return FollowState.DEGRADED
         if st in soft_states:
-            return "REACQUIRE"
-        return "TRACK"
+            return FollowState.REACQUIRE
+        return FollowState.TRACK
 
     def _to_leader_frame(self, leader: Pose2D, x_world: float, y_world: float) -> Tuple[float, float]:
         dx = x_world - leader.x
@@ -826,8 +840,9 @@ class FollowUav(FollowControllerCoreMixin, Node):
 
         try:
             self.last_ugv_stamp = Time.from_msg(msg.header.stamp)
-        except Exception:
+        except (ValueError, TypeError, AttributeError):
             self.last_ugv_stamp = self.get_clock().now()
+            
         self._update_leader_motion_model(self.ugv_pose, self.last_ugv_stamp)
 
     def on_leader_actual_heading_odom(self, msg: Odometry):
@@ -837,7 +852,7 @@ class FollowUav(FollowControllerCoreMixin, Node):
         )
         try:
             self.last_actual_heading_stamp = Time.from_msg(msg.header.stamp)
-        except Exception:
+        except (ValueError, TypeError, AttributeError):
             self.last_actual_heading_stamp = self.get_clock().now()
 
     def leader_actual_heading_is_fresh(self) -> bool:
@@ -1009,7 +1024,7 @@ class FollowUav(FollowControllerCoreMixin, Node):
         # Camera-relative geometry stays in camera_tracker.py.
         horizontal_distance = math.hypot(leader_x - uav_x, leader_y - uav_y)
         if horizontal_distance < 1e-3:
-            horizontal_distance = max(0.01, self._nominal_horizontal_follow_distance())
+            horizontal_distance = 1e-3  # Just cap it at 1 millimeter to prevent math errors
         distance_3d = math.hypot(horizontal_distance, uav_z - leader_z)
 
         self.current_leader_distance_xy_m = horizontal_distance
@@ -1018,16 +1033,19 @@ class FollowUav(FollowControllerCoreMixin, Node):
 
     def _compute_anchor_target(self, target_horizontal_distance: float) -> Pose2D:
         leader_for_follow = self._leader_pose_for_follow()
-        xt = leader_for_follow.x - target_horizontal_distance * math.cos(leader_for_follow.yaw)
-        yt = leader_for_follow.y - target_horizontal_distance * math.sin(leader_for_follow.yaw)
+        current_uav = self._current_uav_pose()
 
-        xt, yt = clamp_point_to_radius(
-            leader_for_follow.x,
-            leader_for_follow.y,
-            xt,
-            yt,
-            self.xy_anchor_max,
-        )
+        # FIX 1     
+        safe_distance = min(target_horizontal_distance, self.xy_anchor_max)
+
+        # FIX 2 (The Pendulum Swing)
+        dx = current_uav.x - leader_for_follow.x
+        dy = current_uav.y - leader_for_follow.y
+        angle_to_uav = math.atan2(dy, dx)
+
+        # Apply the safe distance along the tether angle
+        xt = leader_for_follow.x + safe_distance * math.cos(angle_to_uav)
+        yt = leader_for_follow.y + safe_distance * math.sin(angle_to_uav)
 
         if self.follow_yaw:
             target_x, target_y = self._leader_look_target_xy(leader_for_follow)
@@ -1040,7 +1058,7 @@ class FollowUav(FollowControllerCoreMixin, Node):
                 self.camera_y_offset_m,
             )
         else:
-            yaw_cmd = self._current_uav_pose().yaw
+            yaw_cmd = current_uav.yaw
 
         return Pose2D(xt, yt, yaw_cmd)
 
@@ -1056,7 +1074,7 @@ class FollowUav(FollowControllerCoreMixin, Node):
                         f"[follow_uav] Start delay {self.start_delay_s:.1f}s before UAV follow motion"
                     )
                     self._startup_hold_logged = True
-                self._update_follow_state("HOLD")
+                self._update_follow_state(FollowState.HOLD)
                 return
         current_uav = self._control_uav_pose()
         current_uav_z = self._control_uav_z()
@@ -1065,8 +1083,8 @@ class FollowUav(FollowControllerCoreMixin, Node):
         search_active = self._should_search_for_target(now, current_horizontal_distance)
 
         if not self.ugv_pose_is_fresh(now):
-            self._reset_yaw_state()
-            self._update_follow_state("HOLD")
+            # self._reset_yaw_state()   
+            self._update_follow_state(FollowState.HOLD)
             return
 
         if not self.can_send_command_now(now):
@@ -1080,7 +1098,7 @@ class FollowUav(FollowControllerCoreMixin, Node):
             self.ugv_z,
             search_active=search_active,
         )
-        if (self.follow_state == "HOLD" or self._freeze_yaw_for_status()) and not search_active:
+        if (self.follow_state == FollowState.HOLD or self._freeze_yaw_for_status()) and not search_active:
             z_cmd = current_uav_z
         else:
             search_climbing = search_active and z_target > current_uav_z + 0.01
@@ -1096,12 +1114,12 @@ class FollowUav(FollowControllerCoreMixin, Node):
         xt = anchor_target.x
         yt = anchor_target.y
 
-        if self.follow_state == "HOLD" and not search_active:
+        if self.follow_state == FollowState.HOLD and not search_active:
             self._reset_traj_state()
             self._reset_yaw_state()
             xt = current_uav.x
             yt = current_uav.y
-        if self.follow_state != "HOLD" or search_active:
+        if self.follow_state != FollowState.HOLD or search_active:
             xt, yt = self._shape_target_trajectory(
                 leader_for_follow,
                 xt,
@@ -1169,7 +1187,7 @@ class FollowUav(FollowControllerCoreMixin, Node):
             self._reset_yaw_state()
             yaw_cmd = current_uav.yaw
             yaw_mode = "search_hold"
-        elif self.follow_state == "HOLD":
+        elif self.follow_state == FollowState.HOLD:
             self._reset_yaw_state()
             yaw_cmd = current_uav.yaw
             yaw_mode = "hold_state"

@@ -90,7 +90,12 @@ class FollowControllerCoreMixin:
         self.have_uav_actual = True
         try:
             self.last_uav_actual_time = Time.from_msg(msg.header.stamp)
-        except Exception:
+        except Exception as e:
+            # FIX: Warn the operator but don't spam the console (throttle to 1 sec)
+            self.get_logger().warn(
+                f"UAV Pose timestamp missing or invalid: {e}. Falling back to local clock! Check network sync.", 
+                throttle_duration_sec=1.0
+            )
             self.last_uav_actual_time = self.get_clock().now()
 
     def _current_uav_pose(self) -> Pose2D:
@@ -112,10 +117,17 @@ class FollowControllerCoreMixin:
             return False
         if not self.have_uav_actual or self.last_uav_actual_time is None:
             return True
+            
+        # Check if the user explicitly set 'use_actual_pose_for_control' to True in the YAML
+        use_actual = getattr(self, "use_actual_pose_for_control", False)
+        if use_actual:
+            return False  # False means "DO NOT use cmd state, use actual state instead"
+            
+        # Default/Simulation behavior: use the command state if it is newer
         if self.last_cmd_time is None:
             return False
         return self.last_cmd_time.nanoseconds > self.last_uav_actual_time.nanoseconds
-
+    
     def _control_uav_pose(self) -> Pose2D:
         if self._use_cmd_state_for_control():
             return self.uav_cmd
