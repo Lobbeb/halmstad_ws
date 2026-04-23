@@ -706,6 +706,11 @@ class FollowUav(FollowControllerCoreMixin, Node):
         self.leader_motion_speed_mps = math.hypot(self.leader_motion_vx, self.leader_motion_vy)
         if self.leader_motion_speed_mps >= self.estimate_heading_min_speed_mps:
             raw_yaw = math.atan2(self.leader_motion_vy, self.leader_motion_vx)
+            if self.leader_motion_heading_yaw is not None:
+                # Motion direction reverses by pi when the UGV backs up; the
+                # follow anchor should stay in the same leader-frame direction.
+                if math.cos(raw_yaw - self.leader_motion_heading_yaw) < 0.0:
+                    raw_yaw = wrap_pi(raw_yaw + math.pi)
             self.leader_motion_heading_yaw = raw_yaw
 
         self.leader_motion_prev_xy = (pose.x, pose.y)
@@ -730,8 +735,8 @@ class FollowUav(FollowControllerCoreMixin, Node):
             return self.leader_motion_heading_yaw, "motion_heading", estimate_yaw, actual_yaw
         if estimate_heading_source not in {"", "none", "fallback"}:
             return estimate_yaw, f"estimate_{estimate_heading_source}", estimate_yaw, actual_yaw
-        if motion_heading_ok and estimate_heading_source in {"", "none", "fallback"}:
-            return self.leader_motion_heading_yaw, "motion_heading_fallback", estimate_yaw, actual_yaw
+        if estimate_heading_source == "fallback":
+            return estimate_yaw, "estimate_fallback_pose_yaw", estimate_yaw, actual_yaw
         return estimate_yaw, "estimate_pose_yaw", estimate_yaw, actual_yaw
 
     def _shape_target_trajectory(
@@ -822,7 +827,7 @@ class FollowUav(FollowControllerCoreMixin, Node):
 
         try:
             self.last_ugv_stamp = Time.from_msg(msg.header.stamp)
-        except Exception:
+        except (ValueError, TypeError, AttributeError):
             self.last_ugv_stamp = self.get_clock().now()
         self._update_leader_motion_model(self.ugv_pose, self.last_ugv_stamp)
 
@@ -833,7 +838,7 @@ class FollowUav(FollowControllerCoreMixin, Node):
         )
         try:
             self.last_actual_heading_stamp = Time.from_msg(msg.header.stamp)
-        except Exception:
+        except (ValueError, TypeError, AttributeError):
             self.last_actual_heading_stamp = self.get_clock().now()
 
     def leader_actual_heading_is_fresh(self) -> bool:
@@ -1005,7 +1010,7 @@ class FollowUav(FollowControllerCoreMixin, Node):
         # Camera-relative geometry stays in camera_tracker.py.
         horizontal_distance = math.hypot(leader_x - uav_x, leader_y - uav_y)
         if horizontal_distance < 1e-3:
-            horizontal_distance = max(0.01, self._nominal_horizontal_follow_distance())
+            horizontal_distance = 1e-3
         distance_3d = math.hypot(horizontal_distance, uav_z - leader_z)
 
         self.current_leader_distance_xy_m = horizontal_distance

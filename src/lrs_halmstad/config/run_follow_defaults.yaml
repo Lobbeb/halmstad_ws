@@ -63,7 +63,7 @@ follow_uav:
 
     leader_actual_heading_enable: false                    # Use the real UGV AMCL heading for anchor placement instead of estimated heading.
     leader_actual_heading_topic: /a201_0000/amcl_pose_odom  # AMCL odom topic used when leader_actual_heading_enable is true.
-    estimate_heading_from_motion_enable: true              # Derive heading from estimated leader motion rather than OBB yaw.
+    estimate_heading_from_motion_enable: false             # Keep the follow anchor in the leader yaw frame; motion heading flips sides during reverse motion.
     estimate_heading_max_dt_s: 2.0                        # Ignore heading inference if pose gaps exceed this; keep 1â€“3 s.
     estimate_heading_min_speed_mps: 0.5                 # Minimum estimated leader speed before motion-derived heading is trusted; keep 0.1â€“0.3 m/s.
 

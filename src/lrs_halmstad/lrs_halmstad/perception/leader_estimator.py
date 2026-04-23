@@ -614,6 +614,15 @@ class LeaderEstimator(EventEmitterMixin, Node):
             return float(raw_angle)
         return float(reference_angle + wrap_pi(raw_angle - reference_angle))
 
+    def _resolve_bidirectional_heading(self, raw_yaw: float) -> float:
+        yaw_a = float(raw_yaw)
+        yaw_b = wrap_pi(yaw_a + math.pi)
+        if self.prev_heading_yaw is None:
+            return yaw_a
+        yaw_a = self._unwrap_angle_near(yaw_a, self.prev_heading_yaw)
+        yaw_b = self._unwrap_angle_near(yaw_b, self.prev_heading_yaw)
+        return yaw_a if abs(yaw_a - self.prev_heading_yaw) <= abs(yaw_b - self.prev_heading_yaw) else yaw_b
+
     def _ground_point_from_pixel(self, u: float, v: float, cam: CameraModel) -> Optional[Tuple[float, float]]:
         assert self.uav_pose is not None
         x_n = (u - cam.cx) / cam.fx
@@ -657,13 +666,7 @@ class LeaderEstimator(EventEmitterMixin, Node):
         dy = gp2[1] - gp1[1]
         if math.hypot(dx, dy) <= 1e-6:
             return None
-        yaw_a = math.atan2(dy, dx)
-        yaw_b = wrap_pi(yaw_a + math.pi)
-        if self.prev_heading_yaw is None:
-            return yaw_a
-        yaw_a = self._unwrap_angle_near(yaw_a, self.prev_heading_yaw)
-        yaw_b = self._unwrap_angle_near(yaw_b, self.prev_heading_yaw)
-        return yaw_a if abs(yaw_a - self.prev_heading_yaw) <= abs(yaw_b - self.prev_heading_yaw) else yaw_b
+        return self._resolve_bidirectional_heading(math.atan2(dy, dx))
 
     def _constant_target_range(self) -> tuple[float, str]:
         if self.d_target > 0.0:
@@ -780,7 +783,7 @@ class LeaderEstimator(EventEmitterMixin, Node):
         heading_source = "fallback"
         yaw = self.prev_heading_yaw if self.prev_heading_yaw is not None else self.uav_pose.yaw
         if det.obb_heading_yaw is not None:
-            yaw = det.obb_heading_yaw
+            yaw = self._resolve_bidirectional_heading(det.obb_heading_yaw)
             heading_source = "obb"
         elif det.obb_corners is not None:
             obb_heading = self._obb_heading_from_corners(det.obb_corners, cam)

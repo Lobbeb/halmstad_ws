@@ -447,14 +447,18 @@ class FollowPointGenerator(Node):
             return
         next_x = float(dir_x / norm)
         next_y = float(dir_y / norm)
-        if self.last_heading_dir_xy is not None and self.heading_dir_alpha < 1.0:
+        if self.last_heading_dir_xy is not None:
             prev_x, prev_y = self.last_heading_dir_xy
-            blend_x = (1.0 - self.heading_dir_alpha) * prev_x + self.heading_dir_alpha * next_x
-            blend_y = (1.0 - self.heading_dir_alpha) * prev_y + self.heading_dir_alpha * next_y
-            blend_norm = math.hypot(blend_x, blend_y)
-            if blend_norm > 1e-6:
-                next_x = float(blend_x / blend_norm)
-                next_y = float(blend_y / blend_norm)
+            if prev_x * next_x + prev_y * next_y < 0.0:
+                next_x = -next_x
+                next_y = -next_y
+            if self.heading_dir_alpha < 1.0:
+                blend_x = (1.0 - self.heading_dir_alpha) * prev_x + self.heading_dir_alpha * next_x
+                blend_y = (1.0 - self.heading_dir_alpha) * prev_y + self.heading_dir_alpha * next_y
+                blend_norm = math.hypot(blend_x, blend_y)
+                if blend_norm > 1e-6:
+                    next_x = float(blend_x / blend_norm)
+                    next_y = float(blend_y / blend_norm)
         self.last_heading_dir_xy = (next_x, next_y)
         self.last_heading_time = now
 

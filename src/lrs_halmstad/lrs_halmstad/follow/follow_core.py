@@ -90,7 +90,7 @@ class FollowControllerCoreMixin:
         self.have_uav_actual = True
         try:
             self.last_uav_actual_time = Time.from_msg(msg.header.stamp)
-        except Exception:
+        except (ValueError, TypeError, AttributeError):
             self.last_uav_actual_time = self.get_clock().now()
 
     def _current_uav_pose(self) -> Pose2D:
@@ -108,6 +108,7 @@ class FollowControllerCoreMixin:
         return self.uav_start_z
 
     def _use_cmd_state_for_control(self) -> bool:
+        return False
         if not self.have_uav_cmd:
             return False
         if not self.have_uav_actual or self.last_uav_actual_time is None:

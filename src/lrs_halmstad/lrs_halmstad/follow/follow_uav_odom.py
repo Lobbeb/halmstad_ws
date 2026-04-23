@@ -374,19 +374,14 @@ class FollowUavOdom(EventEmitterMixin, FollowControllerCoreMixin, Node):
         p = msg.pose.pose.position
         q = msg.pose.pose.orientation
         yaw = yaw_from_quat(float(q.x), float(q.y), float(q.z), float(q.w))
-        vx_body = float(msg.twist.twist.linear.x)
-        vy_body = float(msg.twist.twist.linear.y)
-        vx_world = math.cos(yaw) * vx_body - math.sin(yaw) * vy_body
-        vy_world = math.sin(yaw) * vx_body + math.cos(yaw) * vy_body
-        speed_world = math.hypot(vx_world, vy_world)
 
         self.ugv_pose = Pose2D(float(p.x), float(p.y), yaw)
         self.ugv_z = float(p.z)
-        self.ugv_follow_heading = math.atan2(vy_world, vx_world) if speed_world > 0.05 else yaw
+        self.ugv_follow_heading = yaw
         self.have_ugv = True
         try:
             self.last_ugv_stamp = Time.from_msg(msg.header.stamp)
-        except Exception:
+        except (ValueError, TypeError, AttributeError):
             self.last_ugv_stamp = self.get_clock().now()
 
     def _current_follow_geometry(self):

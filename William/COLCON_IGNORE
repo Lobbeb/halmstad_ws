@@ -1,0 +1,1 @@
+Ignore the read-only reference and handoff folder during colcon workspace discovery.
