@@ -1,1 +1,0 @@
--   There's a bug with the waypoints that it goes back to 0 in rotundan before 8

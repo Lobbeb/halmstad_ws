@@ -1,12 +1,14 @@
 # --- ROS 2 / colcon workspace ---
 build/
 install/
+.history/*
 log/*
 .colcon/
 *.log
 
 # --- Runtime output / experiment artifacts ---
-runs/
+#runs/
+bags/
 *.mcap
 *.db3
 *.sqlite3
@@ -26,6 +28,8 @@ venv/
 
 # --- VSCode ---
 .vscode/
+.agents/
+.codex/
 
 # --- OS / misc ---
 .DS_Store
@@ -58,6 +62,8 @@ opt/omnetpp-*/
 /models/detection
 /models/results
 /models/obb/mymodels/warehouse*.pt
+/models/sam*
+/models
 /datasets/*
 /merge
 /merge/*
@@ -76,3 +82,5 @@ opt/omnetpp-*/
 /maps/backups/*.pgm
 /maps/backups/*.yaml
 /maps/*backup.csv
+
+/scripts/hh_*.sh
