@@ -1,15 +1,28 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Prefer WSL GPU acceleration on the configured discrete adapter.
+export MESA_D3D12_DEFAULT_ADAPTER_NAME="${LRS_SIM_GPU_ADAPTER:-AMD Radeon RX 7600}"
+export GALLIUM_DRIVER=d3d12
+
+# Do not force software rendering
+unset LIBGL_ALWAYS_SOFTWARE
+unset MESA_LOADER_DRIVER_OVERRIDE
+unset GALLIUM_DRIVER_LLVM
+unset PYTHONNOUSERSITE
+
+# Optional: remove vsync override while debugging crashes
+unset vblank_mode
+unset MESA_VK_WSI_PRESENT_MODE
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 WS_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 WORLD=""
-GUI="${GUI:-true}"
+GUI="${GUI:-false}"
 GUI_SET="false"
 VIEW_FOLLOW_SPAWN_SET="false"
 VIEW_DISTANCE_SET="false"
 VIEW_HEIGHT_SET="false"
-ENABLE_WSL_SOFTWARE_RENDERING="${ENABLE_WSL_SOFTWARE_RENDERING:-auto}"
 REBUILD="${REBUILD:-false}"
 STATE_DIR="/tmp/halmstad_ws"
 SIM_PID_FILE="$STATE_DIR/gazebo_sim.pid"
@@ -27,7 +40,7 @@ BAYLANDS_DEFAULT_X="0.0"
 BAYLANDS_DEFAULT_Y="0.0"
 BAYLANDS_DEFAULT_Z="0.8"
 BAYLANDS_DEFAULT_YAW="0.0"
-BAYLANDS_DEFAULT_WAYPOINT="parkinglot_west_0"
+BAYLANDS_DEFAULT_WAYPOINT="parkinglot_east_0"
 
 source "$SCRIPT_DIR/slam_state_common.sh"
 source "$SCRIPT_DIR/baylands_waypoint_common.sh"
@@ -396,7 +409,6 @@ if [ "$WORLD" = "baylands" ]; then
   "$SCRIPT_DIR/recover_sim_controllers.sh" a201_0000 &
   printf '%s\n' "$!" > "$CONTROLLER_RECOVERY_PID_FILE"
 fi
-
 
 ros2 launch lrs_halmstad managed_clearpath_sim.launch.py \
   world:="$WORLD" \

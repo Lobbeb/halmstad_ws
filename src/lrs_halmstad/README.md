@@ -45,11 +45,13 @@ OMNeT++ network metrics topics (published by `omnet_metrics_bridge` when OMNeT i
 requires `start_omnet_bridge:=true` in `run_follow.launch.py`; all `std_msgs/Float64`, ~10 Hz):
 
 - `/omnet/sim_time`          â€” OMNeT simulation time (s)
-- `/omnet/link_distance`     â€” geometric UAVâ€“UGV distance from Gazebo positions (m)
 - `/omnet/rssi_dbm`          â€” received signal strength (dBm, free-space path-loss model)
 - `/omnet/snir_db`           â€” signal-to-noise-plus-interference ratio (dB)
 - `/omnet/packet_error_rate` â€” sliding-window PER estimate (0â€“1)
 - `/omnet/radio_distance`    â€” range estimate from RSSI inversion only, no Gazebo positions (m)
+
+The geometric OMNeT `link_distance` stays in OMNeT output for validation and is
+not republished as a ROS topic.
 
 ## Recommended 1-to-1 bring-up
 

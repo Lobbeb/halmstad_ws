@@ -3,16 +3,24 @@
 omnet_metrics_bridge — ROS2 node that connects to the OMNeT++ OmnetMetricsServer
 TCP server and republishes network metrics as ROS2 topics.
 
-OMNeT sends one ASCII line per update interval:
+Legacy OMNeT metrics servers sent:
     <simtime_s> <distance_m> <rssi_dbm> <snir_db> <per> <radio_distance_m>
+The current LoRa metrics server sends:
+    <simtime_s> <rssi_dbm> <snir_db> <per> <radio_distance_m> <pdr> <latency_s> <jitter_s>
 
 Published topics:
-    /omnet/link_distance      (std_msgs/Float64)  — metres (geometric, from Gazebo positions)
     /omnet/rssi_dbm           (std_msgs/Float64)  — dBm
     /omnet/snir_db            (std_msgs/Float64)  — dB
     /omnet/packet_error_rate  (std_msgs/Float64)  — 0..1
+    /omnet/packet_delivery_ratio (std_msgs/Float64) — 0..1
+    /omnet/latency_s          (std_msgs/Float64)  — seconds
+    /omnet/jitter_s           (std_msgs/Float64)  — seconds
     /omnet/sim_time           (std_msgs/Float64)  — OMNeT simulation time (s)
-    /omnet/radio_distance     (std_msgs/Float64)  — metres (FSPL-inverted from RSSI only)
+    /omnet/radio_distance     (std_msgs/Float64)  — optional RSSI/path-loss-derived metres; NaN when disabled
+
+The bridge intentionally does not publish /omnet/link_distance. That
+pose-derived ground-truth value stays in OMNeT output, not on the ROS metrics
+path.
 """
 
 import socket
@@ -44,10 +52,12 @@ class OmnetMetricsBridge(Node):
         if self._read_timeout <= 0.0:
             self._read_timeout = 5.0
 
-        self._pub_distance      = self.create_publisher(Float64, "/omnet/link_distance", 10)
         self._pub_rssi          = self.create_publisher(Float64, "/omnet/rssi_dbm", 10)
         self._pub_snir          = self.create_publisher(Float64, "/omnet/snir_db", 10)
         self._pub_per           = self.create_publisher(Float64, "/omnet/packet_error_rate", 10)
+        self._pub_pdr           = self.create_publisher(Float64, "/omnet/packet_delivery_ratio", 10)
+        self._pub_latency       = self.create_publisher(Float64, "/omnet/latency_s", 10)
+        self._pub_jitter        = self.create_publisher(Float64, "/omnet/jitter_s", 10)
         self._pub_simtime       = self.create_publisher(Float64, "/omnet/sim_time", 10)
         self._pub_radio_dist    = self.create_publisher(Float64, "/omnet/radio_distance", 10)
 
@@ -117,16 +127,22 @@ class OmnetMetricsBridge(Node):
         if not line:
             return
         parts = line.split()
-        if len(parts) != 6:
+        if len(parts) not in (6, 8, 9):
             self.get_logger().debug(f"Unexpected metrics line: {line!r}")
             return
         try:
-            sim_time, distance, rssi, snir, per, radio_dist = (float(p) for p in parts)
+            values = [float(p) for p in parts]
         except ValueError:
             self.get_logger().debug(f"Could not parse metrics line: {line!r}")
             return
-
-        now = self.get_clock().now().to_msg()
+        if len(values) == 8:
+            sim_time, rssi, snir, per, radio_dist, pdr, latency_s, jitter_s = values
+        elif len(values) == 9:
+            sim_time, _distance, rssi, snir, per, radio_dist = values[:6]
+            pdr, latency_s, jitter_s = values[6:]
+        else:
+            sim_time, _distance, rssi, snir, per, radio_dist = values
+            pdr = latency_s = jitter_s = float("nan")
 
         def _pub(pub, val: float) -> None:
             msg = Float64()
@@ -134,10 +150,12 @@ class OmnetMetricsBridge(Node):
             pub.publish(msg)
 
         _pub(self._pub_simtime,    sim_time)
-        _pub(self._pub_distance,   distance)
         _pub(self._pub_rssi,       rssi)
         _pub(self._pub_snir,       snir)
         _pub(self._pub_per,        per)
+        _pub(self._pub_pdr,        pdr)
+        _pub(self._pub_latency,    latency_s)
+        _pub(self._pub_jitter,     jitter_s)
         _pub(self._pub_radio_dist, radio_dist)
 
     def _close(self) -> None:

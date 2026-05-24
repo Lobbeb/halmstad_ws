@@ -12,6 +12,7 @@ PROFILE="default"
 TAG=""
 RUN_DIR=""
 DRY_RUN=false
+OMNET=false
 
 if [ -f "$SIM_WORLD_FILE" ]; then
   sim_world="$(cat "$SIM_WORLD_FILE" 2>/dev/null || true)"
@@ -42,12 +43,15 @@ for arg in "$@"; do
     out:=*)
       RUN_DIR="${arg#out:=}"
       ;;
-    dry_run:=*)
+      dry_run:=*)
       DRY_RUN="${arg#dry_run:=}"
+      ;;
+    omnet:=*)
+      OMNET="${arg#omnet:=}"
       ;;
     *)
       echo "Unknown argument: $arg" >&2
-      echo "Usage: $0 [world] [mode:=follow|yolo] [uav_name:=dji0] [profile:=default|step2_light|vision] [tag:=name] [out:=bags/experiments/...] [dry_run:=true|false]" >&2
+      echo "Usage: $0 [world] [mode:=follow|yolo] [uav_name:=dji0] [profile:=default|step2_light|vision] [tag:=name] [out:=bags/experiments/...] [omnet:=true|false] [dry_run:=true|false]" >&2
       exit 2
       ;;
   esac
@@ -76,6 +80,16 @@ case "$DRY_RUN" in
     ;;
   *)
     echo "Invalid dry_run option: $DRY_RUN" >&2
+    exit 2
+    ;;
+esac
+
+case "$OMNET" in
+  true|false)
+    ;;
+  *)
+    echo "Invalid omnet option: $OMNET" >&2
+    echo "Use omnet:=true or omnet:=false" >&2
     exit 2
     ;;
 esac
@@ -156,6 +170,19 @@ if [ "$MODE" = "yolo" ]; then
   )
 fi
 
+if [ "$OMNET" = true ]; then
+  TOPICS+=(
+    "/omnet/sim_time"
+    "/omnet/rssi_dbm"
+    "/omnet/snir_db"
+    "/omnet/packet_error_rate"
+    "/omnet/packet_delivery_ratio"
+    "/omnet/latency_s"
+    "/omnet/jitter_s"
+    "/omnet/radio_distance"
+  )
+fi
+
 if [ "$PROFILE" = "vision" ]; then
   TOPICS+=(
     "/$UAV_NAME/camera0/image_raw"
@@ -213,6 +240,7 @@ printf '%s\n' "${TOPICS[@]}" > "$TOPICS_FILE"
   printf '  "world": "%s",\n' "$(json_escape "$WORLD")"
   printf '  "mode": "%s",\n' "$(json_escape "$MODE")"
   printf '  "profile": "%s",\n' "$(json_escape "$PROFILE")"
+  printf '  "omnet": %s,\n' "$OMNET"
   printf '  "uav_name": "%s",\n' "$(json_escape "$UAV_NAME")"
   printf '  "tag": "%s",\n' "$(json_escape "$TAG")"
   printf '  "run_name": "%s",\n' "$(json_escape "$run_name")"

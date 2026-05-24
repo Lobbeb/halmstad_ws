@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import math
 import time
+from collections import deque
 from dataclasses import dataclass
 from typing import Optional, Tuple
 
@@ -101,6 +102,12 @@ class LeaderEstimator(EventEmitterMixin, Node):
         self.target_ground_z_m = float(yaml_param(self, "target_ground_z_m", descriptor=dyn_num))
         self.radio_range_topic = str(self.declare_parameter("radio_range_topic", "/omnet/radio_distance").value).strip()
         self.radio_range_timeout_s = float(self.declare_parameter("radio_range_timeout_s", 0.5).value)
+        self.radio_range_warmup_s = float(self.declare_parameter("radio_range_warmup_s", 10.0).value)
+        self.radio_range_min_samples = max(1, int(self.declare_parameter("radio_range_min_samples", 5).value))
+        self.radio_range_stability_window = max(1, int(self.declare_parameter("radio_range_stability_window", 5).value))
+        self.radio_range_stability_max_delta_m = float(
+            self.declare_parameter("radio_range_stability_max_delta_m", 0.0).value
+        )
 
         self.cam_yaw_offset_rad = math.radians(float(yaml_param(self, "cam_yaw_offset_deg", descriptor=dyn_num)))
         self.cam_pitch_offset_rad = math.radians(float(yaml_param(self, "cam_pitch_offset_deg", descriptor=dyn_num)))
@@ -123,6 +130,12 @@ class LeaderEstimator(EventEmitterMixin, Node):
             raise ValueError("external_detection_timeout_s must be > 0")
         if self.external_detection_max_latency_ms < 0.0:
             raise ValueError("external_detection_max_latency_ms must be >= 0")
+        if self.radio_range_timeout_s <= 0.0:
+            raise ValueError("radio_range_timeout_s must be > 0")
+        if self.radio_range_warmup_s < 0.0:
+            raise ValueError("radio_range_warmup_s must be >= 0")
+        if self.radio_range_stability_max_delta_m < 0.0:
+            raise ValueError("radio_range_stability_max_delta_m must be >= 0")
         if self.constant_range_m <= 0.0 and self.d_target <= 0.0:
             raise ValueError("either d_target or constant_range_m must be > 0")
         if self.range_mode not in ("auto", "depth", "const", "radio"):
@@ -154,6 +167,9 @@ class LeaderEstimator(EventEmitterMixin, Node):
         self.last_follow_debug_heading_stamp: Optional[Time] = None
         self.last_radio_range_m: Optional[float] = None
         self.last_radio_range_stamp: Optional[Time] = None
+        self.first_radio_range_stamp: Optional[Time] = None
+        self.radio_range_sample_count = 0
+        self.radio_range_window = deque(maxlen=self.radio_range_stability_window)
         self.last_estimate_pose: Optional[Pose3D] = None
         self.last_estimate_stamp: Optional[Time] = None
         self.last_estimate_track_id: Optional[int] = None
@@ -414,8 +430,13 @@ class LeaderEstimator(EventEmitterMixin, Node):
     def on_radio_range(self, msg: Float64) -> None:
         val = float(msg.data)
         if math.isfinite(val) and val > 0.0:
+            now = self.get_clock().now()
+            if self.first_radio_range_stamp is None:
+                self.first_radio_range_stamp = now
+            self.radio_range_sample_count += 1
+            self.radio_range_window.append(val)
             self.last_radio_range_m = val
-            self.last_radio_range_stamp = self.get_clock().now()
+            self.last_radio_range_stamp = now
 
     def on_external_detection(self, msg: String) -> None:
         try:
@@ -584,6 +605,22 @@ class LeaderEstimator(EventEmitterMixin, Node):
     def radio_range_fresh(self, now: Time) -> bool:
         return self._is_fresh(self.last_radio_range_stamp, self.radio_range_timeout_s, now)
 
+    def radio_range_ready(self, now: Time) -> bool:
+        if not self.radio_range_fresh(now):
+            return False
+        if self.first_radio_range_stamp is None:
+            return False
+        if (now - self.first_radio_range_stamp).nanoseconds / 1e9 < self.radio_range_warmup_s:
+            return False
+        if self.radio_range_sample_count < self.radio_range_min_samples:
+            return False
+        if self.radio_range_stability_max_delta_m > 0.0:
+            if len(self.radio_range_window) < self.radio_range_stability_window:
+                return False
+            if max(self.radio_range_window) - min(self.radio_range_window) > self.radio_range_stability_max_delta_m:
+                return False
+        return True
+
     def _depth_range_at(self, det: Detection2D, now: Time) -> Optional[float]:
         if self.last_depth_msg is None or not self.depth_fresh(now):
             return None
@@ -717,8 +754,8 @@ class LeaderEstimator(EventEmitterMixin, Node):
         return float(self.constant_range_m), "const_fallback"
 
     def _radio_range_as_horizontal(self, now: Time) -> Optional[float]:
-        """Convert the OMNeT FSPL radio distance (Euclidean) to a horizontal range."""
-        if self.last_radio_range_m is None or not self.radio_range_fresh(now):
+        """Convert the OMNeT radio-derived distance (Euclidean) to a horizontal range."""
+        if self.last_radio_range_m is None or not self.radio_range_ready(now):
             return None
         if self.uav_pose is None:
             return None

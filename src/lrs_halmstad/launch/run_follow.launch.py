@@ -653,7 +653,7 @@ def generate_launch_description():
     )
     follow_yaw_arg = DeclareLaunchArgument('follow_yaw', default_value='true')
     publish_follow_debug_topics_arg = DeclareLaunchArgument('publish_follow_debug_topics', default_value='false')
-    publish_pose_cmd_topics_arg = DeclareLaunchArgument('publish_pose_cmd_topics', default_value='true')
+    publish_pose_cmd_topics_arg = DeclareLaunchArgument('publish_pose_cmd_topics', default_value='false')
     require_uav_actual_before_motion_arg = DeclareLaunchArgument(
         'require_uav_actual_before_motion',
         default_value='false',
@@ -687,7 +687,7 @@ def generate_launch_description():
     camera_default_tilt_deg_arg = DeclareLaunchArgument('camera_default_tilt_deg', default_value='-45.0')
     pan_enable_arg = DeclareLaunchArgument('pan_enable', default_value='')
     tilt_enable_arg = DeclareLaunchArgument('tilt_enable', default_value='')
-    publish_camera_debug_topics_arg = DeclareLaunchArgument('publish_camera_debug_topics', default_value='true')
+    publish_camera_debug_topics_arg = DeclareLaunchArgument('publish_camera_debug_topics', default_value='false')
     camera_yaw_offset_deg_arg = DeclareLaunchArgument('camera_yaw_offset_deg', default_value='0.0')
     camera_pan_sign_arg = DeclareLaunchArgument('camera_pan_sign', default_value='1.0')
     start_uav_simulator_arg = DeclareLaunchArgument('start_uav_simulator', default_value='true')

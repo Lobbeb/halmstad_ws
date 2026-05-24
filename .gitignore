@@ -1,7 +1,6 @@
 # --- ROS 2 / colcon workspace ---
 build/
 install/
-.history/*
 log/*
 .colcon/
 *.log
@@ -56,19 +55,38 @@ opt/omnetpp-*/
 # --- Local archives ---
 *.zip
 
-# --- Local ML weights and datasets ---
-/models/obb/yolo*
-/models/detection
-/models/detection
-/models/results
-/models/obb/mymodels/warehouse*.pt
-/models/sam*
-/models
-/datasets/*
-/merge
-/merge/*
-/descriptions/
-*_MATH.md
+# --- Local ML weights ----
+*yolo*.pt
+*-v1.pt
+*-v2*.pt
+*-v3*.pt
+*-v4*.pt
+*-v5*.pt
+*-v6*.pt
+*-v7*.pt
+
+# --- Local ML runs and config files ---
+models/sam*
+models/obb/experiments/sam3_hybrid_full/runs*
+models/obb/experiments/
+*yolo*.json
+*v1.json
+*v2.json
+*v3*.json
+*v4*.json
+*v5*.json
+*v6*.json
+*v7*.json
+*v8*.json
+*v9*.json
+*v10*.json
+
+
+# --- Local Datasets ---
+datasets/final
+datasets/b*
+datasets/tmp*
+datasets/pre*
 
 # --- Local debug helpers ---
 /run_follow_yaw_debug.py
@@ -82,5 +100,5 @@ opt/omnetpp-*/
 /maps/backups/*.pgm
 /maps/backups/*.yaml
 /maps/*backup.csv
-
+/bags/*
 /scripts/hh_*.sh

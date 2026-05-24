@@ -133,16 +133,6 @@ if [ -n "${WSL_INTEROP:-}" ] || grep -qi microsoft /proc/version 2>/dev/null; th
   else
     echo "[run_nav2_rviz] Warning: no reachable WSL GUI display found. WSLg may need a reset with 'wsl --shutdown'." >&2
   fi
-
-  if [ "$RVIZ_SOFTWARE_RENDERING" = "auto" ] || [ "$RVIZ_SOFTWARE_RENDERING" = "true" ]; then
-    if [ -z "${LIBGL_ALWAYS_SOFTWARE:-}" ]; then
-      export LIBGL_ALWAYS_SOFTWARE=1
-      echo "[run_nav2_rviz] WSL detected: using LIBGL_ALWAYS_SOFTWARE=1 for RViz map rendering"
-    fi
-  fi
-elif [ "$RVIZ_SOFTWARE_RENDERING" = "true" ]; then
-  export LIBGL_ALWAYS_SOFTWARE=1
-  echo "[run_nav2_rviz] Forced software rendering: LIBGL_ALWAYS_SOFTWARE=1"
 fi
 
 cd "$CONFIG_ROOT"

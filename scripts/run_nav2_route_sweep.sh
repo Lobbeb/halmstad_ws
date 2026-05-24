@@ -15,12 +15,14 @@ SWEEP_MODE="waypoints"
 SESSION_PREFIX="halmstad-nav2-route-sweep"
 TMUX_ATTACH="false"
 DRY_RUN="false"
+REPETITIONS=1
 STOP_BEFORE_EACH="true"
 STOP_AFTER_EACH="true"
 STOP_GROUP_GRACE_S="3"
 STOP_FINAL_GRACE_S="3"
 START_TIMEOUT_S=300
 ROUTE_TIMEOUT_S=2000
+ROUTE_SIM_TIMEOUT_S=""
 BETWEEN_S=3
 CHECK_UAV_FOLLOW="true"
 UAV_NAME="dji0"
@@ -32,8 +34,17 @@ UAV_CHECK_REQUIRE_COMMAND="false"
 SKIP_REMAINING_ON_COMPLETE="true"
 CHAIN_ROUTE_STARTS="false"
 FALLBACK_WAYPOINTS_ON_ROUTE_FAILURE="false"
+FALLBACK_WAYPOINTS_EXPLICIT="false"
+RECORD="false"
+RECORD_PROFILE="default"
+RECORD_ROOT=""
+CAMPAIGN_TAG=""
+METRIC_WARMUP_S=30
+MEASURED_METRICS_SUMMARY=""
 EXTRA_TMUX_ARGS=()
 HAVE_UGV_START_DELAY_ARG="false"
+SWEEP_MODE_EXPLICIT="false"
+CAMPAIGN_ARGS_SEEN="false"
 
 source "$SCRIPT_DIR/baylands_route_lidar_common.sh"
 source "$SCRIPT_DIR/baylands_waypoint_common.sh"
@@ -68,6 +79,15 @@ Options:
   session_prefix:=name        tmux session prefix
   start_timeout_s:=seconds    Time to wait for ugv_nav2_driver to start
   route_timeout_s:=seconds    Max time per route after driver starts, 0/off disables
+  route_sim_timeout_s:=seconds Max simulation time per route, preferred for campaigns
+  repetitions:=count          Repeat the selected route list, default 1
+  campaign_tag:=name          Prefix for per-route record tags
+  record:=true|false          Enable per-route recording
+  record_root:=path           Root folder for per-route bags and OMNeT files
+  record_profile:=profile     Recording profile passed to tmux_1to1
+  lora_sf:=7..12              LoRa spreading factor forwarded to tmux_1to1/OMNeT
+  lora_bw:=125kHz|250kHz      LoRa bandwidth forwarded to tmux_1to1/OMNeT
+  metric_warmup_s:=seconds    Warmup skipped for measured summary metrics, default 30
   between_s:=seconds          Pause between routes
   stop_before_each:=true|false
   stop_after_each:=true|false
@@ -94,6 +114,49 @@ trim() {
 
 sanitize_name() {
   printf '%s' "$1" | tr -c 'A-Za-z0-9_.-' '_'
+}
+
+pad2() {
+  printf '%02d' "$1"
+}
+
+workspace_path() {
+  local path="$1"
+  if [[ "$path" = /* ]]; then
+    printf '%s\n' "$path"
+  else
+    printf '%s/%s\n' "$WS_ROOT" "$path"
+  fi
+}
+
+sync_job_logs() {
+  local record_out="$1"
+  local log_path log_dir
+  shift || true
+  [ "$DRY_RUN" != true ] || return 0
+  [ -n "$record_out" ] || return 0
+
+  log_dir="$(workspace_path "$record_out")/pane_logs"
+  mkdir -p "$log_dir"
+  for log_path in "$@"; do
+    [ -f "$log_path" ] || continue
+    cp "$log_path" "$log_dir/$(basename "$log_path")"
+  done
+}
+
+write_record_root_summary() {
+  local state="$1"
+  local suffix="$2"
+  local summary_dir summary_path
+  [ "$DRY_RUN" != true ] || return 0
+  [ "$RECORD" = true ] || return 0
+  [ -n "$RECORD_ROOT" ] || return 0
+
+  summary_dir="$(workspace_path "$RECORD_ROOT")"
+  mkdir -p "$summary_dir"
+  summary_path="$summary_dir/${CAMPAIGN_TAG}_${suffix}.txt"
+  write_summary_file "$summary_path" "$state"
+  echo "Saved campaign summary: $summary_path"
 }
 
 print_cmd() {
@@ -125,6 +188,169 @@ result_context() {
   pc2ls_range_max="$(arg_value_or_default "pc2ls_range_max:=" "default" "${EXTRA_TMUX_ARGS[@]}" "${lidar_args[@]}")"
   printf 'lidar=%s pc2ls_min_height=%s pc2ls_max_height=%s pc2ls_range_min=%s pc2ls_range_max=%s' \
     "$LIDAR" "$pc2ls_min" "$pc2ls_max" "$pc2ls_range_min" "$pc2ls_range_max"
+}
+
+generate_measured_metrics_summary() {
+  [ "$DRY_RUN" != true ] || return 0
+  [ "$RECORD" = true ] || return 0
+  [ "${#CAMPAIGN_RESULTS[@]}" -gt 0 ] || return 0
+
+  local input_csv="$RUN_DIR/campaign_results.csv"
+  {
+    printf 'repetition,route_index,route,job_label,start_waypoint,status,network_data_valid,record_out,omnet_result_dir,context\n'
+    printf '%s\n' "${CAMPAIGN_RESULTS[@]}"
+  } > "$input_csv"
+
+  python3 - "$WS_ROOT" "$METRIC_WARMUP_S" "$input_csv" <<'PY'
+import csv
+import math
+import statistics
+import sys
+from pathlib import Path
+
+ws_root = Path(sys.argv[1])
+warmup_s = float(sys.argv[2])
+input_csv = Path(sys.argv[3])
+
+topics = {
+    "pdr": "/omnet/packet_delivery_ratio",
+    "per": "/omnet/packet_error_rate",
+    "lat_ms": "/omnet/latency_s",
+    "jit_ms": "/omnet/jitter_s",
+    "rssi": "/omnet/rssi_dbm",
+    "snir": "/omnet/snir_db",
+    "radio_m": "/omnet/radio_distance",
+}
+
+try:
+    import rosbag2_py
+    from rclpy.serialization import deserialize_message
+    from rosidl_runtime_py.utilities import get_message
+except Exception as exc:
+    print(f"Measured OMNeT metrics unavailable: ROS bag reader is not available ({exc})")
+    raise SystemExit(0)
+
+
+def fmt(value, digits=3):
+    if value is None or not math.isfinite(value):
+        return "-"
+    return f"{value:.{digits}f}"
+
+
+def resolve_bag(record_out):
+    if not record_out:
+        return None
+    run_dir = Path(record_out)
+    if not run_dir.is_absolute():
+        run_dir = ws_root / run_dir
+    bag_dir = run_dir / "bag"
+    if not bag_dir.exists():
+        return None
+    return bag_dir
+
+
+def read_bag_metrics(bag_dir):
+    reader = rosbag2_py.SequentialReader()
+    reader.open(
+        rosbag2_py.StorageOptions(uri=str(bag_dir), storage_id=""),
+        rosbag2_py.ConverterOptions(
+            input_serialization_format="cdr",
+            output_serialization_format="cdr",
+        ),
+    )
+    type_map = {topic.name: topic.type for topic in reader.get_all_topics_and_types()}
+    wanted = {path for path in topics.values() if path in type_map}
+    if not wanted:
+        return None
+
+    type_cache = {}
+    values = {name: [] for name in topics}
+    start_ns = None
+    total_samples = 0
+
+    while reader.has_next():
+        topic, data, timestamp_ns = reader.read_next()
+        if start_ns is None:
+            start_ns = int(timestamp_ns)
+        if topic not in wanted:
+            continue
+        rel_t = (int(timestamp_ns) - start_ns) * 1e-9
+        if rel_t < warmup_s:
+            continue
+        msg_type_name = type_map.get(topic)
+        if not msg_type_name:
+            continue
+        try:
+            if msg_type_name not in type_cache:
+                type_cache[msg_type_name] = get_message(msg_type_name)
+            msg = deserialize_message(data, type_cache[msg_type_name])
+            value = float(getattr(msg, "data"))
+        except Exception:
+            continue
+        if not math.isfinite(value):
+            continue
+        if topic == "/omnet/latency_s" or topic == "/omnet/jitter_s":
+            value *= 1000.0
+        for name, path in topics.items():
+            if path == topic:
+                values[name].append(value)
+                total_samples += 1
+                break
+
+    out = {"samples": total_samples}
+    for name, samples in values.items():
+        out[name] = statistics.fmean(samples) if samples else None
+    return out
+
+
+rows = list(csv.DictReader(input_csv.open("r", encoding="utf-8")))
+summaries = []
+for row in rows:
+    bag_dir = resolve_bag(row.get("record_out", ""))
+    metrics = None
+    if bag_dir is not None:
+        try:
+            metrics = read_bag_metrics(bag_dir)
+        except Exception as exc:
+            metrics = {"error": str(exc), "samples": 0}
+    summaries.append((row, metrics))
+
+print(f"Measured OMNeT metrics after {warmup_s:g}s warmup:")
+print("  job                         status        samples  pdr     per     lat_ms  jit_ms  rssi    snir    radio_m")
+
+valid = []
+for row, metrics in summaries:
+    job = row.get("job_label", "")
+    status = row.get("status", "")
+    if not metrics:
+        print(f"  {job[:27]:27s} {status[:12]:12s} {'-':>7s}  {'-':>6s} {'-':>6s} {'-':>7s} {'-':>7s} {'-':>7s} {'-':>7s} {'-':>8s}")
+        continue
+    if "error" in metrics:
+        print(f"  {job[:27]:27s} {status[:12]:12s} {'err':>7s}  {metrics['error'][:60]}")
+        continue
+    if int(metrics.get("samples", 0)) > 0 and row.get("network_data_valid") == "true":
+        valid.append(metrics)
+    print(
+        f"  {job[:27]:27s} {status[:12]:12s} {int(metrics.get('samples', 0)):7d}  "
+        f"{fmt(metrics.get('pdr')):>6s} {fmt(metrics.get('per')):>6s} "
+        f"{fmt(metrics.get('lat_ms')):>7s} {fmt(metrics.get('jit_ms')):>7s} "
+        f"{fmt(metrics.get('rssi')):>7s} {fmt(metrics.get('snir')):>7s} {fmt(metrics.get('radio_m')):>8s}"
+    )
+
+if valid:
+    avg = {}
+    for name in topics:
+        vals = [m[name] for m in valid if m.get(name) is not None and math.isfinite(m[name])]
+        avg[name] = statistics.fmean(vals) if vals else None
+    print(
+        "  avg valid runs: "
+        f"n={len(valid)} pdr={fmt(avg.get('pdr'))} per={fmt(avg.get('per'))} "
+        f"lat_ms={fmt(avg.get('lat_ms'))} jit_ms={fmt(avg.get('jit_ms'))} "
+        f"rssi={fmt(avg.get('rssi'))} snir={fmt(avg.get('snir'))} radio_m={fmt(avg.get('radio_m'))}"
+    )
+else:
+    print("  avg valid runs: none")
+PY
 }
 
 discover_routes() {
@@ -313,8 +539,10 @@ PY
 append_waypoint_jobs() {
   local route="$1"
   local label_prefix="$2"
+  local start_index_min="${3:-0}"
   local route_file waypoint_name slice_path index
   local -a waypoint_names
+  local appended=0
 
   route_file="$(route_yaml_path "$route")"
   if [ ! -f "$route_file" ]; then
@@ -329,6 +557,9 @@ append_waypoint_jobs() {
   fi
 
   for index in "${!waypoint_names[@]}"; do
+    if [ "$index" -lt "$start_index_min" ]; then
+      continue
+    fi
     waypoint_name="${waypoint_names[$index]}"
     slice_path="$RUN_DIR/slices/$(sanitize_name "${label_prefix}${route}")_${index}_$(sanitize_name "$waypoint_name").yaml"
     if [ "$DRY_RUN" != true ]; then
@@ -337,7 +568,10 @@ append_waypoint_jobs() {
     JOB_START_WAYPOINTS+=("$waypoint_name")
     JOB_NAV2_GOALS+=("$slice_path")
     JOB_LABELS+=("${label_prefix}${route}_${index}_${waypoint_name}")
+    appended=$((appended + 1))
   done
+
+  [ "$appended" -gt 0 ]
 }
 
 session_state_file() {
@@ -373,13 +607,32 @@ route_driver_running() {
 
 route_timeout_disabled() {
   case "${1:-}" in
-    0|0.0|false|False|FALSE|off|Off|OFF|none|None|NONE|disabled|Disabled|DISABLED)
+    ""|0|0.0|false|False|FALSE|off|Off|OFF|none|None|NONE|disabled|Disabled|DISABLED)
       return 0
       ;;
     *)
       return 1
       ;;
   esac
+}
+
+current_sim_time_s() {
+  timeout 4s bash -lc "
+set +u
+source /opt/ros/jazzy/setup.bash >/dev/null 2>&1
+source '$WS_ROOT/install/setup.bash' >/dev/null 2>&1
+export ROS_DOMAIN_ID='${ROS_DOMAIN_ID:-3}'
+export RMW_IMPLEMENTATION='${RMW_IMPLEMENTATION:-rmw_fastrtps_cpp}'
+set -u
+ros2 topic echo --no-daemon --once /clock
+" 2>/dev/null | awk '
+    /^[[:space:]]*sec:/ { sec = $2 }
+    /^[[:space:]]*nanosec:/ { nsec = $2 }
+    END {
+      if (sec == "") exit 1
+      printf "%.9f\n", sec + (nsec / 1000000000.0)
+    }
+  '
 }
 
 ros_topic_echo_once() {
@@ -539,7 +792,7 @@ wait_for_route_done() {
   local route="$2"
   local route_log="$3"
 
-  if route_timeout_disabled "$ROUTE_TIMEOUT_S"; then
+  if route_timeout_disabled "$ROUTE_TIMEOUT_S" && route_timeout_disabled "$ROUTE_SIM_TIMEOUT_S"; then
     while route_driver_running; do
       sleep 5
     done
@@ -547,10 +800,35 @@ wait_for_route_done() {
     return 0
   fi
 
-  local deadline=$((SECONDS + ROUTE_TIMEOUT_S))
+  local deadline=0
+  if ! route_timeout_disabled "$ROUTE_TIMEOUT_S"; then
+    deadline=$((SECONDS + ROUTE_TIMEOUT_S))
+  fi
+  local sim_start=""
+  local sim_now=""
+  local sim_elapsed=""
+  if ! route_timeout_disabled "$ROUTE_SIM_TIMEOUT_S"; then
+    sim_start="$(current_sim_time_s || true)"
+    if [ -n "$sim_start" ]; then
+      echo "Route '$route' sim-time timer started at ${sim_start}s; timeout=${ROUTE_SIM_TIMEOUT_S}s"
+    else
+      echo "Route '$route' could not read /clock for sim-time timeout; falling back to wall timeout if enabled" >&2
+    fi
+  fi
 
   while route_driver_running; do
-    if (( SECONDS >= deadline )); then
+    if [ -n "$sim_start" ]; then
+      sim_now="$(current_sim_time_s || true)"
+      if [ -n "$sim_now" ]; then
+        sim_elapsed="$(awk -v now="$sim_now" -v start="$sim_start" 'BEGIN { printf "%.6f", now - start }')"
+        if awk -v elapsed="$sim_elapsed" -v limit="$ROUTE_SIM_TIMEOUT_S" 'BEGIN { exit !(elapsed >= limit) }'; then
+          capture_follow_pane "$session" "$route_log"
+          echo "Route '$route' timed out after ${ROUTE_SIM_TIMEOUT_S}s sim-time" >&2
+          return 124
+        fi
+      fi
+    fi
+    if [ "$deadline" -gt 0 ] && (( SECONDS >= deadline )); then
       capture_follow_pane "$session" "$route_log"
       echo "Route '$route' timed out after ${ROUTE_TIMEOUT_S}s" >&2
       return 124
@@ -581,6 +859,7 @@ for arg in "$@"; do
       ;;
     sweep:=*|sweep_mode:=*)
       SWEEP_MODE="${arg#*:=}"
+      SWEEP_MODE_EXPLICIT="true"
       ;;
     mode:=*|stack:=*)
       MODE="${arg#*:=}"
@@ -605,6 +884,31 @@ for arg in "$@"; do
       ;;
     route_timeout_s:=*)
       ROUTE_TIMEOUT_S="${arg#route_timeout_s:=}"
+      ;;
+    route_sim_timeout_s:=*|sim_timeout_s:=*)
+      ROUTE_SIM_TIMEOUT_S="${arg#*:=}"
+      CAMPAIGN_ARGS_SEEN="true"
+      ;;
+    metric_warmup_s:=*|metrics_warmup_s:=*)
+      METRIC_WARMUP_S="${arg#*:=}"
+      ;;
+    repetitions:=*|reps:=*)
+      REPETITIONS="${arg#*:=}"
+      CAMPAIGN_ARGS_SEEN="true"
+      ;;
+    campaign_tag:=*)
+      CAMPAIGN_TAG="${arg#campaign_tag:=}"
+      CAMPAIGN_ARGS_SEEN="true"
+      ;;
+    record:=*)
+      RECORD="${arg#record:=}"
+      ;;
+    record_profile:=*)
+      RECORD_PROFILE="${arg#record_profile:=}"
+      ;;
+    record_root:=*)
+      RECORD_ROOT="${arg#record_root:=}"
+      CAMPAIGN_ARGS_SEEN="true"
       ;;
     between_s:=*)
       BETWEEN_S="${arg#between_s:=}"
@@ -639,6 +943,7 @@ for arg in "$@"; do
       ;;
     fallback_waypoints_on_route_failure:=*|fallback_waypoints:=*)
       FALLBACK_WAYPOINTS_ON_ROUTE_FAILURE="${arg#*:=}"
+      FALLBACK_WAYPOINTS_EXPLICIT="true"
       ;;
     stop_before_each:=*)
       STOP_BEFORE_EACH="${arg#stop_before_each:=}"
@@ -669,11 +974,35 @@ for arg in "$@"; do
       HAVE_UGV_START_DELAY_ARG="true"
       EXTRA_TMUX_ARGS+=("$arg")
       ;;
+    lora_sf:=*|omnet_lora_sf:=*|sf:=*|lora_bw:=*|omnet_lora_bw:=*|bw:=*)
+      EXTRA_TMUX_ARGS+=("$arg")
+      ;;
     *)
       EXTRA_TMUX_ARGS+=("$arg")
       ;;
   esac
 done
+
+if ! [[ "$REPETITIONS" =~ ^[0-9]+$ ]] || [ "$REPETITIONS" -lt 1 ]; then
+  echo "Invalid repetitions: $REPETITIONS" >&2
+  exit 2
+fi
+
+if { [ "$REPETITIONS" -gt 1 ] || [ "$CAMPAIGN_ARGS_SEEN" = "true" ]; } && [ "$SWEEP_MODE_EXPLICIT" != "true" ]; then
+  SWEEP_MODE="routes"
+fi
+
+if { [ "$REPETITIONS" -gt 1 ] || [ "$CAMPAIGN_ARGS_SEEN" = "true" ]; } && [ "$FALLBACK_WAYPOINTS_EXPLICIT" != "true" ]; then
+  FALLBACK_WAYPOINTS_ON_ROUTE_FAILURE="true"
+fi
+
+if [ "$RECORD" = true ] && [ -z "$RECORD_ROOT" ]; then
+  RECORD_ROOT="bags/nav2_route_sweep"
+fi
+
+if [ -z "$CAMPAIGN_TAG" ]; then
+  CAMPAIGN_TAG="nav2_route_sweep"
+fi
 
 if [[ "$WORLD" == baylands* ]]; then
   baylands_sync_waypoints "$DRY_RUN"
@@ -700,6 +1029,7 @@ if [ "$DRY_RUN" != true ]; then
 fi
 
 RESULTS=()
+CAMPAIGN_RESULTS=()
 CURRENT_SESSION=""
 CURRENT_JOB_LABEL=""
 CURRENT_START_WAYPOINT=""
@@ -715,6 +1045,11 @@ write_summary_file() {
     printf 'mode: %s\n' "$MODE"
     printf 'lidar: %s\n' "$LIDAR"
     printf 'sweep: %s\n' "$SWEEP_MODE"
+    printf 'repetitions: %s\n' "$REPETITIONS"
+    printf 'route_sim_timeout_s: %s\n' "${ROUTE_SIM_TIMEOUT_S:-disabled}"
+    printf 'record: %s\n' "$RECORD"
+    printf 'record_root: %s\n' "${RECORD_ROOT:-}"
+    printf 'campaign_tag: %s\n' "$CAMPAIGN_TAG"
     printf 'chain_route_starts: %s\n' "$CHAIN_ROUTE_STARTS"
     printf 'fallback_waypoints_on_route_failure: %s\n' "$FALLBACK_WAYPOINTS_ON_ROUTE_FAILURE"
     printf 'exclude_routes: %s\n' "$EXCLUDE_ROUTES_RAW"
@@ -729,6 +1064,15 @@ write_summary_file() {
     if [ "${#RESULTS[@]}" -gt 0 ]; then
       printf '%s\n' "${RESULTS[@]}"
     fi
+    printf '\ncampaign_results_csv:\n'
+    printf 'repetition,route_index,route,job_label,start_waypoint,status,network_data_valid,record_out,omnet_result_dir,context\n'
+    if [ "${#CAMPAIGN_RESULTS[@]}" -gt 0 ]; then
+      printf '%s\n' "${CAMPAIGN_RESULTS[@]}"
+    fi
+    if [ -n "$MEASURED_METRICS_SUMMARY" ]; then
+      printf '\nmeasured_metrics_summary:\n'
+      printf '%s\n' "$MEASURED_METRICS_SUMMARY"
+    fi
   } > "$path"
 }
 
@@ -739,6 +1083,7 @@ cleanup_on_interrupt() {
     partial_summary="$RUN_DIR/summary.partial.txt"
     write_summary_file "$partial_summary" "interrupted"
     echo "Saved partial summary: $partial_summary"
+    write_record_root_summary "interrupted" "summary.partial"
   fi
   if [ -n "$CURRENT_SESSION" ]; then
     stop_session "$CURRENT_SESSION"
@@ -752,10 +1097,22 @@ echo "  world: $WORLD"
 echo "  mode: $MODE"
 echo "  lidar: $LIDAR"
 echo "  sweep: $SWEEP_MODE"
+echo "  repetitions: $REPETITIONS"
 if route_timeout_disabled "$ROUTE_TIMEOUT_S"; then
   echo "  route timeout: disabled"
 else
   echo "  route timeout: ${ROUTE_TIMEOUT_S}s"
+fi
+if route_timeout_disabled "$ROUTE_SIM_TIMEOUT_S"; then
+  echo "  route sim timeout: disabled"
+else
+  echo "  route sim timeout: ${ROUTE_SIM_TIMEOUT_S}s"
+fi
+echo "  record: $RECORD"
+if [ "$RECORD" = true ]; then
+  echo "  record root: $RECORD_ROOT"
+  echo "  record profile: $RECORD_PROFILE"
+  echo "  campaign tag: $CAMPAIGN_TAG"
 fi
 echo "  uav follow check: $CHECK_UAV_FOLLOW"
 echo "  uav command required: $UAV_CHECK_REQUIRE_COMMAND"
@@ -768,187 +1125,231 @@ if [ "$DRY_RUN" != true ]; then
   echo "  logs: $RUN_DIR"
 fi
 
-PREVIOUS_ROUTE_LAST_WAYPOINT=""
-for route in "${ROUTES[@]}"; do
-  JOB_START_WAYPOINTS=()
-  JOB_NAV2_GOALS=()
-  JOB_LABELS=()
-  route_last_waypoint=""
-  route_completed="false"
+for repetition in $(seq 1 "$REPETITIONS"); do
+  rep_label="rep$(pad2 "$repetition")"
+  PREVIOUS_ROUTE_LAST_WAYPOINT=""
+  route_index=0
 
-  case "$SWEEP_MODE" in
-    routes|route)
-      if [ "$CHAIN_ROUTE_STARTS" = true ] && [ -n "$PREVIOUS_ROUTE_LAST_WAYPOINT" ]; then
-        first_waypoint="$PREVIOUS_ROUTE_LAST_WAYPOINT"
-      else
-        first_waypoint="$(first_waypoint_for_route "$route")" || {
-          echo "Skipping route '$route': could not resolve first waypoint" >&2
-          RESULTS+=("$route skipped no_first_waypoint")
-          continue
-        }
-      fi
-      route_last_waypoint="$(last_waypoint_for_route "$route" 2>/dev/null || true)"
-      JOB_START_WAYPOINTS+=("$first_waypoint")
-      JOB_NAV2_GOALS+=("$route")
-      JOB_LABELS+=("$route")
-      ;;
-    waypoints|waypoint)
-      if ! append_waypoint_jobs "$route" ""; then
-        RESULTS+=("$route skipped no_route_file")
-        continue
-      fi
-      ;;
-    *)
-      echo "Invalid sweep mode: $SWEEP_MODE" >&2
-      echo "Use sweep:=waypoints or sweep:=routes" >&2
-      exit 2
-      ;;
-  esac
+  for route in "${ROUTES[@]}"; do
+    route_index=$((route_index + 1))
+    route_run_label="R$(pad2 "$route_index")_${route}"
+    label_prefix="${rep_label}_R$(pad2 "$route_index")_"
+    JOB_START_WAYPOINTS=()
+    JOB_NAV2_GOALS=()
+    JOB_LABELS=()
+    route_last_waypoint=""
+    route_completed="false"
 
-  job_index=0
-  while [ "$job_index" -lt "${#JOB_START_WAYPOINTS[@]}" ]; do
-    first_waypoint="${JOB_START_WAYPOINTS[$job_index]}"
-    nav2_goals_arg="${JOB_NAV2_GOALS[$job_index]}"
-    job_label="${JOB_LABELS[$job_index]}"
-    session="${SESSION_PREFIX}-$(sanitize_name "$job_label")"
-    CURRENT_SESSION="$session"
-    route_log="$RUN_DIR/$(sanitize_name "$job_label").follow.log"
-    tmp_log="${route_log}.startup"
-    mapfile -t route_lidar_args < <(route_lidar_preset_args "$route" "$LIDAR" "${EXTRA_TMUX_ARGS[@]}")
-    run_context="$(result_context "${route_lidar_args[@]}")"
-    CURRENT_JOB_LABEL="$job_label"
-    CURRENT_START_WAYPOINT="$first_waypoint"
-    CURRENT_RUN_CONTEXT="$run_context"
-
-    echo
-    echo "=== Route: $route (start waypoint: $first_waypoint, nav2_goals: $nav2_goals_arg, session: $session) ==="
-
-    if [ "$STOP_BEFORE_EACH" = true ]; then
-      stop_session "$session"
-    fi
-
-    run_cmd=(
-      ./run.sh tmux_1to1 "$WORLD"
-      "mode:=$MODE"
-      "session:=$session"
-      "waypoint:=$first_waypoint"
-      "nav2_goals:=$nav2_goals_arg"
-      "lidar:=$LIDAR"
-      "tmux_attach:=$TMUX_ATTACH"
-      "${EXTRA_TMUX_ARGS[@]}"
-    )
-    if [ "${#route_lidar_args[@]}" -gt 0 ]; then
-      echo "Route '$route' lidar preset: ${route_lidar_args[*]}"
-      run_cmd+=("${route_lidar_args[@]}")
-    fi
-    if [ "$CHECK_UAV_FOLLOW" = true ] && [ "$HAVE_UGV_START_DELAY_ARG" != "true" ] && [ "$UAV_CHECK_HOLD_UGV_S" != "0" ] && [ "$UAV_CHECK_HOLD_UGV_S" != "0.0" ]; then
-      run_cmd+=("ugv_start_delay_s:=$UAV_CHECK_HOLD_UGV_S")
-    fi
-    if [ "$DRY_RUN" = true ]; then
-      run_cmd+=("dry_run:=true")
-      echo "[dry-run] start:"
-      print_cmd "${run_cmd[@]}"
-      RESULTS+=("$job_label dry_run $first_waypoint $run_context")
-      if [ "$SWEEP_MODE" = "routes" ] || [ "$SWEEP_MODE" = "route" ]; then
-        route_completed="true"
-      fi
-      job_index=$((job_index + 1))
-      continue
-    fi
-
-    if ! "${run_cmd[@]}"; then
-      echo "Route '$job_label' failed to launch." >&2
-      RESULTS+=("$job_label launch_failed $first_waypoint $run_context")
-      stop_session "$session"
-      CURRENT_SESSION=""
-      CURRENT_JOB_LABEL=""
-      CURRENT_START_WAYPOINT=""
-      CURRENT_RUN_CONTEXT=""
-      job_index=$((job_index + 1))
-      continue
-    fi
-
-    if [ "$CHECK_UAV_FOLLOW" = true ]; then
-      uav_check_log="$RUN_DIR/$(sanitize_name "$job_label").uav_check.log"
-      if ! check_uav_follow_ready "$session" "$job_label" "$uav_check_log"; then
-        capture_follow_pane "$session" "$route_log"
-        status="uav_check_failed"
-        echo "Route '$job_label' result: $status"
-        RESULTS+=("$job_label $status $first_waypoint $run_context")
-        if [ "$STOP_AFTER_EACH" = true ]; then
-          stop_session "$session"
+    case "$SWEEP_MODE" in
+      routes|route)
+        if [ "$CHAIN_ROUTE_STARTS" = true ] && [ -n "$PREVIOUS_ROUTE_LAST_WAYPOINT" ]; then
+          first_waypoint="$PREVIOUS_ROUTE_LAST_WAYPOINT"
+        else
+          first_waypoint="$(first_waypoint_for_route "$route")" || {
+            echo "Skipping route '$route': could not resolve first waypoint" >&2
+            RESULTS+=("${rep_label}_${route_run_label} skipped no_first_waypoint")
+            continue
+          }
         fi
-        CURRENT_SESSION=""
-        CURRENT_JOB_LABEL=""
-        CURRENT_START_WAYPOINT=""
-        CURRENT_RUN_CONTEXT=""
-        if [ "$BETWEEN_S" != "0" ] && [ "$BETWEEN_S" != "0.0" ]; then
-          sleep "$BETWEEN_S"
+        route_last_waypoint="$(last_waypoint_for_route "$route" 2>/dev/null || true)"
+        JOB_START_WAYPOINTS+=("$first_waypoint")
+        JOB_NAV2_GOALS+=("$route")
+        JOB_LABELS+=("${label_prefix}${route}")
+        ;;
+      waypoints|waypoint)
+        if ! append_waypoint_jobs "$route" "$label_prefix"; then
+          RESULTS+=("${rep_label}_${route_run_label} skipped no_route_file")
+          continue
+        fi
+        ;;
+      *)
+        echo "Invalid sweep mode: $SWEEP_MODE" >&2
+        echo "Use sweep:=waypoints or sweep:=routes" >&2
+        exit 2
+        ;;
+    esac
+
+    job_index=0
+    while [ "$job_index" -lt "${#JOB_START_WAYPOINTS[@]}" ]; do
+      first_waypoint="${JOB_START_WAYPOINTS[$job_index]}"
+      nav2_goals_arg="${JOB_NAV2_GOALS[$job_index]}"
+      job_label="${JOB_LABELS[$job_index]}"
+      record_leaf="${job_label#${rep_label}_}"
+      session="${SESSION_PREFIX}-$(sanitize_name "$job_label")"
+      CURRENT_SESSION="$session"
+      route_log="$RUN_DIR/$(sanitize_name "$job_label").follow.log"
+      tmp_log="${route_log}.startup"
+      mapfile -t route_lidar_args < <(route_lidar_preset_args "$route" "$LIDAR" "${EXTRA_TMUX_ARGS[@]}")
+      run_context="$(result_context "${route_lidar_args[@]}")"
+      CURRENT_JOB_LABEL="$job_label"
+      CURRENT_START_WAYPOINT="$first_waypoint"
+      CURRENT_RUN_CONTEXT="$run_context"
+      record_out=""
+      omnet_result_dir=""
+      uav_check_log=""
+
+      echo
+      echo "=== ${rep_label} ${route_run_label} (start waypoint: $first_waypoint, nav2_goals: $nav2_goals_arg, session: $session) ==="
+
+      if [ "$STOP_BEFORE_EACH" = true ]; then
+        stop_session "$session"
+      fi
+
+      run_cmd=(
+        ./run.sh tmux_1to1 "$WORLD"
+        "mode:=$MODE"
+        "session:=$session"
+        "waypoint:=$first_waypoint"
+        "nav2_goals:=$nav2_goals_arg"
+        "lidar:=$LIDAR"
+        "tmux_attach:=$TMUX_ATTACH"
+        "${EXTRA_TMUX_ARGS[@]}"
+      )
+      if [ "$RECORD" = true ]; then
+        record_out="${RECORD_ROOT}/${rep_label}/${record_leaf}"
+        omnet_result_dir="$(workspace_path "$record_out")/omnet"
+        run_cmd+=(
+          "record:=true"
+          "record_profile:=$RECORD_PROFILE"
+          "record_tag:=${CAMPAIGN_TAG}_${job_label}"
+          "record_out:=$record_out"
+          "omnet_result_dir:=$omnet_result_dir"
+        )
+      fi
+      if [ "${#route_lidar_args[@]}" -gt 0 ]; then
+        echo "Route '$route' lidar preset: ${route_lidar_args[*]}"
+        run_cmd+=("${route_lidar_args[@]}")
+      fi
+      if [ "$CHECK_UAV_FOLLOW" = true ] && [ "$HAVE_UGV_START_DELAY_ARG" != "true" ] && [ "$UAV_CHECK_HOLD_UGV_S" != "0" ] && [ "$UAV_CHECK_HOLD_UGV_S" != "0.0" ]; then
+        run_cmd+=("ugv_start_delay_s:=$UAV_CHECK_HOLD_UGV_S")
+      fi
+      if [ "$DRY_RUN" = true ]; then
+        run_cmd+=("dry_run:=true")
+        echo "[dry-run] start:"
+        print_cmd "${run_cmd[@]}"
+        RESULTS+=("$job_label dry_run start=$first_waypoint")
+        CAMPAIGN_RESULTS+=("$repetition,$route_index,$route,$job_label,$first_waypoint,dry_run,false,$record_out,$omnet_result_dir,$run_context")
+        if [ "$SWEEP_MODE" = "routes" ] || [ "$SWEEP_MODE" = "route" ]; then
+          route_completed="true"
         fi
         job_index=$((job_index + 1))
         continue
       fi
-    fi
 
-    if wait_for_route_driver_start "$session" "$job_label" "$tmp_log"; then
-      if wait_for_route_done "$session" "$job_label" "$route_log"; then
-        status="$(classify_route_log "$route_log")"
+      if ! "${run_cmd[@]}"; then
+        echo "Route '$job_label' failed to launch." >&2
+        RESULTS+=("$job_label launch_failed start=$first_waypoint")
+        CAMPAIGN_RESULTS+=("$repetition,$route_index,$route,$job_label,$first_waypoint,launch_failed,false,$record_out,$omnet_result_dir,$run_context")
+        sync_job_logs "$record_out" "$route_log" "$tmp_log"
+        stop_session "$session"
+        CURRENT_SESSION=""
+        CURRENT_JOB_LABEL=""
+        CURRENT_START_WAYPOINT=""
+        CURRENT_RUN_CONTEXT=""
+        job_index=$((job_index + 1))
+        continue
+      fi
+
+      if [ "$CHECK_UAV_FOLLOW" = true ]; then
+        uav_check_log="$RUN_DIR/$(sanitize_name "$job_label").uav_check.log"
+        if ! check_uav_follow_ready "$session" "$job_label" "$uav_check_log"; then
+          capture_follow_pane "$session" "$route_log"
+          status="uav_check_failed"
+          echo "Route '$job_label' result: $status"
+          RESULTS+=("$job_label $status start=$first_waypoint")
+          CAMPAIGN_RESULTS+=("$repetition,$route_index,$route,$job_label,$first_waypoint,$status,false,$record_out,$omnet_result_dir,$run_context")
+          sync_job_logs "$record_out" "$route_log" "$tmp_log" "$uav_check_log"
+          if [ "$STOP_AFTER_EACH" = true ]; then
+            stop_session "$session"
+          fi
+          CURRENT_SESSION=""
+          CURRENT_JOB_LABEL=""
+          CURRENT_START_WAYPOINT=""
+          CURRENT_RUN_CONTEXT=""
+          if [ "$BETWEEN_S" != "0" ] && [ "$BETWEEN_S" != "0.0" ]; then
+            sleep "$BETWEEN_S"
+          fi
+          job_index=$((job_index + 1))
+          continue
+        fi
+      fi
+
+      if wait_for_route_driver_start "$session" "$job_label" "$tmp_log"; then
+        if wait_for_route_done "$session" "$job_label" "$route_log"; then
+          status="$(classify_route_log "$route_log")"
+        else
+          status="timeout"
+        fi
       else
-        status="timeout"
+        capture_follow_pane "$session" "$route_log"
+        status="start_timeout"
       fi
-    else
-      capture_follow_pane "$session" "$route_log"
-      status="start_timeout"
-    fi
 
-    echo "Route '$job_label' result: $status"
-    RESULTS+=("$job_label $status $first_waypoint $run_context")
-    if [ "$status" = "completed" ]; then
-      route_completed="true"
-    fi
-
-    if [ "$STOP_AFTER_EACH" = true ]; then
-      stop_session "$session"
-    fi
-    CURRENT_SESSION=""
-    CURRENT_JOB_LABEL=""
-    CURRENT_START_WAYPOINT=""
-    CURRENT_RUN_CONTEXT=""
-
-    if [ "$SWEEP_MODE" = "routes" ] || [ "$SWEEP_MODE" = "route" ]; then
-      if [ "$FALLBACK_WAYPOINTS_ON_ROUTE_FAILURE" = true ] && [ "$CHAIN_ROUTE_STARTS" != true ] && [ "$job_index" -eq 0 ] && [ "$status" != "completed" ]; then
-        echo "Route '$route' failed as a full route; falling back to sliced waypoint starts."
-        append_waypoint_jobs "$route" "fallback_" || true
+      echo "Route '$job_label' result: $status"
+      RESULTS+=("$job_label $status start=$first_waypoint")
+      network_valid="false"
+      case "$status" in
+        completed|finished|timeout)
+          network_valid="true"
+          ;;
+      esac
+      CAMPAIGN_RESULTS+=("$repetition,$route_index,$route,$job_label,$first_waypoint,$status,$network_valid,$record_out,$omnet_result_dir,$run_context")
+      sync_job_logs "$record_out" "$route_log" "$tmp_log" "$uav_check_log"
+      if [ "$status" = "completed" ]; then
+        route_completed="true"
       fi
-    fi
 
-    if [ "$BETWEEN_S" != "0" ] && [ "$BETWEEN_S" != "0.0" ]; then
-      sleep "$BETWEEN_S"
-    fi
+      if [ "$STOP_AFTER_EACH" = true ]; then
+        stop_session "$session"
+      fi
+      CURRENT_SESSION=""
+      CURRENT_JOB_LABEL=""
+      CURRENT_START_WAYPOINT=""
+      CURRENT_RUN_CONTEXT=""
 
-    if [ "$SWEEP_MODE" != "routes" ] && [ "$SWEEP_MODE" != "route" ] && [ "$SKIP_REMAINING_ON_COMPLETE" = true ] && [ "$status" = "completed" ]; then
-      echo "Route '$route' completed from '$first_waypoint'; skipping remaining start waypoints for this route."
-      break
-    fi
-    if [ "$SWEEP_MODE" = "routes" ] || [ "$SWEEP_MODE" = "route" ]; then
-      if [ "$FALLBACK_WAYPOINTS_ON_ROUTE_FAILURE" = true ] && [[ "$job_label" == fallback_* ]] && [ "$SKIP_REMAINING_ON_COMPLETE" = true ] && [ "$status" = "completed" ]; then
-        echo "Route '$route' completed from fallback '$first_waypoint'; skipping remaining fallback waypoints for this route."
+      if [ "$SWEEP_MODE" = "routes" ] || [ "$SWEEP_MODE" = "route" ]; then
+        if [ "$FALLBACK_WAYPOINTS_ON_ROUTE_FAILURE" = true ] && [ "$CHAIN_ROUTE_STARTS" != true ] && [ "$job_index" -eq 0 ] && [ "$status" = "failed" ]; then
+          echo "Route '$route' failed as a full route; falling back to sliced waypoint starts after the route start."
+          append_waypoint_jobs "$route" "${label_prefix}fallback_" 1 || {
+            echo "Route '$route' has no later fallback waypoints; moving to next route."
+          }
+        fi
+      fi
+
+      if [ "$BETWEEN_S" != "0" ] && [ "$BETWEEN_S" != "0.0" ]; then
+        sleep "$BETWEEN_S"
+      fi
+
+      if [ "$SWEEP_MODE" != "routes" ] && [ "$SWEEP_MODE" != "route" ] && [ "$SKIP_REMAINING_ON_COMPLETE" = true ] && [ "$status" = "completed" ]; then
+        echo "Route '$route' completed from '$first_waypoint'; skipping remaining start waypoints for this route."
         break
       fi
-    fi
-    job_index=$((job_index + 1))
-  done
+      if [ "$SWEEP_MODE" = "routes" ] || [ "$SWEEP_MODE" = "route" ]; then
+        if [ "$FALLBACK_WAYPOINTS_ON_ROUTE_FAILURE" = true ] && [[ "$job_label" == *"_fallback_"* ]] && [ "$SKIP_REMAINING_ON_COMPLETE" = true ] && [ "$status" = "completed" ]; then
+          echo "Route '$route' completed from fallback '$first_waypoint'; skipping remaining fallback waypoints for this route."
+          break
+        fi
+      fi
+      job_index=$((job_index + 1))
+    done
 
-  if [ "$SWEEP_MODE" = "routes" ] || [ "$SWEEP_MODE" = "route" ]; then
-    if [ "$route_completed" = "true" ] && [ -n "$route_last_waypoint" ]; then
-      PREVIOUS_ROUTE_LAST_WAYPOINT="$route_last_waypoint"
-    else
-      PREVIOUS_ROUTE_LAST_WAYPOINT=""
+    if [ "$SWEEP_MODE" = "routes" ] || [ "$SWEEP_MODE" = "route" ]; then
+      if [ "$route_completed" = "true" ] && [ -n "$route_last_waypoint" ]; then
+        PREVIOUS_ROUTE_LAST_WAYPOINT="$route_last_waypoint"
+      else
+        PREVIOUS_ROUTE_LAST_WAYPOINT=""
+      fi
     fi
-  fi
+  done
 done
 
 CURRENT_SESSION=""
+
+MEASURED_METRICS_SUMMARY="$(generate_measured_metrics_summary || true)"
+if [ -n "$MEASURED_METRICS_SUMMARY" ]; then
+  echo
+  printf '%s\n' "$MEASURED_METRICS_SUMMARY"
+fi
 
 echo
 echo "Route sweep summary:"
@@ -959,4 +1360,5 @@ done
 if [ "$DRY_RUN" != true ]; then
   write_summary_file "$RUN_DIR/summary.txt" "finished"
   echo "Saved summary: $RUN_DIR/summary.txt"
+  write_record_root_summary "finished" "summary"
 fi

@@ -48,8 +48,8 @@ class FollowControlConfig:
     gimbal_interval_s: float = 0.0    # 0 = use interval_s
     tilt_center_deg: float = -45.0
     tilt_amplitude_deg: float = 15.0
-    tilt_min_deg: float = -75.0
-    tilt_max_deg: float = -15.0
+    tilt_min_deg: float = -85.0
+    tilt_max_deg: float = 0.0
     pan_center_deg: float = 0.0
     pan_amplitude_deg: float = 20.0
     pan_min_deg: float = -45.0
@@ -985,21 +985,21 @@ def parse_args() -> FollowControlConfig:
     parser.add_argument("--timeout", type=float, default=1.0, help="Service wait timeout in seconds, default: 1")
     parser.add_argument("--step-z-min", type=float, default=4.0, help="Keyboard/scripted follow_z_offset_m change per step, default: 1")
     parser.add_argument("--step-z-alt", dest="step_z_min", type=float, help=argparse.SUPPRESS)
-    parser.add_argument("--step-d-target", type=float, default=0.5, help="Keyboard d_target change per keypress, default: 1")
-    parser.add_argument("--step-heading", type=float, default=45.0, help="Keyboard heading-offset change per keypress, default: 15 deg")
+    parser.add_argument("--step-d-target", type=float, default=1.0, help="Keyboard/scripted d_target change per step, default: 1")
+    parser.add_argument("--step-heading", type=float, default=5.0, help="Keyboard heading-offset change per keypress, default: 15 deg")
     parser.add_argument("--step-pan", type=float, default=5.0, help="Keyboard gimbal pan change per keypress, default: 5 deg; scripted default: 3")
     parser.add_argument("--step-tilt", type=float, default=2.0, help="Keyboard gimbal tilt change per keypress, default: 5 deg; scripted default: 2")
     parser.add_argument("--interval", type=float, default=1.0, help="Seconds between random/scripted update steps, default: 10; scripted default: 2")
     parser.add_argument("--start-delay", type=float, default=0.0, help="Initial delay before the first random/scripted update, default: 0")
     parser.add_argument("--count", type=int, default=0, help="Number of random/scripted updates to apply, default: 0 (infinite)")
-    parser.add_argument("--min-z-min",type=float, default=7.0, help="Minimum follow_z_offset_m, default: 3")
-    parser.add_argument("--max-z-min", type=float, default=20.0, help=argparse.SUPPRESS)
+    parser.add_argument("--min-z-min",type=float, default=8.0, help="Minimum follow_z_offset_m, default: 3")
+    parser.add_argument("--max-z-min", type=float, default=24.0, help=argparse.SUPPRESS)
     parser.add_argument("--min-z-alt", dest="min_z_min", type=float, help=argparse.SUPPRESS)
     parser.add_argument("--max-z-alt", dest="max_z_min", type=float, help=argparse.SUPPRESS)
-    parser.add_argument("--min-d-target", type=float, default=6.0, help="Minimum d_target in random mode, default: 5; scripted default: 6")
-    parser.add_argument("--max-d-target", type=float, default=18.0, help="Maximum d_target in random mode, default: 25; scripted default: 20")
-    parser.add_argument("--focus-min", type=float, default=5.0, help="Lower edge of the preferred random sampling band, default: 5")
-    parser.add_argument("--focus-max", type=float, default=15.0, help="Upper edge of the preferred random sampling band, default: 15")
+    parser.add_argument("--min-d-target", type=float, default=8.0, help="Minimum d_target in random mode, default: 5; scripted default: 6")
+    parser.add_argument("--max-d-target", type=float, default=100.0, help="Maximum d_target in random/keyboard mode, default: 500")
+    parser.add_argument("--focus-min", type=float, default=40.0, help="Lower edge of the preferred random sampling band, default: 40")
+    parser.add_argument("--focus-max", type=float, default=160.0, help="Upper edge of the preferred random sampling band, default: 160")
     parser.add_argument("--focus-weight", type=float, default=0.75, help="Probability mass to place in the preferred random band, default: 0.7")
     parser.add_argument("--decimals", type=int, default=2, help="Decimal places to keep in random mode, default: 2")
     parser.add_argument("--seed", type=int, default=None, help="Optional RNG seed for repeatability")
@@ -1017,7 +1017,7 @@ def parse_args() -> FollowControlConfig:
     parser.add_argument("--pan-min", type=float, default=-60.0, help="Pan lower limit in degrees, default: -45")
     parser.add_argument("--pan-max", type=float, default=60.0, help="Pan upper limit in degrees, default: 45")
     parser.add_argument("--gimbal-publish-hz", type=float, default=10.0, help="Keyboard/scripted gimbal command repeat rate, default: 5")
-    parser.add_argument("--opposite-settle", type=float, default=50.0, help="Scripted hold time after reaching 180 deg opposite-side targets, default: 20")
+    parser.add_argument("--opposite-settle", type=float, default=5.0, help="Scripted hold time after reaching 180 deg opposite-side targets, default: 20")
     args = parser.parse_args(raw_argv)
     mode = "keyboard" if args.mode == "params" else args.mode
     has_arg = lambda name: any(item == name or item.startswith(f"{name}=") for item in raw_argv)
@@ -1026,17 +1026,17 @@ def parse_args() -> FollowControlConfig:
         if not has_arg("--min-d-target"):
             args.min_d_target = 6.0
         if not has_arg("--max-d-target"):
-            args.max_d_target = 18.0
+            args.max_d_target = 500.0
         if not has_arg("--interval"):
             args.interval = 3.0
         if not has_arg("--step-heading"):
-            args.step_heading = 90.0
+            args.step_heading = 15.0
         if not has_arg("--step-pan"):
-            args.step_pan = 45.0
+            args.step_pan = 5.0
         if not has_arg("--step-tilt"):
             args.step_tilt = (1 / 4) * args.step_pan 
         if not has_arg("--pan-amplitude"):
-            args.pan_amplitude = 180.0
+            args.pan_amplitude = 135.0
         if not has_arg("--tilt-amplitude"):
             args.tilt_amplitude = (1 / 4) * args.pan_amplitude
         if not has_arg("--gimbal-publish-hz"):

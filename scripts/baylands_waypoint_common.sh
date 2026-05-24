@@ -72,3 +72,97 @@ baylands_route_yaml_path() {
   fi
   printf '%s/baylands_waypoints_%s.yaml\n' "$(baylands_waypoint_config_dir)" "$name"
 }
+
+baylands_first_waypoint_for_route() {
+  local route="$1"
+  python3 - "$WS_ROOT" "$route" <<'PY'
+import csv
+import sys
+from pathlib import Path
+
+import yaml
+
+ws_root = Path(sys.argv[1])
+route = sys.argv[2]
+config_dir = ws_root / "src" / "lrs_halmstad" / "config"
+csv_path = ws_root / "maps" / "waypoints_baylands_groups.csv"
+
+
+def route_name(value: str) -> str:
+    name = Path(value).name
+    if name.endswith(".yaml"):
+        name = name[:-5]
+    if name.startswith("baylands_waypoints_"):
+        name = name[len("baylands_waypoints_") :]
+    if name.endswith("_rviz"):
+        name = name[:-5]
+    return name
+
+
+def candidate_yaml_files(value: str):
+    raw = Path(value).expanduser()
+    if raw.is_absolute() or "/" in value:
+        yield raw if raw.is_absolute() else ws_root / raw
+        return
+
+    yield config_dir / value
+    yield config_dir / "baylands_waypoints" / value
+    if not value.endswith(".yaml"):
+        yield config_dir / f"{value}.yaml"
+        yield config_dir / "baylands_waypoints" / f"{value}.yaml"
+        yield config_dir / "baylands_waypoints" / f"baylands_waypoints_{value}.yaml"
+
+
+for path in candidate_yaml_files(route):
+    if not path.is_file():
+        continue
+    data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    waypoints = data.get("waypoints") or []
+    if isinstance(waypoints, dict):
+        for name in waypoints:
+            print(name)
+            raise SystemExit(0)
+    for waypoint in waypoints:
+        if isinstance(waypoint, dict) and waypoint.get("name"):
+            print(waypoint["name"])
+            raise SystemExit(0)
+
+group = route_name(route)
+if csv_path.is_file():
+    with csv_path.open(newline="", encoding="utf-8") as handle:
+        for row in csv.DictReader(handle):
+            if row.get("group") == group and row.get("place"):
+                print(row["place"])
+                raise SystemExit(0)
+
+raise SystemExit(1)
+PY
+}
+
+baylands_route_for_waypoint() {
+  local waypoint="$1"
+  python3 - "$WS_ROOT" "$waypoint" <<'PY'
+import csv
+import re
+import sys
+from pathlib import Path
+
+ws_root = Path(sys.argv[1])
+waypoint = sys.argv[2]
+csv_path = ws_root / "maps" / "waypoints_baylands_groups.csv"
+
+if csv_path.is_file():
+    with csv_path.open(newline="", encoding="utf-8") as handle:
+        for row in csv.DictReader(handle):
+            if row.get("place") == waypoint and row.get("group"):
+                print(row["group"])
+                raise SystemExit(0)
+
+match = re.match(r"^(.+)_\d+$", waypoint)
+if match:
+    print(match.group(1))
+    raise SystemExit(0)
+
+raise SystemExit(1)
+PY
+}

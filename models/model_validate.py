@@ -4,6 +4,8 @@ import argparse
 import json
 from datetime import datetime
 
+print("Num GPUs Available: ", len(tf.config.list_physical_devices('GPU')))
+
 parser = argparse.ArgumentParser(description="Example script with arguments")
 parser.add_argument("--dataset", required=True, help="Input name of dataset")
 parser.add_argument("--dataset-path", required=False, help="If specified, overrides the default dataset path")
