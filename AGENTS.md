@@ -43,26 +43,25 @@ Goals for collecting simulation results for the **Master Thesis**:
   - ~~Dataset relabeling using SAM3 mask-to-obb conversion for better OBB (not using inaccurate ACML pose).~~
     - ~~Fix SSH to the university GPU lab and use it to relabel.~~
   - ~~Train new models on the new relabeled dataset.~~
-- Test new fine-tuned model `baylands-leader-v9-tuned-full.pt`, (see `/home/ruben/halmstad_ws/models/obb/experiments/sam3_hybrid_full/scoreboards/full_scoreboard.md` for list of models.)
-  - Ensure simulations are working with YOLO detection detecting and that we are estimating pose while also Nav2 with localization is running.
-  - Same tests but we add OmNet++ to the loop and test network metrics and topics.
-    - Ensure sim-time is pipelined through the bridge so timing lines up correctly.
-    - Ensure we are transmitting using the flora package for LoRa.
-- Explore `descriptions/C1_BASELINE_SIMPLE_OMNET_HANDOFF.md` to see how we should set up our tests.
-  - This is to make sure they align for comparison.
-T Test with everything activated
-  - Nav2, Localization, Bayland routes, 3D-lidar, cameras, YOLO detection, tracking, following, LoRa transmissions, rosbag recordings.
-- Start gathering data for results to the Master Thesis.
-- *To be continued...*
+- ~~Test new fine-tuned model~~ ~~`baylands-leader-v9-tuned-full.pt`, (see `/home/ruben/halmstad_ws/models/obb/experiments/sam3_hybrid_full/scoreboards/full_scoreboard.md` for list of models.)~~
+- ~~Explore `descriptions/C1_BASELINE_SIMPLE_OMNET_HANDOFF.md` to see how we should set up our tests.~~
+- ~~Test with everything activated~~
+- ~~Start gathering data for results to the Master Thesis.~~
+- C1: Raw follow, only odom
+  - ~~R01~~, ~~R02~~, ~~R03~~, R04, R05, R06, ~~R07~~, R08, R09.
+    - Plot trajectories, make sure they look okay.
+- C2: Follow with YOLO
+  - R01, R02, R03, R04, R05, R06, R07, R08, R09.
+  - Plot trajectories WITH estimated trajectory, and the difference in distance.
+- C3: read `descriptions/handoffs/*_c3.md` (Same as C2 but with the visual follow path)
 
 ## Current Known Issues
 
-- Gazebo is not launching with the right GPU enabled.
-  - Experienced driver timing issues, causing crashes.
-  - Some scripts has set explicitly to use software rendering and other env variables, causing confusion and bugs.
+
 - Simulations are topic heavy and cause heave workload
   - Topics that are not subscribed to are still being published.
   - ~~UGV has many camera topics, should remove depth camera~~ *Fixed*
+- Running at higher sim-speed can cause the EKF-node to miss messages, but just with 4ms
 
 ## For New Sessions
 
@@ -127,3 +126,7 @@ If documentation and code disagree, trust the code paths in:
 - The **user**
 
 Other paths might be from temporary sessions.
+
+## Further Info
+
+For more information about the project, see `~/master_thesis/MasterThesis`, read ***ONLY***.

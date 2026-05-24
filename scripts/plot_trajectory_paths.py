@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import math
+import re
 from pathlib import Path
 from typing import Any
 
@@ -20,6 +21,13 @@ def parse_args() -> argparse.Namespace:
     source = parser.add_mutually_exclusive_group(required=True)
     source.add_argument("--run-dir", help="Run directory containing a bag/ subdirectory.")
     source.add_argument("--bag", help="ROS 2 bag directory, for example run/bag.")
+    source.add_argument(
+        "--results-dir",
+        help=(
+            "Results directory containing repXX/<route>/bag folders. "
+            "Writes one merged route sheet per route."
+        ),
+    )
     parser.add_argument(
         "--reference-topic",
         default="/a201_0000/ground_truth/odom",
@@ -51,8 +59,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--title", default="", help="Optional plot title.")
     parser.add_argument(
         "--out",
-        required=True,
-        help="Output path stem or file path. Both .png and .pdf are written.",
+        help=(
+            "Single-bag output stem/file, or batch output directory when "
+            "--results-dir is used. Both PNG and PDF are written."
+        ),
     )
     parser.add_argument("--dpi", type=int, default=220)
     parser.add_argument("--width", type=float, default=6.5, help="Figure width in inches.")
@@ -62,7 +72,10 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Do not force equal x/y aspect ratio.",
     )
-    return parser.parse_args()
+    args = parser.parse_args()
+    if not args.results_dir and not args.out:
+        parser.error("--out is required unless --results-dir is used")
+    return args
 
 
 def yaw_from_quat(q: Any) -> float:
@@ -103,6 +116,89 @@ def resolve_bag_dir(args: argparse.Namespace) -> Path:
         return Path(args.bag).expanduser().resolve()
     run_dir = Path(args.run_dir).expanduser().resolve()
     return run_dir / "bag"
+
+
+def route_label_from_run_dir(run_dir: Path) -> str:
+    """Return a stable route label from names like R01_rotundan."""
+    name = run_dir.name
+    return re.sub(r"^R\d+_", "", name)
+
+
+def rep_label_from_run_dir(run_dir: Path) -> str:
+    for parent in run_dir.parents:
+        if re.fullmatch(r"rep\d+", parent.name):
+            return parent.name
+    return run_dir.parent.name
+
+
+def discover_results_runs(results_dir: Path) -> dict[str, list[tuple[str, Path]]]:
+    groups: dict[str, list[tuple[str, Path]]] = {}
+    for bag_dir in sorted(results_dir.glob("rep*/R*/bag")):
+        if not bag_dir.is_dir():
+            continue
+        if not (bag_dir / "metadata.yaml").is_file() and not list(bag_dir.glob("bag_*.mcap")):
+            continue
+        run_dir = bag_dir.parent
+        route = route_label_from_run_dir(run_dir)
+        rep = rep_label_from_run_dir(run_dir)
+        groups.setdefault(route, []).append((rep, bag_dir))
+    for runs in groups.values():
+        runs.sort(key=lambda item: item[0])
+    return dict(sorted(groups.items()))
+
+
+def resample_path(
+    series: list[tuple[float, float]],
+    samples: int,
+) -> list[tuple[float, float]]:
+    if not series:
+        return []
+    if samples <= 1 or len(series) == 1:
+        return [series[0]]
+
+    distances = [0.0]
+    for prev, cur in zip(series, series[1:]):
+        distances.append(distances[-1] + math.hypot(cur[0] - prev[0], cur[1] - prev[1]))
+
+    total = distances[-1]
+    if total <= 0.0:
+        return [series[0]] * samples
+
+    out: list[tuple[float, float]] = []
+    seg = 1
+    for idx in range(samples):
+        target = total * idx / (samples - 1)
+        while seg < len(distances) - 1 and distances[seg] < target:
+            seg += 1
+        d0 = distances[seg - 1]
+        d1 = distances[seg]
+        p0 = series[seg - 1]
+        p1 = series[seg]
+        ratio = 0.0 if d1 <= d0 else (target - d0) / (d1 - d0)
+        out.append((p0[0] + (p1[0] - p0[0]) * ratio, p0[1] + (p1[1] - p0[1]) * ratio))
+    return out
+
+
+def average_paths(
+    paths: list[list[tuple[float, float]]],
+    samples: int = 300,
+) -> list[tuple[float, float]]:
+    resampled = [resample_path(path, samples) for path in paths if path]
+    if not resampled:
+        return []
+    out: list[tuple[float, float]] = []
+    for idx in range(samples):
+        xs = [path[idx][0] for path in resampled if idx < len(path)]
+        ys = [path[idx][1] for path in resampled if idx < len(path)]
+        if xs and ys:
+            out.append((sum(xs) / len(xs), sum(ys) / len(ys)))
+    return out
+
+
+def batch_out_dir(args: argparse.Namespace, results_dir: Path) -> Path:
+    out = Path(args.out).expanduser().resolve() if args.out else results_dir / "plots"
+    out.mkdir(parents=True, exist_ok=True)
+    return out
 
 
 def out_paths(out_arg: str) -> tuple[Path, Path]:
@@ -181,11 +277,11 @@ def plot_paths(
     png_path, pdf_path = out_paths(args.out)
     fig, ax = plt.subplots(figsize=(args.width, args.height))
     styles = [
-        {"color": "black", "linewidth": 2.0, "linestyle": "-"},
+        {"color": "black", "linewidth": 2.0, "linestyle": "--"},
         {"color": "#4C78A8", "linewidth": 1.8, "linestyle": "-"},
-        {"color": "#F58518", "linewidth": 1.8, "linestyle": "--"},
-        {"color": "#54A24B", "linewidth": 1.8, "linestyle": "--"},
-        {"color": "#B279A2", "linewidth": 1.8, "linestyle": "--"},
+        {"color": "#F58518", "linewidth": 1.8, "linestyle": "-"},
+        {"color": "#54A24B", "linewidth": 1.8, "linestyle": "-"},
+        {"color": "#B279A2", "linewidth": 1.8, "linestyle": "-"},
     ]
 
     plotted = 0
@@ -212,18 +308,108 @@ def plot_paths(
     ax.legend(frameon=False, loc="best")
     fig.tight_layout()
     fig.savefig(png_path, dpi=args.dpi)
-    fig.savefig(pdf_path)
+    #fig.savefig(pdf_path)
     plt.close(fig)
     print(f"png={png_path}")
-    print(f"pdf={pdf_path}")
+    #print(f"pdf={pdf_path}")
+
+
+def plot_results_group(
+    route: str,
+    runs: list[tuple[str, Path]],
+    topic_labels: dict[str, str],
+    args: argparse.Namespace,
+    out_dir: Path,
+) -> None:
+    try:
+        import matplotlib.pyplot as plt
+    except Exception as exc:
+        raise SystemExit(f"matplotlib is required: {exc}")
+
+    fig, ax = plt.subplots(figsize=(args.width, args.height))
+    colors = [
+        "#4C78A8",
+        "#F58518",
+        "#54A24B",
+        "#B279A2",
+        "#E45756",
+        "#72B7B2",
+        "#FF9DA6",
+        "#9D755D",
+    ]
+    linestyles = ["-", "--", ":", "-."]
+    reference_paths: list[list[tuple[float, float]]] = []
+    plotted_any = False
+
+    for idx, (rep, bag_dir) in enumerate(runs):
+        color = colors[idx % len(colors)]
+        points = read_paths(bag_dir, topic_labels, args.warmup)
+        reference_series = points.get(args.reference_topic, [])
+        if reference_series:
+            reference_paths.append(reference_series)
+        else:
+            print(
+                f"[plot_trajectory_paths] Warning: no samples for "
+                f"{route} {rep} {args.reference_label} ({args.reference_topic})"
+            )
+
+        for topic_idx, (topic, label) in enumerate(topic_labels.items()):
+            if topic == args.reference_topic:
+                continue
+            series = points.get(topic, [])
+            if not series:
+                print(
+                    f"[plot_trajectory_paths] Warning: no samples for "
+                    f"{route} {rep} {label} ({topic})"
+                )
+                continue
+            xs = [p[0] for p in series]
+            ys = [p[1] for p in series]
+            ax.plot(
+                xs,
+                ys,
+                label=f"{label} {rep}",
+                color=color,
+                linewidth=1.6,
+                linestyle=linestyles[topic_idx % len(linestyles)],
+                alpha=0.85,
+            )
+            plotted_any = True
+
+    mean_reference = average_paths(reference_paths)
+    if mean_reference:
+        xs = [p[0] for p in mean_reference]
+        ys = [p[1] for p in mean_reference]
+        ax.plot(xs, ys, label="UGV mean", color="black", linewidth=2.4)
+        plotted_any = True
+
+    if not plotted_any:
+        plt.close(fig)
+        print(f"[plot_trajectory_paths] Warning: no plottable samples for {route}")
+        return
+
+    title = f"{args.title} - {route}" if args.title else route
+    ax.set_title(title)
+    ax.set_xlabel("x (m)")
+    ax.set_ylabel("y (m)")
+    ax.grid(True, alpha=0.25, linewidth=0.6)
+    if not args.no_equal_aspect:
+        ax.set_aspect("equal", adjustable="box")
+    ax.legend(frameon=False, loc="center left", bbox_to_anchor=(1.02, 0.5))
+    fig.tight_layout()
+    safe_route = re.sub(r"[^A-Za-z0-9_.-]+", "_", route).strip("_") or "route"
+    png_path = out_dir / f"{safe_route}_trajectories.png"
+    #pdf_path = out_dir / f"{safe_route}_trajectories.pdf"
+    fig.savefig(png_path, dpi=args.dpi, bbox_inches="tight")
+    #fig.savefig(pdf_path, bbox_inches="tight")
+    plt.close(fig)
+    print(f"route={route} reps={len(runs)}")
+    print(f"png={png_path}")
+    #print(f"pdf={pdf_path}")
 
 
 def main() -> None:
     args = parse_args()
-    bag_dir = resolve_bag_dir(args)
-    if not bag_dir.is_dir():
-        raise SystemExit(f"Bag directory does not exist: {bag_dir}")
-
     topic_labels: dict[str, str] = {
         args.reference_topic: args.reference_label,
         args.uav_topic: args.uav_label,
@@ -234,6 +420,22 @@ def main() -> None:
     for item in args.extra_topic:
         label, topic = parse_series_arg(item, "Extra")
         topic_labels[topic] = label
+
+    if args.results_dir:
+        results_dir = Path(args.results_dir).expanduser().resolve()
+        if not results_dir.is_dir():
+            raise SystemExit(f"Results directory does not exist: {results_dir}")
+        groups = discover_results_runs(results_dir)
+        if not groups:
+            raise SystemExit(f"No repXX/RNN_route/bag directories found under: {results_dir}")
+        out_dir = batch_out_dir(args, results_dir)
+        for route, runs in groups.items():
+            plot_results_group(route, runs, topic_labels, args, out_dir)
+        return
+
+    bag_dir = resolve_bag_dir(args)
+    if not bag_dir.is_dir():
+        raise SystemExit(f"Bag directory does not exist: {bag_dir}")
 
     points = read_paths(bag_dir, topic_labels, args.warmup)
     plot_paths(topic_labels, points, args)

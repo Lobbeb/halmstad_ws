@@ -120,6 +120,23 @@ pad2() {
   printf '%02d' "$1"
 }
 
+route_number_for_route() {
+  local route="$1"
+  local fallback="$2"
+  case "$route" in
+    rotundan) printf '1\n' ;;
+    road_to_west) printf '2\n' ;;
+    parkinglot_west) printf '3\n' ;;
+    road_to_spawn) printf '4\n' ;;
+    spawn) printf '5\n' ;;
+    road_to_east) printf '6\n' ;;
+    parkinglot_east) printf '7\n' ;;
+    road_to_strip) printf '8\n' ;;
+    strip) printf '9\n' ;;
+    *) printf '%s\n' "$fallback" ;;
+  esac
+}
+
 workspace_path() {
   local path="$1"
   if [[ "$path" = /* ]]; then
@@ -1128,10 +1145,11 @@ fi
 for repetition in $(seq 1 "$REPETITIONS"); do
   rep_label="rep$(pad2 "$repetition")"
   PREVIOUS_ROUTE_LAST_WAYPOINT=""
-  route_index=0
+  selected_route_index=0
 
   for route in "${ROUTES[@]}"; do
-    route_index=$((route_index + 1))
+    selected_route_index=$((selected_route_index + 1))
+    route_index="$(route_number_for_route "$route" "$selected_route_index")"
     route_run_label="R$(pad2 "$route_index")_${route}"
     label_prefix="${rep_label}_R$(pad2 "$route_index")_"
     JOB_START_WAYPOINTS=()

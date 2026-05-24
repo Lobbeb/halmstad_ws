@@ -18,6 +18,8 @@ plot:
 - a reference / UGV path
 - a UAV / followed path
 - optional estimated or predicted paths
+- a full results directory with `repXX/RNN_route/bag` folders, writing one
+  merged sheet per route
 
 It writes both PNG and PDF.
 
@@ -78,6 +80,38 @@ This creates:
 If the run does not contain `/coord/leader_estimate`, the script warns and still
 plots the available paths.
 
+## Batch Results Directory
+
+For C1-style folders, pass the whole results directory:
+
+```bash
+source /opt/ros/jazzy/setup.bash
+source install/setup.bash
+
+python3 scripts/plot_trajectory_paths.py \
+  --results-dir bags/results_baylands_lora_c1 \
+  --warmup 30
+```
+
+The script finds bags under:
+
+```text
+bags/results_baylands_lora_c1/rep01/R01_rotundan/bag
+bags/results_baylands_lora_c1/rep02/R01_rotundan/bag
+bags/results_baylands_lora_c1/rep03/R01_rotundan/bag
+```
+
+and writes merged route sheets to:
+
+```text
+bags/results_baylands_lora_c1/plots/rotundan_trajectories.png
+bags/results_baylands_lora_c1/plots/rotundan_trajectories.pdf
+```
+
+Each route sheet is one plot. The reference / UGV path is averaged across
+repetitions and drawn as one black line. UAV paths are drawn on top with one
+color per repetition.
+
 ## Adapting For Duplex vs Simplex
 
 Run the script once per recorded communication run and keep the same topics:
@@ -118,3 +152,23 @@ The script supports common pose-like message types such as `Odometry`,
 - It does not align separate runs against each other; compare separate runs by
   using the same route, warmup, duration, and topic choices.
 - If a topic is missing from the bag, it is skipped with a warning.
+
+## Rubens Version
+
+```bash
+  ROUTE=R01 \
+  REF_TOPIC=/a201_0000/ground_truth/odom \
+  UAV_TOPIC=/dji0/pose \
+  CAMPAIGN=c1 \
+  REP=01 \
+  PLACE=rotundan
+```
+
+```bash
+  python3 scripts/plot_trajectory_paths.py \
+   --run-dir bags/results_baylands_lora_${CAMPAIGN}/rep${REP}/${ROUTE}_${PLACE}/ \
+   --uav-topic ${UAV_TOPIC} \
+   --reference-topic ${REF_TOPIC} \
+   --warmup 30 --out bags/results_baylands_lora_${CAMPAIGN}/rep${REP}/${ROUTE}_${PLACE}/ \
+   --title "Initial Tests"
+```

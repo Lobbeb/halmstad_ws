@@ -324,9 +324,10 @@ HH_GPU_USER=rubcro20 HH_GPU_HOST=bermingham.hh.se ./scripts/hh_gpu_fetch_sam3_ob
 Pull tune results:
 
 ```bash
+V=<version to pull>
 rsync -avz --info=progress2 -e "ssh -p 20022" \
-  rubcro20@bermingham.hh.se:/nfs/home/rubcro20/halmstad_ws/models/obb/experiments/sam3_hybrid_full/runs/tune/v10_tune_from_v9_tight-2/ \
-  /home/ruben/halmstad_ws/models/obb/experiments/sam3_hybrid_full/runs/tune/v10_tune_from_v9_tight-2/
+  rubcro20@bermingham.hh.se:/nfs/home/rubcro20/halmstad_ws/models/obb/experiments/sam3_hybrid_full/runs/tune/v10_tune_from_v9_tight-${V}/ \
+  /home/ruben/halmstad_ws/models/obb/experiments/sam3_hybrid_full/runs/tune/v10_tune_from_v9_tight-${V}/
 ```
 
 Pull model weights:
