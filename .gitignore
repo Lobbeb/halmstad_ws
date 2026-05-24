@@ -102,3 +102,5 @@ datasets/pre*
 /maps/*backup.csv
 /bags/*
 /scripts/hh_*.sh
+
+scripts/cloud_sam3*.tar.gz
