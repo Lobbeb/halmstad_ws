@@ -103,4 +103,6 @@ datasets/pre*
 /bags/*
 /scripts/hh_*.sh
 
-scripts/cloud_sam3*.tar.gz
+# --- Local packaged training jobs ---
+/cloud_sam3*.tar.gz
+/scripts/cloud_sam3*.tar.gz
