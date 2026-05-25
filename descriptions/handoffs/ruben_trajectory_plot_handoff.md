@@ -18,10 +18,10 @@ plot:
 - a reference / UGV path
 - a UAV / followed path
 - optional estimated or predicted paths
-- a full results directory with `repXX/RNN_route/bag` folders, writing one
-  merged sheet per route
+- a full results directory with `repXX/RNN_route/bag` folders, writing average
+  and normal merged sheets per route
 
-It writes both PNG and PDF.
+It writes PNG by default. Add `--pdf` when PDF output is needed.
 
 ## Input Data
 
@@ -74,8 +74,9 @@ This creates:
 
 ```text
 /tmp/example_path_comparison.png
-/tmp/example_path_comparison.pdf
 ```
+
+Add `--pdf` to also create `/tmp/example_path_comparison.pdf`.
 
 If the run does not contain `/coord/leader_estimate`, the script warns and still
 plots the available paths.
@@ -104,13 +105,20 @@ bags/results_baylands_lora_c1/rep03/R01_rotundan/bag
 and writes merged route sheets to:
 
 ```text
-bags/results_baylands_lora_c1/plots/rotundan_trajectories.png
-bags/results_baylands_lora_c1/plots/rotundan_trajectories.pdf
+bags/results_baylands_lora_c1/plots/rotundan_trajectories_average.png
+bags/results_baylands_lora_c1/plots/rotundan_trajectories_normal.png
 ```
 
-Each route sheet is one plot. The reference / UGV path is averaged across
-repetitions and drawn as one black line. UAV paths are drawn on top with one
-color per repetition.
+By default, each route gets two plots. The average plot draws the reference /
+UGV path averaged across repetitions as one black line, then draws averaged UAV
+and estimate paths on top. The normal plot draws all requested topics for every
+repetition. If a repetition is missing a topic, it is ignored in that topic's
+average and the legend reports the actual count, for example `n=2`.
+
+Use `--batch-plots average`, `--batch-plots normal`, or `--batch-plots both` to
+choose the batch outputs. Use `--pdf` to also write matching PDF files. The
+legacy `--average true|false` flag still works. All plot text defaults to 11 pt
+DejaVu Serif, and x/y axes use equal scale by default.
 
 ## Adapting For Duplex vs Simplex
 

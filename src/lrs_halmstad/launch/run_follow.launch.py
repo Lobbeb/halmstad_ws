@@ -406,6 +406,9 @@ def _build_leader_estimator_node(context, *args, **kwargs):
     range_mode = _launch_str(context, 'range_mode').strip()
     if range_mode:
         estimator_params['range_mode'] = range_mode
+    radio_range_topic = _launch_str(context, 'radio_range_topic').strip()
+    if radio_range_topic:
+        estimator_params['radio_range_topic'] = radio_range_topic
     return [
         Node(
             package='lrs_halmstad',
@@ -577,6 +580,7 @@ def _build_ugv_ground_truth_bridge_node(context, *args, **kwargs):
                 'model_name': f'{ugv_ns}/robot',
                 'pose_topic': 'ground_truth/pose',
                 'odom_topic': 'ground_truth/odom',
+                'publish_hz': 20.0,
                 # These values are Gazebo world coordinates, not AMCL map-frame poses.
                 'frame_id': 'world',
                 'child_frame_id': 'base_link',
@@ -698,7 +702,7 @@ def generate_launch_description():
     )
     start_camera_tracker_arg = DeclareLaunchArgument(
         'start_camera_tracker',
-        default_value='true',
+        default_value='false',
         description='Start the legacy camera pan/tilt tracker.',
     )
     uav_camera_mode_arg = DeclareLaunchArgument('uav_camera_mode', default_value='integrated_joint')
@@ -892,6 +896,11 @@ def generate_launch_description():
         default_value='',
         description='Optional leader_estimator range source override: auto|depth|radio|const. Empty uses params_file YAML.',
     )
+    radio_range_topic_arg = DeclareLaunchArgument(
+        'radio_range_topic',
+        default_value='',
+        description='Optional leader_estimator radio range topic override. Empty uses params_file YAML.',
+    )
     target_class_name_arg = DeclareLaunchArgument('target_class_name', default_value='')
     target_class_id_arg = DeclareLaunchArgument('target_class_id', default_value='-1')
     yolo_weights_arg = DeclareLaunchArgument(
@@ -901,11 +910,11 @@ def generate_launch_description():
     yolo_device_arg = DeclareLaunchArgument('yolo_device', default_value='auto')
     detector_backend_arg = DeclareLaunchArgument('detector_backend', default_value='ultralytics')
     detector_onnx_model_arg = DeclareLaunchArgument('detector_onnx_model', default_value='')
-    detector_async_inference_arg = DeclareLaunchArgument('detector_async_inference', default_value='true')
-    detector_latest_frame_only_arg = DeclareLaunchArgument('detector_latest_frame_only', default_value='true')
+    detector_async_inference_arg = DeclareLaunchArgument('detector_async_inference', default_value='false')
+    detector_latest_frame_only_arg = DeclareLaunchArgument('detector_latest_frame_only', default_value='false')
     detector_stale_detection_threshold_ms_arg = DeclareLaunchArgument(
         'detector_stale_detection_threshold_ms',
-        default_value='500.0',
+        default_value='3000.0',
     )
     detector_metrics_window_s_arg = DeclareLaunchArgument('detector_metrics_window_s', default_value='5.0')
     detector_benchmark_csv_path_arg = DeclareLaunchArgument('detector_benchmark_csv_path', default_value='')
@@ -1255,6 +1264,7 @@ def generate_launch_description():
         name='ugv_amcl_to_odom',
         namespace=LaunchConfiguration('ugv_namespace'),
         output='screen',
+        condition=IfCondition(LaunchConfiguration('ugv_use_amcl_odom_fallback')),
         parameters=[
             {
                 'use_sim_time': True,
@@ -1401,6 +1411,7 @@ def generate_launch_description():
         leader_depth_topic_arg,
         leader_uav_pose_topic_arg,
         range_mode_arg,
+        radio_range_topic_arg,
         target_class_name_arg,
         target_class_id_arg,
         yolo_weights_arg,

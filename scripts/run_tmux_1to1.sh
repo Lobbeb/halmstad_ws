@@ -71,6 +71,7 @@ GAZEBO_SPAWN_Z_OVERRIDE=""
 GAZEBO_SPAWN_YAW_OVERRIDE=""
 HAVE_UGV_GOAL_SEQUENCE="false"
 HAVE_RANGE_MODE="false"
+HAVE_RADIO_RANGE_TOPIC="false"
 FOLLOW_WAIT_TOPICS=""
 NAV2_GOALS_FOR_LIDAR=""
 SPAWN_ARGS=()
@@ -127,6 +128,7 @@ Gazebo spawn / scene:
   mount_pitch_deg:=45
   uav_name:=dji0
   rtf:=1.0
+  clock_mode:=guarded|direct
 
 Nav2 / route:
   nav2_goals:=route_name|route.yaml
@@ -153,11 +155,13 @@ Follow / camera:
   use_tilt:=true|false
   tilt_enable:=true|false
   camera_default_tilt_deg:=...
+  start_camera_tracker:=true|false
   use_actual_heading:=true|false
   leader_actual_heading_enable:=true|false
   leader_actual_pose_enable:=true|false
   camera_actual_pose_reacquire_enable:=true|false
   range_mode:=auto|depth|radio|const
+  radio_range_topic:=/omnet/radio_distance
   params_file:=/path/run_follow_defaults.yaml
 
 YOLO only:
@@ -171,6 +175,8 @@ YOLO only:
   tracker_config:=botsort.yaml
   detector_backend:=ultralytics|onnx_cpu|onnx_directml
   detector_async_inference:=true|false
+  detector_latest_frame_only:=true|false
+  detector_stale_detection_threshold_ms:=...
   yolo_device:=cpu|auto
   detector_onnx_model:=...
   start_visual_follow_controller:=true|false
@@ -458,6 +464,9 @@ for arg in "$@"; do
       SPAWN_ARGS+=("$arg")
       FOLLOW_ARGS+=("$arg")
       ;;
+    clock_mode:=*)
+      GAZEBO_ARGS+=("$arg")
+      ;;
     goal_sequence_file:=*)
       HAVE_UGV_GOAL_SEQUENCE="true"
       NAV2_GOALS_FOR_LIDAR="${arg#goal_sequence_file:=}"
@@ -495,14 +504,18 @@ for arg in "$@"; do
     params_file:=*)
       FOLLOW_ARGS+=("$arg")
       ;;
-    follow_yaw:=*|pan_enable:=*|use_tilt:=*|tilt_enable:=*|camera_default_tilt_deg:=*|use_actual_heading:=*|leader_actual_heading_enable:=*|leader_actual_heading_topic:=*|leader_actual_pose_enable:=*|camera_actual_pose_reacquire_enable:=*|ugv_goal_sequence_randomize:=*|ugv_goal_sequence_random_reverse:=*|ugv_goal_sequence_relative_to_current_pose:=*)
+    follow_yaw:=*|pan_enable:=*|use_tilt:=*|tilt_enable:=*|camera_default_tilt_deg:=*|start_camera_tracker:=*|use_actual_heading:=*|leader_actual_heading_enable:=*|leader_actual_heading_topic:=*|leader_actual_pose_enable:=*|camera_actual_pose_reacquire_enable:=*|ugv_goal_sequence_randomize:=*|ugv_goal_sequence_random_reverse:=*|ugv_goal_sequence_relative_to_current_pose:=*)
       FOLLOW_ARGS+=("$arg")
       ;;
     range_mode:=*)
       HAVE_RANGE_MODE="true"
       FOLLOW_ARGS+=("$arg")
       ;;
-    weights:=*|target:=*|use_estimate:=*|yolo_control_mode:=*|visual_follow_logic:=*|obb:=*|folder:=*|dir:=*|subdir:=*|tracker:=*|external_detection_node:=*|tracker_config:=*|yolo_device:=*|device:=*|detector_backend:=*|detector_async_inference:=*|detector_onnx_model:=*|ugv_start_delay_s:=*|start_visual_follow_controller:=*|start_visual_follow_point_generator:=*|start_visual_follow_planner:=*|start_visual_actuation_bridge:=*|follow_point_prefer_target_pose_heading:=*|follow_point_prefer_target_pose_position:=*|leader_selected_target_topic:=*|leader_selected_target_filtered_topic:=*|leader_selected_target_filtered_status_topic:=*|leader_visual_target_estimate_topic:=*|leader_visual_target_estimate_status_topic:=*|leader_follow_point_topic:=*|leader_follow_point_status_topic:=*|leader_planned_target_topic:=*|leader_planned_target_status_topic:=*|leader_visual_control_topic:=*|leader_visual_control_status_topic:=*|leader_visual_actuation_bridge_status_topic:=*)
+    radio_range_topic:=*)
+      HAVE_RADIO_RANGE_TOPIC="true"
+      FOLLOW_ARGS+=("$arg")
+      ;;
+    weights:=*|target:=*|use_estimate:=*|yolo_control_mode:=*|visual_follow_logic:=*|obb:=*|folder:=*|dir:=*|subdir:=*|tracker:=*|external_detection_node:=*|tracker_config:=*|yolo_device:=*|device:=*|detector_backend:=*|detector_async_inference:=*|detector_latest_frame_only:=*|detector_stale_detection_threshold_ms:=*|detector_metrics_window_s:=*|detector_benchmark_csv_path:=*|detector_image_qos_depth:=*|detector_image_qos_reliability:=*|detector_onnx_model:=*|ugv_start_delay_s:=*|start_visual_follow_controller:=*|start_visual_follow_point_generator:=*|start_visual_follow_planner:=*|start_visual_actuation_bridge:=*|follow_point_prefer_target_pose_heading:=*|follow_point_prefer_target_pose_position:=*|leader_selected_target_topic:=*|leader_selected_target_filtered_topic:=*|leader_selected_target_filtered_status_topic:=*|leader_visual_target_estimate_topic:=*|leader_visual_target_estimate_status_topic:=*|leader_follow_point_topic:=*|leader_follow_point_status_topic:=*|leader_planned_target_topic:=*|leader_planned_target_status_topic:=*|leader_visual_control_topic:=*|leader_visual_control_status_topic:=*|leader_visual_actuation_bridge_status_topic:=*)
       FOLLOW_ARGS+=("$arg")
       ;;
     omnet:=*)
@@ -584,7 +597,7 @@ esac
 if [ "$MODE" != "yolo" ]; then
   for arg in "${FOLLOW_ARGS[@]}"; do
       case "$arg" in
-      weights:=*|target:=*|use_estimate:=*|yolo_control_mode:=*|visual_follow_logic:=*|obb:=*|folder:=*|dir:=*|subdir:=*|tracker:=*|external_detection_node:=*|tracker_config:=*|yolo_device:=*|device:=*|detector_backend:=*|detector_async_inference:=*|detector_onnx_model:=*|range_mode:=*|ugv_start_delay_s:=*|start_visual_follow_controller:=*|start_visual_follow_point_generator:=*|start_visual_follow_planner:=*|start_visual_actuation_bridge:=*|follow_point_prefer_target_pose_heading:=*|follow_point_prefer_target_pose_position:=*|leader_selected_target_topic:=*|leader_selected_target_filtered_topic:=*|leader_selected_target_filtered_status_topic:=*|leader_visual_target_estimate_topic:=*|leader_visual_target_estimate_status_topic:=*|leader_follow_point_topic:=*|leader_follow_point_status_topic:=*|leader_planned_target_topic:=*|leader_planned_target_status_topic:=*|leader_visual_control_topic:=*|leader_visual_control_status_topic:=*|leader_visual_actuation_bridge_status_topic:=*)
+      weights:=*|target:=*|use_estimate:=*|yolo_control_mode:=*|visual_follow_logic:=*|obb:=*|folder:=*|dir:=*|subdir:=*|tracker:=*|external_detection_node:=*|tracker_config:=*|yolo_device:=*|device:=*|detector_backend:=*|detector_async_inference:=*|detector_latest_frame_only:=*|detector_stale_detection_threshold_ms:=*|detector_metrics_window_s:=*|detector_benchmark_csv_path:=*|detector_image_qos_depth:=*|detector_image_qos_reliability:=*|detector_onnx_model:=*|range_mode:=*|radio_range_topic:=*|ugv_start_delay_s:=*|start_visual_follow_controller:=*|start_visual_follow_point_generator:=*|start_visual_follow_planner:=*|start_visual_actuation_bridge:=*|follow_point_prefer_target_pose_heading:=*|follow_point_prefer_target_pose_position:=*|leader_selected_target_topic:=*|leader_selected_target_filtered_topic:=*|leader_selected_target_filtered_status_topic:=*|leader_visual_target_estimate_topic:=*|leader_visual_target_estimate_status_topic:=*|leader_follow_point_topic:=*|leader_follow_point_status_topic:=*|leader_planned_target_topic:=*|leader_planned_target_status_topic:=*|leader_visual_control_topic:=*|leader_visual_control_status_topic:=*|leader_visual_actuation_bridge_status_topic:=*)
         echo "Argument '$arg' requires mode:=yolo" >&2
         exit 2
         ;;
@@ -1099,7 +1112,7 @@ stop_stack_processes() {
   signal_processes_by_pattern 'ros2 launch .*/localization_with_params\.launch\.py'
   signal_processes_by_pattern '(^|/)pointcloud_to_laserscan_node($| )'
   signal_processes_by_pattern '(^|/)latest_scan_relay($| )'
-  signal_named_nodes 'amcl|map_server|planner_server|controller_server|collision_monitor|behavior_server|bt_navigator|waypoint_follower|velocity_smoother|smoother_server|route_server|docking_server|lifecycle_manager_localization|lifecycle_manager_navigation|pointcloud_to_laserscan|latest_scan_relay|ugv_nav2_driver|ugv_amcl_to_odom|ugv_amcl_to_platform_odom|ugv_amcl_to_platform_filtered_odom|ugv_platform_odom_to_tf|follow_uav|follow_uav_odom|leader_detector|leader_tracker|leader_estimator|selected_target_filter|visual_target_estimator|follow_point_generator|follow_point_planner|visual_actuation_bridge|camera_tracker'
+  signal_named_nodes 'amcl|map_server|planner_server|controller_server|behavior_server|bt_navigator|waypoint_follower|velocity_smoother|smoother_server|route_server|docking_server|lifecycle_manager_localization|lifecycle_manager_navigation|pointcloud_to_laserscan|latest_scan_relay|ugv_nav2_driver|ugv_amcl_to_odom|ugv_amcl_to_platform_odom|ugv_amcl_to_platform_filtered_odom|ugv_platform_odom_to_tf|follow_uav|follow_uav_odom|leader_detector|leader_tracker|leader_estimator|selected_target_filter|visual_target_estimator|follow_point_generator|follow_point_planner|visual_actuation_bridge|camera_tracker'
 }
 
 prelaunch_safety_cleanup() {
@@ -1120,7 +1133,7 @@ prelaunch_safety_cleanup() {
   signal_processes_by_pattern 'ros2 launch lrs_halmstad managed_clearpath_sim\.launch\.py'
   signal_processes_by_pattern 'ros2 launch .*/managed_clearpath_sim\.launch\.py'
   signal_processes_by_pattern '/ros_gz_bridge/(bridge_node|parameter_bridge|image_bridge)(\\s|$)'
-  signal_named_nodes 'amcl|map_server|planner_server|controller_server|collision_monitor|behavior_server|bt_navigator|waypoint_follower|velocity_smoother|smoother_server|route_server|docking_server|lifecycle_manager_localization|lifecycle_manager_navigation|ugv_nav2_driver|ugv_amcl_to_odom|ugv_amcl_to_platform_odom|ugv_amcl_to_platform_filtered_odom|ugv_platform_odom_to_tf|uav_simulator|follow_uav|follow_uav_odom|leader_detector|leader_tracker|leader_estimator|selected_target_filter|visual_target_estimator|follow_point_generator|follow_point_planner|visual_actuation_bridge|camera_tracker|clock_bridge|clock_guard|omnet_uav_pose_to_odom|omnet_tcp_bridge|omnet_metrics_bridge'
+  signal_named_nodes 'amcl|map_server|planner_server|controller_server|behavior_server|bt_navigator|waypoint_follower|velocity_smoother|smoother_server|route_server|docking_server|lifecycle_manager_localization|lifecycle_manager_navigation|ugv_nav2_driver|ugv_amcl_to_odom|ugv_amcl_to_platform_odom|ugv_amcl_to_platform_filtered_odom|ugv_platform_odom_to_tf|uav_simulator|follow_uav|follow_uav_odom|leader_detector|leader_tracker|leader_estimator|selected_target_filter|visual_target_estimator|follow_point_generator|follow_point_planner|visual_actuation_bridge|camera_tracker|clock_bridge|clock_guard|omnet_uav_pose_to_odom|omnet_tcp_bridge|omnet_metrics_bridge'
   signal_processes_by_pattern '(^|/)UAV_UGV($| ).*-c Communication-GazeboBridge-'
   signal_processes_by_pattern '(^|/)gz sim($| )'
 }
@@ -1203,7 +1216,7 @@ apply_default_delays
 
 FOLLOW_ARGS+=("start_omnet_bridge:=$OMNET")
 if [ "$HAVE_RANGE_MODE" != true ]; then
-  if [ "$OMNET" = true ]; then
+  if [ "$OMNET" = true ] && [ "$MODE" != "yolo" ]; then
     FOLLOW_ARGS+=("range_mode:=radio")
   else
     FOLLOW_ARGS+=("range_mode:=auto")

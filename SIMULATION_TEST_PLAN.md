@@ -59,51 +59,19 @@ Use:
 - `omnet_ui`: `cmdenv`
 - Warmup exclusion for analysis: first 30 seconds.
 
-For LoRa-assisted perception tests, make sure the estimator uses `/omnet/radio_distance`. The pose-derived `link_distance` value stays in OMNeT output only and is not republished as a ROS topic.
+LoRa perception has two intended modes:
 
-## Campaign Command
+- **Simplex LoRa**: `omnet_network:=lora`. The UAV does not get UGV feedback. `/omnet/radio_distance` is available as an RSSI/path-loss derived metric, but `range_mode:=auto` does not use it unless `radio_fallback_enable:=true`.
+- **Duplex LoRa**: `omnet_network:=lora-duplex`. The UGV is allowed to communicate back through OMNeT. The bridge publishes the decoded UGV-to-UAV LoRa distance payload on `/omnet/radio_distance`, but this is saved as a metric only and is not used for coordination.
 
-Dry-run the full C1-style campaign first. It should print 27 route jobs:
+In duplex, `/omnet/radio_distance` updates only after OMNeT sees a successful reverse-link delivery at the UAV radio; it is not an RSSI estimate.
+Use `range_mode:=radio` only for explicit radio-only estimator tests, not for the main C2 runs.
 
-```bash
-./run.sh nav2_route_sweep baylands \
-  routes:=rotundan,road_to_west,parkinglot_west,road_to_spawn,spawn,road_to_east,parkinglot_east,road_to_strip,strip \
-  repetitions:=3 \
-  route_sim_timeout_s:=300 \
-  campaign_tag:=c1_baylands_lora \
-  record:=true \
-  record_profile:=default \
-  record_root:=bags/results_baylands_lora \
-  omnet:=true \
-  omnet_network:=lora \
-  omnet_ui:=cmdenv \
-  gui:=false \
-  mode:=follow \
-  lidar:=3d \
-  dry_run:=true
-```
+## Current Workflow
 
-Real run is the same command without `dry_run:=true`.
+C1 and C2 live runs keep ROS bags and OMNeT files in the same route folder. C3 and C4 thesis bags are already recorded without `/omnet/*`, so network metrics are generated afterward with offline OMNeT replay.
 
-For a short smoke test:
-
-```bash
-./run.sh nav2_route_sweep baylands \
-  routes:=rotundan,road_to_west \
-  repetitions:=1 \
-  route_sim_timeout_s:=30 \
-  campaign_tag:=c1_smoke \
-  record:=true \
-  record_profile:=default \
-  record_root:=bags/results_baylands_lora_smoke \
-  omnet:=true \
-  omnet_network:=lora \
-  omnet_ui:=cmdenv \
-  gui:=false \
-  mode:=follow \
-  lidar:=3d \
-  dry_run:=true
-```
+Use `replay_scale:=2` for offline replay by default. It sets both the bag pose replay speed and OMNeT `realtimescheduler-scaling`, so a 300 s bag takes about 150 s. If it finishes cleanly, `replay_scale:=4` may be tested.
 
 ## What To Record
 
@@ -127,6 +95,40 @@ bags/results_baylands_lora/
 ```
 
 Treat the raw ROS bag and OMNeT `.vec/.sca/.tlog` files as source data. CSVs and plots are derived outputs.
+
+Network metric plots can be generated directly from the recorded bags. Trajectory-only figures are handled by `plot_trajectory_paths.py`.
+
+```bash
+./run.sh plot_network_metrics \
+  --run-dir bags/results_baylands_lora_c2_duplex/rep01/R01_rotundan
+```
+
+For a whole campaign directory:
+
+```bash
+./run.sh plot_network_metrics \
+  --results-dir bags/results_baylands_lora_c2 \
+  --lora-mode rep-map
+```
+
+This writes separated per-metric figures under `<results-dir>/plots/network/`, including distance, `/omnet/radio_distance`, RSSI, SNIR, latency, jitter, PER, PDR, and metric-vs-distance plots when those topics exist in the bag.
+
+Offline replay writes:
+
+```text
+<run>/offline_omnet/<network>_sf7_bw125kHz/
+  network_metrics.csv
+  omnet.log
+  pose_replay.log
+  metrics_capture.log
+  omnet/
+```
+
+The batch replay manifest is:
+
+```text
+bags/ruben_c1_c4_selected_rosbags_2026-05-25/offline_omnet_manifest.csv
+```
 
 ## Metrics To Compare
 
@@ -157,6 +159,7 @@ Route and control:
 
 OMNeT/LoRa:
 
+- `network_metrics.csv` from offline replay
 - `/omnet/rssi_dbm`
 - `/omnet/snir_db`
 - `/omnet/packet_error_rate`
@@ -165,6 +168,7 @@ OMNeT/LoRa:
 - `/omnet/jitter_s`
 - `/omnet/radio_distance`
 - `/omnet/sim_time`
+- `link_distance_m` from offline replay CSV when OMNeT exports it
 
 From OMNeT files:
 
@@ -182,57 +186,133 @@ Inspect live OMNeT metrics:
 ./run.sh omnet_monitor once:=true
 ```
 
-Analyze OMNeT output for one run:
+Run offline OMNeT replay for one selected C3 run:
 
 ```bash
-cd /home/ruben/omnet_workspace/UAV_UGV
-python3 network_metrics_analysis.py \
-  --results /home/ruben/halmstad_ws/bags/results_baylands_lora/R01_rotundan/omnet \
-  --config LoRa \
-  --plot 30 \
-  --write-csv
+./run.sh omnet_bag_replay \
+  run_dir:=bags/ruben_c1_c4_selected_rosbags_2026-05-25/C3/C3_RouteA_rotundan_r01__old_selected_r01 \
+  network:=lora \
+  lora_sf:=7 \
+  lora_bw:=125kHz \
+  ugv_topic:=/a201_0000/platform/odom/filtered \
+  uav_topic:=/dji0/pose \
+  replay_scale:=2
 ```
 
-Optional path-loss export:
+Run simplex and duplex replay for all C3 selected bags:
 
 ```bash
-cd /home/ruben/omnet_workspace/UAV_UGV
-python3 path_loss_analysis.py \
-  --results /home/ruben/halmstad_ws/bags/results_baylands_lora/R01_rotundan/omnet \
-  --config LoRa
+./run.sh omnet_bag_replay_batch \
+  root:=bags/ruben_c1_c4_selected_rosbags_2026-05-25 \
+  conditions:=C3 \
+  networks:=lora,lora-duplex \
+  replay_scale:=2
 ```
 
-Compare against William's C1 files when available:
+Run leader-link replay for C4 selected bags:
 
-```text
-bags/results_c1_batch01/export/c1_batch01_runs.csv
-bags/results_c1_batch01/export/c1_batch01_aggregate.csv
-bags/results_c1_batch01/export/c1_batch01_by_route.csv
+```bash
+./run.sh omnet_bag_replay_batch \
+  root:=bags/ruben_c1_c4_selected_rosbags_2026-05-25 \
+  conditions:=C4 \
+  networks:=lora,lora-duplex \
+  replay_scale:=2
+```
+
+Plot offline replay metrics:
+
+```bash
+./run.sh plot_network_metrics \
+  --results-dir bags/ruben_c1_c4_selected_rosbags_2026-05-25/C3 \
+  --offline-omnet
+```
+
+```bash
+./run.sh plot_network_metrics \
+  --results-dir bags/ruben_c1_c4_selected_rosbags_2026-05-25/C4 \
+  --offline-omnet \
+  --overview-only
 ```
 
 ## Run Notes
 
-Use this table while collecting data.
+### C2 Live Collection
 
-| Run | Route               | Repetition | Network data valid? | Result / notes |
-| --- | ------------------- | ---------- | ------------------- | -------------- |
-| R01 | rotundan            | 3          |                     |                |
-| R02 | road_to_west        | 3          |                     |                |
-| R03 | parkinglot_west     | 3          |                     |                |
-| R04 | road_to_spawn       | 3          |                     |                |
-| R05 | spawn               | 3          |                     |                |
-| R06 | road_to_east        | 3          |                     |                |
-| R07 | parkinglot_east     | 3          |                     |                |
-| R08 | road_to_strip       | 3          |                     |                |
-| R09 | strip               | 3          |                     |                |
+C2 uses manual `tmux_1to1` route launches now. The older `nav2_route_sweep` commands are not the primary path because manual runs were more reliable.
 
-Distance sweeps: Start at normal distances (7 m offset), then increase.
-Test limits up to 100 m.
+Routes currently used for C2 network work:
+
+```text
+R01 rotundan
+R02 road_to_west
+R03 parkinglot_west
+R04 road_to_spawn
+R05 spawn
+R06 road_to_east
+R07 parkinglot_east
+```
+
+C2 repetition mapping:
+
+- `rep01`: simplex, fixed geometry.
+- `rep02`: duplex, fixed geometry.
+- `rep03`: simplex, manual distance sweep.
+
+Manual distance sweep command after rep03 launch:
+
+```bash
+for d in 10 15 20 25 30 35 40 45 50 55 60 65 70 75 80 85 90 95 100; do z=7; xy=$(python3 -c "import math; d=$d; z=min($z,d); print(math.sqrt(max(0,d*d-z*z))+2)"); ros2 param set /follow_uav xy_anchor_max $xy; ros2 param set /follow_uav d_target $d; ros2 param set /follow_uav follow_z_offset_m $z; sleep 10; done
+```
+
+Use `plot_trajectory_paths.py --plane xz` for rep03 height/distance inspection.
+
+### C3 Offline OMNeT
+
+C3 is the visual bridge pipeline. The selected thesis bags live under:
+
+```text
+bags/ruben_c1_c4_selected_rosbags_2026-05-25/C3
+```
+
+Most C3 selected bags do not contain `/a201_0000/ground_truth/odom`; use `/a201_0000/platform/odom/filtered` when replaying. `plot_network_metrics.py --offline-omnet` falls back automatically when plotting.
+
+### C4 Offline OMNeT
+
+C4 selected bags include `dji0`, `dji1`, and `dji2` poses. The current offline OMNeT replay is valid for the leader link only:
+
+```text
+UGV <-> dji0
+```
+
+It is not yet a full three-UAV ad hoc replay. A true C4 ad hoc analysis needs OMNeT/replay support for `dji1` and `dji2` as additional radio nodes.
 
 ## Assumptions
 
 - Use native FLORA LoRa via `omnet_network:=lora`.
+- Use `omnet_network:=lora-duplex` only for the allowed feedback comparison where UGV-to-UAV communication is part of the scenario.
 - Keep the current Baylands follow height/defaults unless the run notes say otherwise.
 - Exclude the first 30 seconds from plots and summary statistics.
-- Do not use OMNeT `link_distance` as a perception range source for fair LoRa-assisted visual tests. It is geometric ground truth and stays OMNeT-side.
-- No new scripts are required to gather the data.
+- In simplex runs, `/omnet/radio_distance` is RSSI/path-loss derived.
+- In duplex runs, `/omnet/radio_distance` is the decoded UGV-to-UAV LoRa payload.
+- Live collection still uses normal tmux scripts. Offline OMNeT replay from saved bags uses `./run.sh omnet_bag_replay`.
+- Offline replay batch collection uses `./run.sh omnet_bag_replay_batch`.
+- Offline replay plotting uses `./run.sh plot_network_metrics --offline-omnet`.
+- `replay_scale:=2` has been verified to reach 100% completion on a C3 bag.
+
+## Campaigns To-Do
+
+- ~~C1: Raw follow, only odom.~~
+- C2: Finish rep03 distance-sweep routes and plot rep-separated network metrics.
+- C3: Run offline simplex and duplex OMNeT replay for selected C3 bags.
+- C4: Run offline leader-link OMNeT replay for selected C4 bags; full support-UAV ad hoc is future work unless OMNeT topology is extended.
+
+## Current State
+
+As of 2026-05-25:
+
+- Primary C1 result root: `bags/results_baylands_lora_c1`.
+- Primary live C2 result root: `bags/results_baylands_lora_c2`.
+- Selected thesis bag root for offline C3/C4 network replay: `bags/ruben_c1_c4_selected_rosbags_2026-05-25`.
+- `run_omnet_bag_replay.sh` now cleans up helper processes, applies wall-time timeout, and supports `replay_scale`.
+- `run_omnet_bag_replay_batch.sh` discovers C3/C4 selected bags and records an offline replay manifest.
+- `plot_network_metrics.py` supports `--offline-omnet` and plots separated figures from generated `network_metrics.csv` files.

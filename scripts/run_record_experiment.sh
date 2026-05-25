@@ -119,55 +119,50 @@ TOPICS_FILE="$RUN_DIR_ABS/topics.txt"
 METADATA_FILE="$RUN_DIR_ABS/metadata.json"
 
 TOPICS=(
-  "/clock"
-  "/coord/events"
-  "/a201_0000/amcl_pose_odom"
   "/$UAV_NAME/pose"
-  "/$UAV_NAME/update_pan"
-  "/$UAV_NAME/update_tilt"
-  "/$UAV_NAME/camera0/actual/center_pose"
 )
+
+if [ "$PROFILE" != "step2_light" ]; then
+  TOPICS+=(
+    "/clock"
+    "/coord/events"
+    "/a201_0000/amcl_pose_odom"
+    "/$UAV_NAME/update_pan"
+    "/$UAV_NAME/update_tilt"
+  )
+fi
 
 if [[ "$WORLD" == baylands* ]]; then
   TOPICS+=("/a201_0000/ground_truth/odom")
 fi
 
-if [ "$MODE" = "follow" ]; then
-  TOPICS+=(
-    "/$UAV_NAME/follow/actual/tilt_deg"
-    "/$UAV_NAME/follow/debug/yaw_wrap_active"
-    "/$UAV_NAME/follow/debug/yaw_step_limit_rad"
-    "/$UAV_NAME/follow/debug/yaw_cmd_delta_rad"
-    "/$UAV_NAME/follow/debug/yaw_mode"
-    "/$UAV_NAME/follow/debug/leader_heading_source"
-    "/$UAV_NAME/follow/debug/leader_follow_yaw_rad"
-    "/$UAV_NAME/follow/debug/leader_estimate_yaw_rad"
-    "/$UAV_NAME/follow/debug/leader_actual_heading_yaw_rad"
-  )
-fi
 
 if [ "$MODE" = "yolo" ]; then
   TOPICS+=(
     "/coord/leader_estimate"
     "/coord/leader_distance_debug"
     "/coord/leader_estimate_status"
-    "/coord/leader_estimate_error"
-    "/coord/leader_follow_point"
-    "/coord/leader_follow_point_status"
-    "/coord/leader_planned_target"
-    "/coord/leader_planned_target_status"
-    "/coord/leader_visual_control"
-    "/coord/leader_visual_control_status"
-    "/coord/leader_visual_actuation_bridge_status"
     "/coord/leader_detection_status"
-    "/coord/leader_selected_target"
-    "/coord/leader_selected_target_filtered"
-    "/coord/leader_selected_target_filtered_status"
-    "/coord/leader_visual_target_estimate"
-    "/coord/leader_visual_target_estimate_status"
     "/$UAV_NAME/psdk_ros2/flight_control_setpoint_ENUposition_yaw"
-    "/$UAV_NAME/follow/actual/tilt_deg"
   )
+  if [ "$PROFILE" != "step2_light" ]; then
+    TOPICS+=(
+      "/coord/leader_estimate_error"
+#      "/coord/leader_follow_point"
+#      "/coord/leader_follow_point_status"
+#      "/coord/leader_planned_target"
+#      "/coord/leader_planned_target_status"
+#      "/coord/leader_visual_control"
+#      "/coord/leader_visual_control_status"
+#      "/coord/leader_visual_actuation_bridge_status"
+#      "/coord/leader_selected_target"
+#      "/coord/leader_selected_target_filtered"
+#      "/coord/leader_selected_target_filtered_status"
+#      "/coord/leader_visual_target_estimate"
+#      "/coord/leader_visual_target_estimate_status"
+      #"/$UAV_NAME/follow/actual/tilt_deg"
+    )
+  fi
 fi
 
 if [ "$OMNET" = true ]; then

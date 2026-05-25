@@ -18,10 +18,10 @@ routes:
     pc2ls_min_height: -0.4
     pc2ls_max_height: 0.4
   spawn:
-    pc2ls_min_height: -0.64
+    pc2ls_min_height: -0.6
     pc2ls_max_height: 0.0
   strip:
-    pc2ls_min_height: -0.6
+    pc2ls_min_height: -0.5
     pc2ls_max_height: 0.5
   playground:
     pc2ls_min_height: -0.55
@@ -253,7 +253,7 @@ waypoints:
     pc2ls_min_height: -0.645
     pc2ls_max_height: 0.4
   road_to_strip_0:
-    pc2ls_min_height: -0.58
+    pc2ls_min_height: -0.56
     pc2ls_max_height: 0.4
   road_to_strip_1:
     pc2ls_min_height: -0.25

@@ -30,11 +30,14 @@ HAVE_RANGE_MODE="false"
 HAVE_UGV_INITIAL_POSE_X="false"
 HAVE_UGV_INITIAL_POSE_Y="false"
 HAVE_UGV_INITIAL_POSE_YAW="false"
+HAVE_START_CAMERA_TRACKER="false"
 HAVE_START_VISUAL_ACTUATION_BRIDGE="false"
 HAVE_START_VISUAL_FOLLOW_CONTROLLER="false"
 HAVE_START_VISUAL_FOLLOW_POINT_GENERATOR="false"
 HAVE_START_VISUAL_FOLLOW_PLANNER="false"
 HAVE_UGV_GOAL_SEQUENCE="false"
+DETECTOR_BACKEND=""
+DETECTOR_ONNX_MODEL_ARG=""
 USE_CONDA="false"
 CONDA_ENV_NAME="${LRS_HALMSTAD_GPU_ENV_NAME:-}"
 DEFAULT_CUSTOM_WEIGHTS="/home/ruben/halmstad_ws/models/obb/mymodels/baylands-leader-v9-tuned-full.pt"
@@ -242,6 +245,17 @@ for arg in "$@"; do
       ;;
     detector_backend:=*)
       HAVE_DETECTOR_BACKEND="true"
+      DETECTOR_BACKEND="${arg#detector_backend:=}"
+      EXTRA_ARGS+=("$arg")
+      ;;
+    detector_onnx_model:=*)
+      DETECTOR_ONNX_MODEL_ARG="$arg"
+      ;;
+    onnx_model:=*)
+      DETECTOR_ONNX_MODEL_ARG="detector_onnx_model:=${arg#onnx_model:=}"
+      ;;
+    start_camera_tracker:=*)
+      HAVE_START_CAMERA_TRACKER="true"
       EXTRA_ARGS+=("$arg")
       ;;
     start_visual_actuation_bridge:=*)
@@ -309,11 +323,26 @@ if [[ "$WORLD" == baylands* ]] && [ "$HAVE_UGV_GOAL_SEQUENCE" = "false" ]; then
 fi
 
 if [ "$HAVE_RANGE_MODE" = "false" ]; then
-  case "$START_OMNET_BRIDGE" in
-    true|yes|1)
-      RANGE_MODE="radio"
-      ;;
-  esac
+  RANGE_MODE="auto"
+fi
+
+if [ "$HAVE_START_CAMERA_TRACKER" = "false" ]; then
+  EXTRA_ARGS+=("start_camera_tracker:=false")
+fi
+
+if [ "$YOLO_CONTROL_MODE" != "visual_bridge" ]; then
+  if [ "$HAVE_START_VISUAL_ACTUATION_BRIDGE" = "false" ]; then
+    EXTRA_ARGS+=("start_visual_actuation_bridge:=false")
+  fi
+  if [ "$HAVE_START_VISUAL_FOLLOW_CONTROLLER" = "false" ]; then
+    EXTRA_ARGS+=("start_visual_follow_controller:=false")
+  fi
+  if [ "$HAVE_START_VISUAL_FOLLOW_POINT_GENERATOR" = "false" ]; then
+    EXTRA_ARGS+=("start_visual_follow_point_generator:=false")
+  fi
+  if [ "$HAVE_START_VISUAL_FOLLOW_PLANNER" = "false" ]; then
+    EXTRA_ARGS+=("start_visual_follow_planner:=false")
+  fi
 fi
 
 case "$USE_ESTIMATE" in
@@ -370,6 +399,19 @@ case "$RANGE_MODE" in
     echo "Invalid range_mode option: $RANGE_MODE" >&2
     echo "Use range_mode:=auto|depth|radio|const" >&2
     exit 2
+    ;;
+esac
+
+case "$DETECTOR_BACKEND" in
+  onnx|onnxruntime|onnx_cpu|onnx_directml)
+    if [ -n "$DETECTOR_ONNX_MODEL_ARG" ]; then
+      EXTRA_ARGS+=("$DETECTOR_ONNX_MODEL_ARG")
+    fi
+    ;;
+  *)
+    if [ -n "$DETECTOR_ONNX_MODEL_ARG" ]; then
+      echo "[run_1to1_yolo] Ignoring $DETECTOR_ONNX_MODEL_ARG because detector_backend is '${DETECTOR_BACKEND:-default ultralytics}'." >&2
+    fi
     ;;
 esac
 
@@ -447,13 +489,6 @@ if [ ! -f "$WEIGHTS_PATH" ]; then
 fi
 
 echo "[run_1to1_yolo] Using YOLO weights: $WEIGHTS_PATH"
-
-if [ "$HAVE_DETECTOR_BACKEND" != true ] && [ "$USE_OBB" = true ]; then
-  ONNX_CANDIDATE="${WEIGHTS_PATH%.*}.onnx"
-  if [ -f "$ONNX_CANDIDATE" ]; then
-    EXTRA_ARGS+=("detector_backend:=onnx_cpu")
-  fi
-fi
 
 LIVE_UAV_POSE_TIMEOUT_S=5
 if [[ "$WORLD" == baylands* ]]; then

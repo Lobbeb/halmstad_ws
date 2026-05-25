@@ -143,6 +143,7 @@ def generate_launch_description():
     camera_bridge = Node(
         package='ros_gz_bridge',
         executable='parameter_bridge',
+        name='uav_camera_bridge',
         arguments=[
             ['/', LaunchConfiguration('name'), '/', LaunchConfiguration('camera_name'),
              '/image@sensor_msgs/msg/Image[ignition.msgs.Image'],
@@ -166,6 +167,7 @@ def generate_launch_description():
     gimbal_bridge = Node(
         package='ros_gz_bridge',
         executable='parameter_bridge',
+        name='uav_gimbal_bridge',
         arguments=[
             ['/model/', LaunchConfiguration('name'),
              '/joint/', LaunchConfiguration('name'),

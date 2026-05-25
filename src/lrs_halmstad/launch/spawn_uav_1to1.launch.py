@@ -96,6 +96,7 @@ def generate_launch_description():
     set_pose_bridge = Node(
         package='ros_gz_bridge',
         executable='parameter_bridge',
+        name='uav_set_pose_bridge',
         arguments=[
             ['/world/', gz_world, '/set_pose@ros_gz_interfaces/srv/SetEntityPose'],
         ],

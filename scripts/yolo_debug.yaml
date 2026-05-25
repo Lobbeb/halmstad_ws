@@ -384,10 +384,10 @@ runs:
             
 
     result:
-            status: "not_run"
-            detects:
-            follows:
-            yaw_rotations:
-            gazebo_stable:
-            gpu_spike:
+            status: "BEST"
+            detects: true 
+            follows: true
+            yaw_rotations: "none"
+            gazebo_stable: true
+            gpu_spike: false
             notes: ""

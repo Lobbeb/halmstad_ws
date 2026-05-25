@@ -359,7 +359,7 @@ if [ "$DRY_RUN" = "true" ]; then
 $GZ_BIN service -s /world/${GZ_WORLD}/control --reqtype gz.msgs.WorldControl --reptype gz.msgs.Boolean --timeout 1000 --req 'pause: true'
 
 [dry-run] Would ensure bridge:
-ros2 run ros_gz_bridge parameter_bridge /world/${GZ_WORLD}/set_pose@ros_gz_interfaces/srv/SetEntityPose
+ros2 run ros_gz_bridge parameter_bridge /world/${GZ_WORLD}/set_pose@ros_gz_interfaces/srv/SetEntityPose --ros-args -r __node:=realign_set_pose_bridge
 
 [dry-run] Would set pose:
 ros2 service call ${SERVICE_NAME} ros_gz_interfaces/srv/SetEntityPose "{entity: {name: '${ENTITY_NAME}', type: 2}, pose: {position: {x: ${TARGET_X}, y: ${TARGET_Y}, z: ${TARGET_Z}}, orientation: {x: 0.0, y: 0.0, z: ${TARGET_QZ}, w: ${TARGET_QW}}}}"
@@ -402,7 +402,8 @@ PAUSED_SIM="true"
 if ! slam_wait_for_service "$SERVICE_NAME" 1; then
   echo "[run_realign_yaw] Starting temporary set_pose bridge"
   ros2 run ros_gz_bridge parameter_bridge \
-    "/world/${GZ_WORLD}/set_pose@ros_gz_interfaces/srv/SetEntityPose" >/dev/null 2>&1 &
+    "/world/${GZ_WORLD}/set_pose@ros_gz_interfaces/srv/SetEntityPose" \
+    --ros-args -r __node:=realign_set_pose_bridge >/dev/null 2>&1 &
   BRIDGE_PID=$!
   STARTED_BRIDGE="true"
 

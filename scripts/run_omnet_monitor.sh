@@ -77,10 +77,6 @@ normalize_topic() {
     all)
       printf '%s\n' "__ALL__"
       ;;
-    /omnet/link_distance|link_distance)
-      echo "/omnet/link_distance is intentionally not published by default; it is pose-derived ground truth, not a network metric." >&2
-      exit 2
-      ;;
     /omnet/*)
       printf '%s\n' "$value"
       ;;
@@ -186,7 +182,7 @@ topic_note() {
       printf '%s\n' "dB"
       ;;
     /omnet/radio_distance)
-      printf '%s\n' "m"
+      printf '%s\n' "RSSI m"
       ;;
     /omnet/latency_s|/omnet/jitter_s|/omnet/sim_time)
       printf '%s\n' "s"

@@ -15,7 +15,7 @@ def generate_launch_description():
                     'gz_topic_name': '/a201_0000/sensors/camera_0/image',
                     'gz_type_name': 'gz.msgs.Image',
                     'direction': 'GZ_TO_ROS',
-                    'lazy': False,
+                    'lazy': True,
                 },
                 'camera_info': {
                     'ros_topic_name': '/a201_0000/sensors/camera_0/color/camera_info',
@@ -23,7 +23,7 @@ def generate_launch_description():
                     'gz_topic_name': '/a201_0000/sensors/camera_0/camera_info',
                     'gz_type_name': 'gz.msgs.CameraInfo',
                     'direction': 'GZ_TO_ROS',
-                    'lazy': False,
+                    'lazy': True,
                 },
             },
             'bridge_names': ['image', 'camera_info'],
@@ -43,8 +43,7 @@ def generate_launch_description():
         remappings=[('/tf', 'tf'), ('/tf_static', 'tf_static')],
         parameters=[{'use_sim_time': True}],
     )
-
+        # camera_bridge,
     return LaunchDescription([
-        camera_bridge,
         camera_static_tf,
     ])

@@ -39,6 +39,7 @@ class Simulator(Node):
         yaml_param(self, "gimbal_pitch_min_rad")
         yaml_param(self, "gimbal_pitch_max_rad")
         self.declare_parameter("publish_legacy_debug_topics", False)
+        self.declare_parameter("publish_gimbal_state_topics", False)
         self.declare_parameter("set_pose_future_timeout_s", 0.5)
         yaml_param(self, "pan_rate_deg_s")
         yaml_param(self, "tilt_rate_deg_s")
@@ -63,6 +64,7 @@ class Simulator(Node):
         self.gimbal_pitch_min = float(self.get_parameter("gimbal_pitch_min_rad").value)
         self.gimbal_pitch_max = float(self.get_parameter("gimbal_pitch_max_rad").value)
         self.publish_legacy_debug_topics = bool(self.get_parameter("publish_legacy_debug_topics").value)
+        self.publish_gimbal_state_topics = bool(self.get_parameter("publish_gimbal_state_topics").value)
         self.set_pose_future_timeout_s = max(0.0, float(self.get_parameter("set_pose_future_timeout_s").value))
         self.pan_rate_deg_s = float(self.get_parameter("pan_rate_deg_s").value)
         self.tilt_rate_deg_s = float(self.get_parameter("tilt_rate_deg_s").value)
@@ -142,30 +144,40 @@ class Simulator(Node):
             if self.publish_legacy_debug_topics
             else None
         )
-        self.follow_target_tilt_pub = self.create_publisher(
-            Float32, follow_target_tilt_topic, 10, callback_group=self.group
+        self.follow_target_tilt_pub = (
+            self.create_publisher(Float32, follow_target_tilt_topic, 10, callback_group=self.group)
+            if self.publish_legacy_debug_topics
+            else None
         )
-        self.follow_actual_tilt_pub = self.create_publisher(
-            Float32, follow_actual_tilt_topic, 10, callback_group=self.group
+        self.follow_actual_tilt_pub = (
+            self.create_publisher(Float32, follow_actual_tilt_topic, 10, callback_group=self.group)
+            if self.publish_gimbal_state_topics
+            else None
         )
-        self.follow_error_tilt_pub = self.create_publisher(
+    
+        """ self.follow_error_tilt_pub = self.create_publisher(
             Float32, follow_error_tilt_topic, 10, callback_group=self.group
+        ) """
+        self.follow_target_pan_pub = (
+            self.create_publisher(Float32, follow_target_pan_topic, 10, callback_group=self.group)
+            if self.publish_legacy_debug_topics
+            else None
         )
-        self.follow_target_pan_pub = self.create_publisher(
-            Float32, follow_target_pan_topic, 10, callback_group=self.group
+    
+        self.follow_actual_pan_pub = (
+            self.create_publisher(Float32, follow_actual_pan_topic, 10, callback_group=self.group)
+            if self.publish_gimbal_state_topics
+            else None
         )
-        self.follow_actual_pan_pub = self.create_publisher(
-            Float32, follow_actual_pan_topic, 10, callback_group=self.group
-        )
-        self.follow_error_pan_pub = self.create_publisher(
+        """ self.follow_error_pan_pub = self.create_publisher(
             Float32, follow_error_pan_topic, 10, callback_group=self.group
-        )
-        self.camera_actual_pose_pub = self.create_publisher(
+        ) """
+        """ self.camera_actual_pose_pub = self.create_publisher(
             PoseStamped, camera_actual_pose_topic, 10, callback_group=self.group
         )
         self.camera_actual_world_yaw_pub = self.create_publisher(
             Float32, camera_actual_world_yaw_topic, 10, callback_group=self.group
-        )
+        )  """
         self.update_sub = self.create_subscription(
             Joy, cmd_topic, self.update_callback, 10, callback_group=self.group
         )
@@ -173,11 +185,12 @@ class Simulator(Node):
             Float64, tilt_topic, self.update_tilt_callback, 10, callback_group=self.group
         )
         self.update_pan_sub = self.create_subscription(
+          
             Float64, pan_topic, self.update_pan_callback, 10, callback_group=self.group
         )
-        self.camera_target_pose_sub = self.create_subscription(
+        """ self.camera_target_pose_sub = self.create_subscription(
             PoseStamped, camera_target_pose_topic, self.update_target_camera_pose_callback, 10, callback_group=self.group
-        )
+        ) """
         self.camera_target_world_yaw_sub = self.create_subscription(
             Float32, camera_target_world_yaw_topic, self.update_target_camera_world_yaw_callback, 10, callback_group=self.group
         )
@@ -187,14 +200,14 @@ class Simulator(Node):
         self.timer = self.create_timer(self.period_time, self.timer_callback, callback_group=self.group)
         self.get_logger().info(
             f"Using UAV '{self.uav_name}' topics: cmd={cmd_topic}, pose={pose_topic}, "
-            f"gimbal_pitch={gimbal_pitch_topic}, debug_yaw={yaw_debug_topic}, "
-            f"debug_camera_pose={camera_pose_topic}, "
-            f"camera_mode={self.camera_mode}, "
+            #f"gimbal_pitch={gimbal_pitch_topic}, debug_yaw={yaw_debug_topic}, "
+            #f"debug_camera_pose={camera_pose_topic}, "
+            #f"camera_mode={self.camera_mode}, "
             f"update_rate_hz={self.update_rate_hz:.1f}, "
-            f"camera_offset=({self.camera_x_offset:.2f},{self.camera_y_offset:.2f},-{self.camera_z_offset:.2f}), "
-            f"camera_mount_pitch_deg={self.camera_mount_pitch_deg:.1f}, "
-            f"camera_yaw_offset_deg={self.camera_yaw_offset_deg:.1f}, "
-            f"camera_pan_sign={self.camera_pan_sign:.1f}"
+            #f"camera_offset=({self.camera_x_offset:.2f},{self.camera_y_offset:.2f},-{self.camera_z_offset:.2f}), "
+            #f"camera_mount_pitch_deg={self.camera_mount_pitch_deg:.1f}, "
+            #f"camera_yaw_offset_deg={self.camera_yaw_offset_deg:.1f}, "
+            #f"camera_pan_sign={self.camera_pan_sign:.1f}"
         )
         self.get_logger().info(
             f"Initial pose x={self.world_position.x:.2f} y={self.world_position.y:.2f} "
@@ -423,30 +436,32 @@ class Simulator(Node):
             actual_tilt_deg = self._absolute_camera_tilt_deg(self.tilt)
             actual_camera_yaw, _, _, _ = self._camera_pose_components(self.pan, actual_tilt_deg)
             camera_pose = self._camera_pose_msg(now_msg, x, y, z, self.pan, actual_tilt_deg)
-            if self.camera_pose_pub is not None:
-                self.camera_pose_pub.publish(camera_pose)
-            self.camera_actual_pose_pub.publish(camera_pose)
-            actual_camera_yaw_msg = Float32()
-            actual_camera_yaw_msg.data = float(actual_camera_yaw)
-            self.camera_actual_world_yaw_pub.publish(actual_camera_yaw_msg)
+            """ if self.camera_pose_pub is not None:
+                self.camera_pose_pub.publish(camera_pose) """
+            #self.camera_actual_pose_pub.publish(camera_pose)
+            #actual_camera_yaw_msg = Float32()
+            #actual_camera_yaw_msg.data = float(actual_camera_yaw)
+            #self.camera_actual_world_yaw_pub.publish(actual_camera_yaw_msg)
             target_tilt_msg = Float32()
             target_tilt_msg.data = float(target_tilt_deg)
-            self.follow_target_tilt_pub.publish(target_tilt_msg)
-            actual_tilt_msg = Float32()
-            actual_tilt_msg.data = float(actual_tilt_deg)
-            self.follow_actual_tilt_pub.publish(actual_tilt_msg)
+            #self.follow_target_tilt_pub.publish(target_tilt_msg)
+            if self.follow_actual_tilt_pub is not None:
+                actual_tilt_msg = Float32()
+                actual_tilt_msg.data = float(actual_tilt_deg)
+                self.follow_actual_tilt_pub.publish(actual_tilt_msg)
             error_tilt_msg = Float32()
             error_tilt_msg.data = float(actual_tilt_deg - target_tilt_deg)
-            self.follow_error_tilt_pub.publish(error_tilt_msg)
+            #self.follow_error_tilt_pub.publish(error_tilt_msg)
             target_pan_msg = Float32()
             target_pan_msg.data = float(target_pan_deg)
-            self.follow_target_pan_pub.publish(target_pan_msg)
-            actual_pan_msg = Float32()
-            actual_pan_msg.data = float(self.pan)
-            self.follow_actual_pan_pub.publish(actual_pan_msg)
+            #self.follow_target_pan_pub.publish(target_pan_msg)
+            if self.follow_actual_pan_pub is not None:
+                actual_pan_msg = Float32()
+                actual_pan_msg.data = float(self.pan)
+                self.follow_actual_pan_pub.publish(actual_pan_msg)
             error_pan_msg = Float32()
             error_pan_msg.data = float(self.pan - target_pan_deg)
-            self.follow_error_pan_pub.publish(error_pan_msg)
+            #self.follow_error_pan_pub.publish(error_pan_msg)
         except Exception as ex:
             print("Exception timer_callback:", ex, type(ex))
 

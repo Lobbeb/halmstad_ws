@@ -97,6 +97,7 @@ def generate_launch_description():
     bridge = Node(
         package='ros_gz_bridge',
         executable='parameter_bridge',
+        name='support_uav_set_pose_bridge',
 #        arguments= ['/world/orchard/set_pose@ros_gz_interfaces/srv/SetEntityPose'],
         arguments=[
             ['/world/', gz_world, '/set_pose@ros_gz_interfaces/srv/SetEntityPose']
@@ -107,6 +108,7 @@ def generate_launch_description():
     camera_bridge = Node(
         package='ros_gz_bridge',
         executable='parameter_bridge',
+        name='support_uav_camera_bridge',
         arguments=[
             '/dji0/camera0/image@sensor_msgs/msg/Image@ignition.msgs.Image',
             '/dji0/camera0/camera_info@sensor_msgs/msg/CameraInfo@ignition.msgs.CameraInfo',

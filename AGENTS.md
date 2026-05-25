@@ -47,9 +47,9 @@ Goals for collecting simulation results for the **Master Thesis**:
 - ~~Explore `descriptions/C1_BASELINE_SIMPLE_OMNET_HANDOFF.md` to see how we should set up our tests.~~
 - ~~Test with everything activated~~
 - ~~Start gathering data for results to the Master Thesis.~~
-- C1: Raw follow, only odom
-  - ~~R01~~, ~~R02~~, ~~R03~~, R04, R05, R06, ~~R07~~, R08, R09.
-    - Plot trajectories, make sure they look okay.
+- ~~C1: Raw follow, only odom~~
+  - ~~R01, R02, R03, R04, R05, R06, R07, R08, R09.~~
+    - ~~Plot trajectories, make sure they look okay.~~
 - C2: Follow with YOLO
   - R01, R02, R03, R04, R05, R06, R07, R08, R09.
   - Plot trajectories WITH estimated trajectory, and the difference in distance.
@@ -113,10 +113,11 @@ After code changes, use the smallest useful validation:
 
 After workflow or operator-facing changes:
 
-- Update `README.md` and `src/lrs_halmstad/README.md`
+
+- Most important right now, keep `SIMULATION_TEST_PLAN.md` updated.
 - If logic changes update `HOW_TO_RUN.md` and `FOLLOW_MODES_GUIDE.md`
 
-Put new descriptions in `/descriptions`
+Put new descriptions in `descriptions/`
 
 If documentation and code disagree, trust the code paths in:
 

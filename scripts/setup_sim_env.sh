@@ -51,6 +51,23 @@ _sim_path_remove_rocm() {
     printf '%s' "${out[*]}"
 }
 
+_sim_path_remove_exact() {
+    local value="${1:-}"
+    local remove="${2:-}"
+    local part
+    local out=()
+
+    IFS=':' read -r -a _parts <<< "$value"
+    for part in "${_parts[@]}"; do
+        if [[ -n "$part" && "$part" != "$remove" ]]; then
+            out+=("$part")
+        fi
+    done
+
+    local IFS=':'
+    printf '%s' "${out[*]}"
+}
+
 # Remove ROCm/HIP variables that are useful for ML experiments but should not
 # leak into Gazebo, ROS 2, or OMNeT++ runtime shells.
 unset ROCM_HOME ROCM_PATH HIP_PATH HIP_PLATFORM HIP_VISIBLE_DEVICES
@@ -144,6 +161,13 @@ if [[ "$with_omnet" == "1" && -f "${OMNETPP_SETENV}" ]]; then
     set +u
     # shellcheck source=/dev/null
     source "${OMNETPP_SETENV}" >/dev/null
+    # OMNeT++ prepends its private Python venv, which shadows ROS/system
+    # python3 and misses packages such as PyYAML. Keep OMNeT++ binaries on PATH
+    # but let ROS launch scripts use the normal Python interpreter.
+    _sim_omnet_root="$(cd "$(dirname "${OMNETPP_SETENV}")" && pwd)"
+    PATH="$(_sim_path_remove_exact "${PATH:-}" "${_sim_omnet_root}/.venv/bin")"
+    export PATH
+    unset _sim_omnet_root
     if [[ "$_sim_had_nounset" == "1" ]]; then
         set -u
     else

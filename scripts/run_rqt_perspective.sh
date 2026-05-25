@@ -4,7 +4,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 WS_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 PERSPECTIVE_DIR="$WS_ROOT/perspectives"
-DEFAULT_PERSPECTIVE="NAV2"
+DEFAULT_PERSPECTIVE="YOLO"
 PERSPECTIVE="${1:-$DEFAULT_PERSPECTIVE}"
 
 resolve_perspective() {

@@ -101,6 +101,7 @@ class LeaderEstimator(EventEmitterMixin, Node):
         self.depth_percentile = max(1.0, min(99.0, float(yaml_param(self, "depth_percentile", descriptor=dyn_num))))
         self.target_ground_z_m = float(yaml_param(self, "target_ground_z_m", descriptor=dyn_num))
         self.radio_range_topic = str(self.declare_parameter("radio_range_topic", "/omnet/radio_distance").value).strip()
+        self.radio_fallback_enable = coerce_bool(self.declare_parameter("radio_fallback_enable", True).value)
         self.radio_range_timeout_s = float(self.declare_parameter("radio_range_timeout_s", 0.5).value)
         self.radio_range_warmup_s = float(self.declare_parameter("radio_range_warmup_s", 10.0).value)
         self.radio_range_min_samples = max(1, int(self.declare_parameter("radio_range_min_samples", 5).value))
@@ -226,7 +227,7 @@ class LeaderEstimator(EventEmitterMixin, Node):
         )
         self.radio_range_sub = (
             self.create_subscription(Float64, self.radio_range_topic, self.on_radio_range, 10)
-            if self.radio_range_topic
+            if self.radio_range_topic and (self.range_mode == "radio" or self.radio_fallback_enable)
             else None
         )
         self.camera_tilt_sub = self.create_subscription(Float32, self.camera_tilt_topic, self.on_camera_tilt, 10)
@@ -262,7 +263,7 @@ class LeaderEstimator(EventEmitterMixin, Node):
             f"uav_pose={self.uav_pose_topic}, detection={self.external_detection_topic}, "
             f"detection_status={self.external_detection_status_topic}, out={self.out_topic}, "
             f"est_hz={self.est_hz}Hz, range_mode={self.range_mode}, const_target_m={self._constant_target_range()[0]:.2f}, "
-            f"radio_range={self.radio_range_topic or 'disabled'}, "
+            f"radio_range={self.radio_range_topic or 'disabled'}, radio_fallback={self.radio_fallback_enable}, "
             f"distance_status={self.distance_status_topic}"
         )
         self.publish_fault_status_msg(self._fault_line("none", "none", self.get_clock().now()))
@@ -850,7 +851,11 @@ class LeaderEstimator(EventEmitterMixin, Node):
                 depth_range = projected_depth_range
                 self.last_projection_mode = projection_mode
                 self.last_projection_tilt_deg = projection_tilt_deg
-        radio_range = self._radio_range_as_horizontal(now)
+        radio_range = (
+            self._radio_range_as_horizontal(now)
+            if self.range_mode == "radio" or self.radio_fallback_enable
+            else None
+        )
         if self.range_mode == "depth":
             if depth_range is None:
                 raise ValueError(depth_reject_reason if depth_reject_reason != "none" else "depth_range_invalid")
@@ -863,11 +868,11 @@ class LeaderEstimator(EventEmitterMixin, Node):
             range_source = "radio"
         elif self.range_mode == "const":
             range_m, range_source = self._constant_target_range()
-        else:  # auto: prefer depth, then radio, fall back to const
+        else:  # auto: prefer depth, optional radio, then const
             if depth_range is not None:
                 range_m = depth_range
                 range_source = "depth"
-            elif radio_range is not None:
+            elif self.radio_fallback_enable and radio_range is not None:
                 range_m = radio_range
                 range_source = "radio"
             else:

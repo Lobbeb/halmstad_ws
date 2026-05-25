@@ -38,12 +38,12 @@ follow_uav:
     pose_timeout_s: 3.0
 
     # Anchor placement and horizontal motion.
-    xy_anchor_max: 500.0             # Safety radius for the horizontal anchor target around the leader; widened for long LoRa distance tests.
+    xy_anchor_max: 10.0             # Safety radius for the horizontal anchor target around the leader; widened for long LoRa distance tests.
     follow_z_offset_m: 7.0           # Desired UAV height above leader. Horizontal distance is reduced so d_target remains the true 3D standoff.
 
     # Velocities and gains.
-    follow_speed_mps: 5.5   # This is fine, can be like 2-7 no problem.
-    follow_speed_gain: 0.3  # << -- KEEP 0.05 - 0.25, THIS is what can cause the UAV to zoom past the UGV, but UAV can't move if this is 0.
+    follow_speed_mps: 5.0   # Confirmed YOLO follow value from yolo_debug 12_best_known_minimal.
+    follow_speed_gain: 0.3  # Confirmed stable YOLO gain; higher values can make the UAV overshoot the UGV.
     d_target_slew_mps: 8.0           # Smooth runtime d_target changes so long-distance tests do not jump the anchor.
     follow_z_slew_mps: 1.5           # Smooth runtime altitude-offset changes instead of commanding instant vertical jumps.
 
@@ -75,6 +75,7 @@ uav_simulator:
     # Gazebo SetEntityPose protection.
     startup_set_pose_grace_s: 3.0           # Block SetEntityPose calls for this long after startup to avoid Gazebo spam; keep 1-5 s.
     set_pose_failure_backoff_s: 2.0         # Back off this long after a SetEntityPose failure before retrying.
+    publish_gimbal_state_topics: false      # Publish /<uav>/follow/actual/{pan,tilt}_deg; only needed for gimbal-state debugging.
 
 
 # <<------ Camera pan/tilt tracker ------ >>
@@ -86,8 +87,8 @@ camera_tracker:
     default_tilt_deg: -45.0                # Tilt command held when tilt tracking is disabled or stale; negative = down; keep -90 to 0 deg.
 
     # Tracking enable switches.
-    pan_enable: true                     # Enable geometric pan tracking; false = hold default_pan_deg.
-    tilt_enable: true                      # Enable geometric tilt tracking; false = hold default_tilt_deg.
+    pan_enable: false                     # Enable geometric pan tracking; false = hold default_pan_deg.
+    tilt_enable: false                      # Enable geometric tilt tracking; false = hold default_tilt_deg.
     prefer_visual_estimate_tilt_recovery: false  # Needs "weak_status_center_correction_enable: true" otherwise doesn't move the UAV. Once direct detections drop out, let tilt recovery follow the visual target estimate earlier instead of waiting for the world-pose path to age out.
 
     # Loop timing and pose freshness.
@@ -132,7 +133,7 @@ leader_detector:
     out_topic: /coord/leader_detection           # Best-detection topic consumed by leader_estimator.
     status_topic: /coord/leader_detection_status  # Detector status/debug topic.
     event_topic: /coord/events                  # Topic for detector lifecycle/debug event strings.
-    publish_events: false                         # Publish detector lifecycle events on event_topic.
+    publish_events: true                         # Publish detector lifecycle events on event_topic.
 
     # Model/runtime.
     device: 'auto'                             # Inference device: auto, cpu, 0 (first GPU), cuda:1.
@@ -208,7 +209,7 @@ leader_estimator:
     # Input topics.
     external_detection_topic: /coord/leader_detection               # Detection topic from leader_detector or leader_tracker.
     external_detection_status_topic: /coord/leader_detection_status  # Detector/tracker status used for debug image overlay only.
-    radio_range_topic: /omnet/radio_distance  # OMNeT++ LoRa estimate, derived from the LoRaLogNormalShadowing model and gated before use.
+    radio_range_topic: /omnet/radio_distance  # Simplex: RSSI-derived LoRa estimate. Duplex: bridge aliases the decoded UGV->UAV link payload onto this same topic.
 
     # Output topics.
     out_topic: /coord/leader_estimate                            # Published leader pose estimate topic.
@@ -218,10 +219,10 @@ leader_estimator:
     event_topic: /coord/events                                    # Topic for estimator lifecycle/debug event strings.
 
     # Output enable switches.
-    publish_status: false                                     # Publish estimator status strings.
+    publish_status: true                                     # Publish estimator status strings.
     publish_fault_status: false                                # Publish fault/state transitions on fault_status_topic.
-    publish_debug_image: false                                   # Publish diagnostic overlay image.
-    publish_events: false                                       # Publish estimator lifecycle events.
+    publish_debug_image: true                                   # Publish diagnostic overlay image.
+    publish_events: true                                       # Publish estimator lifecycle events.
 
     # Camera geometry used for projection.
     cam_x_offset_m: 0.0                              # Camera X offset in UAV body frame.
@@ -240,22 +241,23 @@ leader_estimator:
     external_detection_max_latency_ms: 3000.0                      # Match sim CPU detector latency budget so valid tracker hits can reach the estimator.
 
     # Range source selection.
-    range_mode: auto  # Range source: auto (depth->radio->const fallback chain), depth, radio, or const.
+    range_mode: depth  # Range source: auto (depth->const by default), depth, radio, or const.
 
     # Depth range input.
     depth_scale: 0.001                   # Scale factor converting raw 16UC1 depth pixel values to metres.
     depth_timeout_s: 0.5                  # Depth frames older than this are rejected; keep 0.2-1.0 s.
     depth_min_m: 1.0                      # Minimum valid depth sample in metres; keep 0.05-0.5 m.
-    depth_max_m: 20.0                      # Maximum valid depth sample in metres; keep 10-30 m.
+    depth_max_m: 30.0                      # Maximum valid depth sample in metres; keep 10-30 m.
     depth_patch_min_valid_px: 10           # Minimum valid pixels in the inner-50% bbox depth patch; keep 5-20.
     depth_percentile: 6.0                 # Percentile of valid depth patch pixels used as the range sample (1-99).
     depth_max_estimate_jump_m: 5.0          # Reject depth if it would jump the leader estimate by more than this; 0 = disabled.
 
     # Radio range input.
-    radio_range_timeout_s: 1.0                # Radio range older than this is discarded; keep 0.5-2.0 s.
-    radio_range_warmup_s: 10.0                # Ignore initial radio ranges for this long after the first finite sample.
-    radio_range_min_samples: 5                # Require at least this many finite radio samples before radio range can be used.
-    radio_range_stability_window: 5           # Number of recent radio samples used for optional stability gating.
+    radio_fallback_enable: false            # If true, auto mode can use radio after depth fails. Explicit range_mode:=radio still works.
+    radio_range_timeout_s: 3.0                # Radio range older than this is discarded; keep 0.5-2.0 s.
+    radio_range_warmup_s: 0.0                # Ignore initial radio ranges for this long after the first finite sample.
+    radio_range_min_samples: 1                # Require at least this many finite radio samples before radio range can be used.
+    radio_range_stability_window: 1           # Number of recent radio samples used for optional stability gating.
     radio_range_stability_max_delta_m: 0.0    # Require max-min within the window to be <= this; 0 disables the stability gate.
 
 
@@ -469,7 +471,7 @@ ugv_nav2_driver:
     # Goal acceptance/results behavior.
     continue_on_goal_failure: true        # Move to the next goal when Nav2 rejects or fails the current one.
     goal_reject_retry_count: 30            # Retries when a goal is rejected by the Nav2 action server; keep 2-20.
-    goal_reject_retry_delay_s: 0.6          # Delay between goal-rejection retries; keep 0.2-1.0 s.
+    goal_reject_retry_delay_s: 0.8          # Delay between goal-rejection retries; keep 0.2-1.0 s.
     goal_result_timeout_s: 100000.0             # Cancel and advance if Nav2 has not returned a result within this timeout.
     min_goal_xy_delta_m: 0.5                 # Skip a goal if its XY distance from current pose is below this; keep 0.01-0.5 m.
     min_goal_yaw_delta_deg: 2.0              # Skip a goal if its yaw distance from current pose is below this; keep 1-10 deg.
@@ -481,12 +483,12 @@ ugv_nav2_driver:
     # Internal generated route profile.
     motion_profile: route              # Named motion profile for internal route generation.
     cycles: 1                             # Number of route cycles when using the internal route generator.
-    forward_speed: 2.0                  # Forward speed for generated route segments in m/s.
-    forward_time_s: 1.0                # Duration of each generated forward segment in seconds.
+    forward_speed: 2.5                  # Forward speed for generated route segments in m/s.
+    forward_time_s: 2.0                # Duration of each generated forward segment in seconds.
     turn_pattern: alternate         # Left/right turn pattern for generated turns: alternate, left, or right.
     turn_speed: 1.5               # Angular speed for generated turns in rad/s.
     turn_time_s: 3.0             # Duration of generated turns in seconds.
     pause_every_n: 0                  # Insert a pause every N generated segments; 0 = disabled.
     pause_time_s: 0.0                # Duration of generated pauses in seconds.
-    variation_enable: true      # Enable random variation in the generated route for more natural motion.
+    variation_enable: false      # Enable random variation in the generated route for more natural motion.
     variation_amplitude: 0.10    # Amplitude of random variation added to generated segments; keep 0-0.3.
