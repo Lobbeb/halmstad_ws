@@ -14,6 +14,37 @@ RUN_DIR=""
 DRY_RUN=false
 OMNET=false
 
+usage() {
+  cat <<'EOF'
+Usage:
+  ./run.sh record_experiment [world] [options...]
+
+Record the standard experiment bag and write metadata/topics beside it.
+
+Common options:
+  mode:=follow|yolo
+  uav_name:=dji0
+  profile:=default|step2_light|vision
+  tag:=name
+  out:=bags/experiments/...      Output run directory; bag goes under out/bag
+  omnet:=true|false
+  dry_run:=true|false
+
+Examples:
+  ./run.sh record_experiment baylands mode:=yolo tag:=rotundan omnet:=true
+  ./run.sh record_experiment baylands out:=bags/replay_sources/rotundan_manual dry_run:=true
+EOF
+}
+
+for arg in "$@"; do
+  case "$arg" in
+    help|-h|--help)
+      usage
+      exit 0
+      ;;
+  esac
+done
+
 if [ -f "$SIM_WORLD_FILE" ]; then
   sim_world="$(cat "$SIM_WORLD_FILE" 2>/dev/null || true)"
   if [ -n "$sim_world" ]; then
@@ -51,7 +82,7 @@ for arg in "$@"; do
       ;;
     *)
       echo "Unknown argument: $arg" >&2
-      echo "Usage: $0 [world] [mode:=follow|yolo] [uav_name:=dji0] [profile:=default|step2_light|vision] [tag:=name] [out:=bags/experiments/...] [omnet:=true|false] [dry_run:=true|false]" >&2
+      usage >&2
       exit 2
       ;;
   esac

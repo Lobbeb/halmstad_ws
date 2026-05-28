@@ -46,6 +46,50 @@ source "$SCRIPT_DIR/slam_state_common.sh"
 source "$SCRIPT_DIR/baylands_waypoint_common.sh"
 BAYLANDS_GROUP_WAYPOINT_CSV="$(baylands_group_waypoint_csv)"
 
+usage() {
+  cat <<'EOF'
+Usage:
+  ./run.sh gazebo_sim [world] [gui:true|false] [options...]
+  ./run.sh gazebo_sim [world] gui:=true|false [options...]
+
+Launch Gazebo and spawn the Clearpath UGV.
+
+Common options:
+  gui:=true|false
+  rebuild:=true|false
+  waypoint:=rotundan_0          Baylands spawn waypoint
+  state:=checkpoint             Saved SLAM state
+  x:=... y:=... z:=... yaw:=... Explicit spawn pose
+  rtf:=1.0                      Forwarded to managed_clearpath_sim.launch.py
+  clock_mode:=guarded|direct    Forwarded to managed_clearpath_sim.launch.py
+
+Examples:
+  ./run.sh gazebo_sim baylands waypoint:=rotundan_0
+  ./run.sh gazebo_sim baylands false waypoint:=rotundan_0
+  ./run.sh gazebo_sim baylands gui:=true waypoint:=rotundan_0 clock_mode:=direct
+
+EOF
+}
+
+coerce_bool() {
+  case "$1" in
+    true|false)
+      printf '%s\n' "$1"
+      ;;
+    *)
+      echo "Invalid boolean value: $1" >&2
+      exit 2
+      ;;
+  esac
+}
+
+case "${1:-}" in
+  help|-h|--help)
+    usage
+    exit 0
+    ;;
+esac
+
 resolve_baylands_waypoint() {
   local waypoint_name="$1"
   python3 - "$waypoint_name" "$BAYLANDS_GROUP_WAYPOINT_CSV" <<'PY'
@@ -157,6 +201,10 @@ while [ "$#" -gt 0 ]; do
     yaw:=*)
       YAW_SET="true"
       PASSTHROUGH_ARGS+=("$1")
+      ;;
+    help|-h|--help)
+      usage
+      exit 0
       ;;
     *)
       PASSTHROUGH_ARGS+=("$1")

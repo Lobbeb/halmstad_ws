@@ -71,7 +71,7 @@ Use `range_mode:=radio` only for explicit radio-only estimator tests, not for th
 
 C1 and C2 live runs keep ROS bags and OMNeT files in the same route folder. C3 and C4 thesis bags are already recorded without `/omnet/*`, so network metrics are generated afterward with offline OMNeT replay.
 
-Use `replay_scale:=2` for offline replay by default. It sets both the bag pose replay speed and OMNeT `realtimescheduler-scaling`, so a 300 s bag takes about 150 s. If it finishes cleanly, `replay_scale:=4` may be tested.
+Use `replay_scale:=3` for offline replay batches by default. It sets both the bag pose replay speed and OMNeT `realtimescheduler-scaling`, so a 300 s bag takes about 100 s. `replay_scale:=4` has looked fine in spot testing and can be used if completion checks still pass.
 
 ## What To Record
 
@@ -111,7 +111,7 @@ For a whole campaign directory:
   --lora-mode rep-map
 ```
 
-This writes separated per-metric figures under `<results-dir>/plots/network/`, including distance, `/omnet/radio_distance`, RSSI, SNIR, latency, jitter, PER, PDR, and metric-vs-distance plots when those topics exist in the bag.
+By default this writes one campaign-level thesis signal/loss figure under `<results-dir>/plots/network/combined/`, plus `network_metrics_summary.csv`. Plot labels use route-order letters `A-I` for `R01-R09`. C2 plot labels use `Simplex`, `Duplex`, and `Distance Sweep` instead of `rep01`, `rep02`, and `rep03`. Use `--per-run-plots` only when debugging a specific route; per-run figures go under `repXX/`.
 
 Offline replay writes:
 
@@ -132,7 +132,7 @@ bags/ruben_c1_c4_selected_rosbags_2026-05-25/offline_omnet_manifest.csv
 
 ## Metrics To Compare
 
-Main network metrics:
+Main network metrics to keep in CSV/summary:
 
 - Packet delivery ratio.
 - Packet error rate.
@@ -143,6 +143,15 @@ Main network metrics:
 - Link distance.
 - Radio-derived distance.
 - Packet sent/received counts from OMNeT files.
+
+Preferred thesis figures:
+
+- Campaign signal/loss summary: RSSI against true UAV-UGV distance, with PER on the right axis.
+- Link distance and radio-derived distance remain in the CSV summary, but are not default thesis figures.
+- C2 repetition averages: one combined time-series figure each for `simplex`, `duplex`, and `distance sweep`, averaged across routes with `--rep-average-plots`; the network panel shows RSSI with PER on the right axis.
+- Per-run combined figures only for debugging: distance plus RSSI/PER; link distance is not plotted.
+- Figures are generated without in-plot titles; use LaTeX captions instead.
+- Latency, SNIR, PDR, and jitter stay in `network_metrics_summary.csv`, but are usually not plotted because they add little separation in the current runs.
 
 Use route/control metrics only as validity checks and context for the network results.
 
@@ -174,8 +183,8 @@ From OMNeT files:
 
 - Packets sent/received.
 - PDR / delivery ratio.
-- RSSI and SNIR over time.
-- Latency and jitter.
+- RSSI over time.
+- PER, especially for distance sweep runs.
 - Queue or data-rate metrics if available.
 
 ## Useful Commands
@@ -196,7 +205,7 @@ Run offline OMNeT replay for one selected C3 run:
   lora_bw:=125kHz \
   ugv_topic:=/a201_0000/platform/odom/filtered \
   uav_topic:=/dji0/pose \
-  replay_scale:=2
+  replay_scale:=3
 ```
 
 Run simplex and duplex replay for all C3 selected bags:
@@ -206,7 +215,7 @@ Run simplex and duplex replay for all C3 selected bags:
   root:=bags/ruben_c1_c4_selected_rosbags_2026-05-25 \
   conditions:=C3 \
   networks:=lora,lora-duplex \
-  replay_scale:=2
+  replay_scale:=3
 ```
 
 Run leader-link replay for C4 selected bags:
@@ -215,8 +224,9 @@ Run leader-link replay for C4 selected bags:
 ./run.sh omnet_bag_replay_batch \
   root:=bags/ruben_c1_c4_selected_rosbags_2026-05-25 \
   conditions:=C4 \
-  networks:=lora,lora-duplex \
-  replay_scale:=2
+  networks:=lora-duplex \
+  replay_scale:=3 \
+  sample_stride:=2
 ```
 
 Plot offline replay metrics:
@@ -224,14 +234,22 @@ Plot offline replay metrics:
 ```bash
 ./run.sh plot_network_metrics \
   --results-dir bags/ruben_c1_c4_selected_rosbags_2026-05-25/C3 \
-  --offline-omnet
+  --offline-omnet \
+  --overview-set thesis
 ```
 
 ```bash
 ./run.sh plot_network_metrics \
   --results-dir bags/ruben_c1_c4_selected_rosbags_2026-05-25/C4 \
   --offline-omnet \
-  --overview-only
+  --networks lora-duplex \
+  --overview-set thesis
+```
+
+Generate only the summary CSV and best/worst metric tables:
+
+```bash
+./run.sh plot_network_metrics --results-dir bags/ruben_c1_c4_selected_rosbags_2026-05-25 --offline-omnet --summary-only --rank-limit 5
 ```
 
 ## Run Notes
@@ -258,6 +276,8 @@ C2 repetition mapping:
 - `rep02`: duplex, fixed geometry.
 - `rep03`: simplex, manual distance sweep.
 
+In thesis figures, C2 is labeled by condition only: `simplex`, `duplex`, and `distance sweep`.
+
 Manual distance sweep command after rep03 launch:
 
 ```bash
@@ -265,6 +285,26 @@ for d in 10 15 20 25 30 35 40 45 50 55 60 65 70 75 80 85 90 95 100; do z=7; xy=$
 ```
 
 Use `plot_trajectory_paths.py --plane xz` for rep03 height/distance inspection.
+Trajectory plots write under `<results-dir>/plots/trajectory/`: averaged route sheets go under `combined/`, and non-averaged repetition sheets go under `by_rep/`.
+
+Plot one averaged C2 network time-series figure per repetition/condition:
+
+```bash
+./run.sh plot_network_metrics \
+  --results-dir bags/results_baylands_lora_c2 \
+  --lora-mode rep-map \
+  --rep-average-plots
+```
+
+This writes only the three averaged C2 LoRa-network figures plus `network_metrics_summary.csv`. The distance panel also includes `leader_estimate` error when `/coord/leader_estimate` and UGV reference odom exist in the bag.
+
+```bash
+d=15 z=10 xy=10
+
+ros2 param set /follow_uav xy_anchor_max $xy 
+ros2 param set /follow_uav d_target $d 
+ros2 param set /follow_uav follow_z_offset_m $z
+```
 
 ### C3 Offline OMNeT
 
@@ -296,8 +336,8 @@ It is not yet a full three-UAV ad hoc replay. A true C4 ad hoc analysis needs OM
 - In duplex runs, `/omnet/radio_distance` is the decoded UGV-to-UAV LoRa payload.
 - Live collection still uses normal tmux scripts. Offline OMNeT replay from saved bags uses `./run.sh omnet_bag_replay`.
 - Offline replay batch collection uses `./run.sh omnet_bag_replay_batch`.
-- Offline replay plotting uses `./run.sh plot_network_metrics --offline-omnet`.
-- `replay_scale:=2` has been verified to reach 100% completion on a C3 bag.
+- Offline replay plotting uses `./run.sh plot_network_metrics --offline-omnet`; default output is one campaign-level thesis figure, `network_metrics_summary.csv`, and `network_metrics_extremes.md`.
+- `replay_scale:=4` has been spot-tested successfully; use `replay_scale:=3` as the safer full-folder batch default unless time pressure is high.
 
 ## Campaigns To-Do
 
@@ -315,4 +355,4 @@ As of 2026-05-25:
 - Selected thesis bag root for offline C3/C4 network replay: `bags/ruben_c1_c4_selected_rosbags_2026-05-25`.
 - `run_omnet_bag_replay.sh` now cleans up helper processes, applies wall-time timeout, and supports `replay_scale`.
 - `run_omnet_bag_replay_batch.sh` discovers C3/C4 selected bags and records an offline replay manifest.
-- `plot_network_metrics.py` supports `--offline-omnet` and plots separated figures from generated `network_metrics.csv` files.
+- `plot_network_metrics.py` supports `--offline-omnet`, `--overview-set thesis|all|both`, optional `--per-run-plots`, and `--summary-only` for CSV/table output.

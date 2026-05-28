@@ -74,6 +74,7 @@ HAVE_RANGE_MODE="false"
 HAVE_RADIO_RANGE_TOPIC="false"
 FOLLOW_WAIT_TOPICS=""
 NAV2_GOALS_FOR_LIDAR=""
+STRICT_STACK_START="true"
 SPAWN_ARGS=()
 FOLLOW_ARGS=()
 GAZEBO_ARGS=()
@@ -207,6 +208,7 @@ Timing:
   uav_start_delay_s:=12.0
   gazebo_ready_timeout_s:=180
   gazebo_ready_settle_s:=10
+  strict_stack_start:=true|false
 
 Examples:
   ./run.sh tmux_1to1 baylands mode:=yolo omnet:=true record:=true
@@ -438,6 +440,9 @@ for arg in "$@"; do
     follow_wait_topics:=*)
       FOLLOW_WAIT_TOPICS="${arg#follow_wait_topics:=}"
       ;;
+    strict_stack_start:=*)
+      STRICT_STACK_START="${arg#strict_stack_start:=}"
+      ;;
     record_delay_s:=*)
       RECORD_DELAY_OVERRIDE="${arg#record_delay_s:=}"
       ;;
@@ -647,6 +652,16 @@ case "$RECORD_PROFILE" in
     exit 2
     ;;
 esac
+
+case "$STRICT_STACK_START" in
+  true|false)
+    ;;
+  *)
+    echo "Invalid strict_stack_start option: $STRICT_STACK_START" >&2
+    echo "Use strict_stack_start:=true or strict_stack_start:=false" >&2
+    exit 2
+    ;;
+esac
 fi
 
 case "$LAYOUT" in
@@ -734,10 +749,10 @@ build_line() {
   if [ "$delay_s" != "0" ] && [ "$delay_s" != "0.0" ]; then
     printf -v line '%ssleep %q && ' "$line" "$delay_s"
   fi
-  if [ "$wait_for_sim" = true ]; then
+  if [ "$wait_for_sim" = true ] && [ "$STRICT_STACK_START" = true ]; then
     printf -v line '%sbash -lc %q && ' "$line" "$(build_gazebo_ready_cmd)"
   fi
-  if [ -n "$ready_cmd" ]; then
+  if [ -n "$ready_cmd" ] && [ "$STRICT_STACK_START" = true ]; then
     printf -v line '%sbash -lc %q && ' "$line" "$ready_cmd"
   fi
   printf -v line '%s%s' "$line" "$(shell_join "$@")"

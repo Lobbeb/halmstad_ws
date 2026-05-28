@@ -27,6 +27,40 @@ source "$SCRIPT_DIR/baylands_waypoint_common.sh"
 source "$SCRIPT_DIR/baylands_route_lidar_common.sh"
 DEFAULT_BAYLANDS_GROUP_WAYPOINT_CSV="$(baylands_group_waypoint_csv)"
 
+usage() {
+  cat <<'EOF'
+Usage:
+  ./run.sh localization [world] [map.yaml] [lidar:=2d|3d] [options...]
+
+Start map server, AMCL, scan relay, and optional pointcloud_to_laserscan for
+the active simulated UGV.
+
+Common options:
+  lidar:=2d|3d
+  scan_topic:=/topic
+  pointcloud_topic:=/topic
+  use_scan_relay:=true|false
+  scan_relay_hz:=10.0
+  scan_relay_max_age_s:=...
+  params_file:=path/to/localization.yaml
+  set_initial_pose:=true
+  initial_pose_x:=... initial_pose_y:=... initial_pose_yaw:=...
+
+Examples:
+  ./run.sh localization baylands lidar:=3d
+  ./run.sh localization baylands maps/baylands.yaml lidar:=2d
+EOF
+}
+
+for arg in "$@"; do
+  case "$arg" in
+    help|-h|--help)
+      usage
+      exit 0
+      ;;
+  esac
+done
+
 resolve_localization_map_path() {
   local requested_path="$1"
 

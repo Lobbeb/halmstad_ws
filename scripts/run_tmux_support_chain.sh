@@ -20,6 +20,51 @@ BASE_ARGS=()
 SUPPORT_FOLLOW_ARGS=()
 SUPPORT_OBSERVATION_ARGS=()
 
+usage() {
+  cat <<'EOF'
+Usage:
+  ./run.sh tmux_support_chain [world] [arg:=value ...]
+
+Start the base 1-to-1 stack plus support UAV follow and observation panes.
+
+Core arguments:
+  world                         World name. Default: baylands.
+  session:=NAME                 tmux session name. Default: halmstad-<world>-support-chain.
+  layout:=panes|windows         Base tmux layout. Default: panes.
+  tmux_attach:=true|false       Attach after launch. Default: true.
+  dry_run:=true|false           Print commands only. Default: false.
+  mode:=yolo|follow|...         Base 1-to-1 mode. Default: yolo.
+
+Leader/UAV start arguments:
+  uav_start_x:=M
+  uav_start_y:=M
+  uav_start_z:=M
+  uav_start_yaw_deg:=DEG
+  height:=M                     Alias for support leader_nominal_z.
+
+Support timing:
+  support_follow_delay_s:=S
+  support_observation_delay_s:=S
+
+Support follow / observation arguments:
+  support_*:=VALUE, dji1_*:=VALUE, dji2_*:=VALUE, leader_*:=VALUE
+  detector_*:=VALUE, yolo_*:=VALUE, target:=VALUE
+
+Examples:
+  ./run.sh tmux_support_chain baylands dry_run:=true
+  ./run.sh tmux_support_chain baylands tmux_attach:=false support_follow_delay_s:=5
+EOF
+}
+
+for arg in "$@"; do
+  case "$arg" in
+    help|-h|--help)
+      usage
+      exit 0
+      ;;
+  esac
+done
+
 if [ "$#" -gt 0 ] && [[ "$1" != *":="* ]] && [[ "$1" != *=* ]]; then
   WORLD="$1"
   shift

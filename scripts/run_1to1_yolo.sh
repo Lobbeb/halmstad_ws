@@ -55,6 +55,46 @@ source "$SCRIPT_DIR/slam_state_common.sh"
 source "$SCRIPT_DIR/baylands_waypoint_common.sh"
 BAYLANDS_GROUP_WAYPOINT_CSV="$(baylands_group_waypoint_csv)"
 
+usage() {
+  cat <<'EOF'
+Usage:
+  ./run.sh 1to1_yolo [world] [options...]
+
+Start YOLO detection, leader estimation, UAV follow, and the Nav2-backed UGV
+route driver. YOLO mode intentionally refuses UGV odom/ground-truth inputs.
+
+Common options:
+  waypoint:=rotundan_0
+  nav2_goals:=rotundan|path.yaml
+  weights:=/path/model.pt
+  obb:=true|false
+  tracker:=true|false
+  external_detection_node:=detector|tracker
+  use_estimate:=true
+  yolo_control_mode:=follow_uav_estimate|visual_bridge
+  detector_backend:=ultralytics|onnx_cpu|onnx_directml
+  detector_async_inference:=true|false
+  detector_latest_frame_only:=true|false
+  detector_stale_detection_threshold_ms:=3000
+  yolo_device:=auto|cpu|0
+  range_mode:=auto|depth|radio|const
+  omnet:=true|false
+
+Examples:
+  ./run.sh 1to1_yolo baylands waypoint:=rotundan_0 nav2_goals:=rotundan
+  ./run.sh 1to1_yolo baylands weights:=/home/ruben/halmstad_ws/models/obb/mymodels/baylands-leader-v9-tuned-full.pt obb:=true
+EOF
+}
+
+for arg in "$@"; do
+  case "$arg" in
+    help|-h|--help)
+      usage
+      exit 0
+      ;;
+  esac
+done
+
 resolve_baylands_amcl_waypoint_pose() {
   local waypoint_name="$1"
   python3 - "$waypoint_name" "$BAYLANDS_GROUP_WAYPOINT_CSV" <<'PY'

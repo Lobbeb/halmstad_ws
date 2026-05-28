@@ -32,7 +32,28 @@ PAUSED_SIM="false"
 
 usage() {
   cat <<'EOF'
-Usage: ./run.sh realign_yaw [world] [x:=...] [y:=...] [z:=...] [yaw:=0.0] [waypoint:=name] [with_uav:=false] [uav_name:=dji0] [uav_z:=7.0] [keep_paused:=false] [dry_run:=false]
+Usage:
+  ./run.sh realign_yaw [world] [arg:=value ...]
+
+Pause Gazebo, set the UGV pose/yaw through /world/<world>/set_pose, then
+unpause unless keep_paused:=true is set.
+
+Pose arguments:
+  world:=NAME | world             Gazebo world key. Default: saved SLAM world name.
+  waypoint:=NAME                  Baylands waypoint name; fills x/y/z/yaw when available.
+  x:=M y:=M z:=M                  Target UGV position. Missing values use current pose.
+  yaw:=RAD                        Target UGV yaw in radians. Default: 0.0.
+
+Optional UAV realignment:
+  with_uav:=true|false            Also move the UAV relative to the UGV. Default: false.
+  uav_name:=NAME | name:=NAME     UAV entity name. Default: dji0.
+  uav_z:=M | height:=M            UAV target height. Default: current UAV z.
+  uav_body_x_offset:=M            UAV offset in UGV body x. Default: -7.0.
+  uav_body_y_offset:=M            UAV offset in UGV body y. Default: 0.0.
+
+Control:
+  keep_paused:=true|false         Leave Gazebo paused after pose update. Default: false.
+  dry_run:=true|false             Print commands only. Default: false.
 
 Examples:
   ./run.sh realign_yaw
@@ -58,6 +79,15 @@ coerce_bool() {
       ;;
   esac
 }
+
+for arg in "$@"; do
+  case "$arg" in
+    help|-h|--help)
+      usage
+      exit 0
+      ;;
+  esac
+done
 
 resolve_baylands_waypoint() {
   local waypoint_name="$1"
@@ -180,10 +210,6 @@ fi
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
-    help|-h|--help)
-      usage
-      exit 0
-      ;;
     world:=*)
       WORLD="${1#world:=}"
       ;;

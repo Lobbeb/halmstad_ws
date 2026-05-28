@@ -14,6 +14,35 @@ RVIZ_QT_PLATFORM="${RVIZ_QT_PLATFORM:-auto}"
 
 source "$SCRIPT_DIR/lidar_mode_common.sh"
 
+usage() {
+  cat <<'EOF'
+Usage:
+  ./run.sh nav2_rviz [lidar:=2d|3d] [options...]
+
+Start RViz with the workspace Nav2 display config.
+
+Common options:
+  lidar:=2d|3d
+  rviz_config:=name_or_path.rviz
+  qt_platform:=auto|xcb|wayland
+  rviz_qt_platform:=auto|xcb|wayland
+
+Examples:
+  ./run.sh nav2_rviz lidar:=3d
+  ./run.sh nav2_rviz lidar:=2d qt_platform:=xcb
+  ./run.sh nav2_rviz rviz_config:=waypoints_testing.rviz
+EOF
+}
+
+for arg in "$@"; do
+  case "$arg" in
+    help|-h|--help)
+      usage
+      exit 0
+      ;;
+  esac
+done
+
 lidar_mode_parse_args 3d "$@"
 
 if [ "$LIDAR_MODE" = "3d" ] && [ "$LIDAR_SCAN_TOPIC" = "$(lidar_mode_scan_topic 3d)" ]; then
