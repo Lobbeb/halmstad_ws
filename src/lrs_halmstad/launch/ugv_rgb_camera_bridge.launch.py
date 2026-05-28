@@ -43,7 +43,7 @@ def generate_launch_description():
         remappings=[('/tf', 'tf'), ('/tf_static', 'tf_static')],
         parameters=[{'use_sim_time': True}],
     )
-        # camera_bridge,
     return LaunchDescription([
+        camera_bridge,
         camera_static_tf,
     ])

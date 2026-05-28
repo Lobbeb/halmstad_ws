@@ -240,13 +240,24 @@ Then connect with:
 ssh hh-bermingham
 ```
 
+Recommended local shell variables for the commands below:
+
+```bash
+export LOCAL_WS=/home/ruben/halmstad_ws
+export HH_GPU_USER=rubcro20
+export HH_GPU_HOST=bermingham.hh.se
+export HH_GPU_SSH_PORT=20022
+export REMOTE_WS=/nfs/home/${HH_GPU_USER}/halmstad_ws
+export SSH_TARGET=${HH_GPU_USER}@${HH_GPU_HOST}
+```
+
 ## Push To GPU Lab
 
 Push the SAM3 annotation scripts, setup scripts, one detector model, and required data layout:
 
 ```bash
-cd /home/ruben/halmstad_ws
-HH_GPU_USER=rubcro20 HH_GPU_HOST=bermingham.hh.se ./scripts/hh_gpu_sync_sam3_obb.sh
+cd "$LOCAL_WS"
+./scripts/hh_gpu_sync_sam3_obb.sh
 ```
 
 Common environment arguments:
@@ -260,9 +271,48 @@ Common environment arguments:
 Generic push example:
 
 ```bash
-rsync -avz --info=progress2 -e "ssh -p 20022" \
-  /home/ruben/halmstad_ws/models/obb/mymodels/baylands-leader-v9-tuned-full.pt \
-  rubcro20@bermingham.hh.se:/nfs/home/rubcro20/halmstad_ws/models/obb/mymodels/
+MODEL_NAME=baylands-leader-v9-tuned-full.pt
+
+rsync -avz --info=progress2 -e "ssh -p ${HH_GPU_SSH_PORT}" \
+  "$LOCAL_WS/models/obb/mymodels/$MODEL_NAME" \
+  "$SSH_TARGET:$REMOTE_WS/models/obb/mymodels/"
+```
+
+### Keep Tune Models In `mymodels`
+
+When a tune run finishes, the raw output model is usually named `best.pt` under:
+
+```text
+models/obb/experiments/sam3_hybrid_full/runs/tune/<RUN>/weights/best.pt
+```
+
+Rename that file to a clear model version and keep a copy in local `mymodels`:
+
+```bash
+RUN=<tune-run-name>
+MODEL_NAME=<model-version>.pt
+
+cp "$LOCAL_WS/models/obb/experiments/sam3_hybrid_full/runs/tune/$RUN/weights/best.pt" \
+  "$LOCAL_WS/models/obb/mymodels/$MODEL_NAME"
+```
+
+For GPU lab tuning, the same named model must also exist on the SSH host:
+
+```bash
+rsync -avz --info=progress2 -e "ssh -p ${HH_GPU_SSH_PORT}" \
+  "$LOCAL_WS/models/obb/mymodels/$MODEL_NAME" \
+  "$SSH_TARGET:$REMOTE_WS/models/obb/mymodels/"
+```
+
+After logging in to the GPU host, use that SSH path as `BASE_MODEL`:
+
+```bash
+export REMOTE_WS=/nfs/home/$USER/halmstad_ws
+MODEL_NAME=<model-version>.pt
+
+BASE_MODEL="$REMOTE_WS/models/obb/mymodels/$MODEL_NAME" \
+RUN=v11_tune_from_latest \
+"$REMOTE_WS/scripts/hh_gpu_run_tune_sam3_full_remote.sh"
 ```
 
 ## Run On GPU Lab
@@ -270,8 +320,9 @@ rsync -avz --info=progress2 -e "ssh -p 20022" \
 Remote setup:
 
 ```bash
-ssh -p 20022 rubcro20@bermingham.hh.se
-/nfs/home/rubcro20/halmstad_ws/scripts/hh_gpu_remote_setup_sam3_obb.sh
+ssh -p "$HH_GPU_SSH_PORT" "$SSH_TARGET"
+export REMOTE_WS=/nfs/home/$USER/halmstad_ws
+"$REMOTE_WS/scripts/hh_gpu_remote_setup_sam3_obb.sh"
 ```
 
 Run SAM3 annotation:
@@ -281,7 +332,7 @@ SPLITS=train \
 SAM_SIZE=644 \
 DEVICE=cuda \
 DET_DEVICE=cuda \
-/nfs/home/rubcro20/halmstad_ws/scripts/hh_gpu_run_sam3_obb_remote.sh
+"$REMOTE_WS/scripts/hh_gpu_run_sam3_obb_remote.sh"
 ```
 
 Run generalization annotation:
@@ -289,27 +340,29 @@ Run generalization annotation:
 ```bash
 SAM_SIZE=644 \
 SPLITS="val test" \
-/nfs/home/rubcro20/halmstad_ws/scripts/hh_gpu_run_generalization_sam3_obb_remote.sh
+"$REMOTE_WS/scripts/hh_gpu_run_generalization_sam3_obb_remote.sh"
 ```
 
 Run tuning:
 
 ```bash
+MODEL_NAME=baylands-leader-v9-tuned-full.pt
+
 RUN=v10_tune_from_v9_tight \
-BASE_MODEL=/nfs/home/rubcro20/halmstad_ws/models/obb/mymodels/baylands-leader-v9-tuned-full.pt \
+BASE_MODEL="$REMOTE_WS/models/obb/mymodels/$MODEL_NAME" \
 DEVICE=0 \
 EPOCHS=35 \
 ITERATIONS=40 \
 PATIENCE=12 \
 SPACE_PRESET=v9_tight \
 CACHE=ram \
-/nfs/home/rubcro20/halmstad_ws/scripts/hh_gpu_run_tune_sam3_full_remote.sh
+"$REMOTE_WS/scripts/hh_gpu_run_tune_sam3_full_remote.sh"
 ```
 
 Resume tuning:
 
 ```bash
-RESUME=1 RUN=v10_tune_from_v9_tight-2 /nfs/home/rubcro20/halmstad_ws/scripts/hh_gpu_run_tune_sam3_full_remote.sh
+RESUME=1 RUN=v10_tune_from_v9_tight-2 "$REMOTE_WS/scripts/hh_gpu_run_tune_sam3_full_remote.sh"
 ```
 
 ## Pull From GPU Lab
@@ -317,30 +370,31 @@ RESUME=1 RUN=v10_tune_from_v9_tight-2 /nfs/home/rubcro20/halmstad_ws/scripts/hh_
 Pull generated SAM3 labels:
 
 ```bash
-cd /home/ruben/halmstad_ws
-HH_GPU_USER=rubcro20 HH_GPU_HOST=bermingham.hh.se ./scripts/hh_gpu_fetch_sam3_obb_labels.sh
+cd "$LOCAL_WS"
+./scripts/hh_gpu_fetch_sam3_obb_labels.sh
 ```
 
 Pull tune results:
 
 ```bash
-V=<version to pull>
-rsync -avz --info=progress2 -e "ssh -p 20022" \
-  rubcro20@bermingham.hh.se:/nfs/home/rubcro20/halmstad_ws/models/obb/experiments/sam3_hybrid_full/runs/tune/v10_tune_from_v9_tight-${V}/ \
-  /home/ruben/halmstad_ws/models/obb/experiments/sam3_hybrid_full/runs/tune/v10_tune_from_v9_tight-${V}/
+RUN=v10_tune_from_v9_tight-2
+
+rsync -avz --info=progress2 -e "ssh -p ${HH_GPU_SSH_PORT}" \
+  "$SSH_TARGET:$REMOTE_WS/models/obb/experiments/sam3_hybrid_full/runs/tune/$RUN/" \
+  "$LOCAL_WS/models/obb/experiments/sam3_hybrid_full/runs/tune/$RUN/"
 ```
 
 Pull model weights:
 
 ```bash
-rsync -avz --info=progress2 -e "ssh -p 20022" \
-  rubcro20@bermingham.hh.se:/nfs/home/rubcro20/halmstad_ws/models/obb/mymodels/*.pt \
-  /home/ruben/halmstad_ws/models/obb/mymodels/
+rsync -avz --info=progress2 -e "ssh -p ${HH_GPU_SSH_PORT}" \
+  "$SSH_TARGET:$REMOTE_WS/models/obb/mymodels/*.pt" \
+  "$LOCAL_WS/models/obb/mymodels/"
 ```
 
 Check remote jobs:
 
 ```bash
-ssh -p 20022 rubcro20@bermingham.hh.se \
+ssh -p "$HH_GPU_SSH_PORT" "$SSH_TARGET" \
 'ps -u "$USER" -o pid,etime,%cpu,%mem,cmd | egrep "python|tune|annotate|rsync|hf download" | grep -v egrep'
 ```

@@ -13,6 +13,45 @@ import re
 from pathlib import Path
 from typing import Any
 
+THESIS_ROUTE_BY_NAME = {
+    "rotundan": "A",
+    "road_to_west": "B",
+    "road to west": "B",
+    "parkinglot_west": "C",
+    "parkinglot west": "C",
+    "road_to_spawn": "D",
+    "road to spawn": "D",
+    "spawn": "E",
+    "road_to_east": "F",
+    "road to east": "F",
+    "parkinglot_east": "G",
+    "parkinglot east": "G",
+    "road_to_strip": "H",
+    "road to strip": "H",
+    "strip": "I",
+}
+
+C2_REP_LABELS = {
+    "rep01": "Simplex",
+    "rep02": "Duplex",
+    "rep03": "Distance Sweep",
+}
+
+REFERENCE_TOPIC_FALLBACKS = [
+    "/a201_0000/ground_truth/odom",
+    "/a201_0000/platform/odom/filtered",
+    "/a201_0000/amcl_pose_odom",
+    "/a201_0000/platform/odom",
+]
+
+SINGLE_FIGURE_WIDTH_IN = 3.3
+SINGLE_FIGURE_HEIGHT_IN = 3.3
+WIDE_FIGURE_WIDTH_IN = 6.6
+WIDE_FIGURE_HEIGHT_IN = 3.4
+AXIS_LIMIT_PAD_FRACTION = 0.03
+PATH_MARKER_COUNT = 8
+PathPoint = tuple[float, float, float]
+
 
 def parse_bool(value: str) -> bool:
     lowered = str(value).strip().lower()
@@ -62,7 +101,7 @@ def parse_args() -> argparse.Namespace:
         default=[],
         help="Additional path series in Label=/topic form. May be repeated.",
     )
-    parser.add_argument("--reference-label", default="Reference / UGV")
+    parser.add_argument("--reference-label", default="UGV")
     parser.add_argument("--uav-label", default="UAV")
     parser.add_argument("--warmup", type=float, default=0.0, help="Seconds to skip from bag start.")
     parser.add_argument("--title", default="", help="Optional plot title.")
@@ -75,8 +114,8 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--pdf", action="store_true", help="Also write PDF output.")
     parser.add_argument("--dpi", type=int, default=220)
-    parser.add_argument("--width", type=float, default=6.5, help="Figure width in inches.")
-    parser.add_argument("--height", type=float, default=5.0, help="Figure height in inches.")
+    parser.add_argument("--width", type=float, default=SINGLE_FIGURE_WIDTH_IN, help="Single-panel figure width in inches.")
+    parser.add_argument("--height", type=float, default=SINGLE_FIGURE_HEIGHT_IN, help="Single-panel figure height in inches.")
     parser.add_argument("--font-size", type=float, default=11.0, help="Base plot font size.")
     parser.add_argument(
         "--plane",
@@ -99,6 +138,11 @@ def parse_args() -> argparse.Namespace:
         help="Comma-separated repetitions to include with --results-dir, e.g. rep01 or rep01,rep03.",
     )
     parser.add_argument(
+        "--stack-routes",
+        action="store_true",
+        help="With --results-dir, also write one overview with all route trajectories overlaid.",
+    )
+    parser.add_argument(
         "--average",
         type=parse_bool,
         default=None,
@@ -113,13 +157,17 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Do not force equal x/y aspect ratio.",
     )
+    parser.add_argument(
+        "--trajectory-style",
+        choices=["markers", "lines"],
+        default="markers",
+        help="markers draws sparse position markers; lines restores the older continuous-line style.",
+    )
     args = parser.parse_args()
     if args.average is not None:
         args.batch_plots = "average" if args.average else "normal"
     if args.out and Path(args.out).suffix.lower() == ".pdf":
         args.pdf = True
-    if not args.results_dir and not args.out:
-        parser.error("--out is required unless --results-dir is used")
     return args
 
 
@@ -139,6 +187,13 @@ def selected_reps(value: str | None) -> set[str]:
     if not value:
         return set()
     return {normalize_rep_label(part) for part in value.split(",") if part.strip()}
+
+
+def rep_output_scope(value: str | None) -> str:
+    reps = sorted(selected_reps(value))
+    if not reps:
+        return "all_reps"
+    return "_".join(reps)
 
 
 def yaw_from_quat(q: Any) -> float:
@@ -201,6 +256,28 @@ def route_label_from_run_dir(run_dir: Path) -> str:
     return re.sub(r"^R\d+_", "", name)
 
 
+def thesis_route_letter_from_name(route: str) -> str | None:
+    key = route.strip().lower().replace("-", "_")
+    return THESIS_ROUTE_BY_NAME.get(key) or THESIS_ROUTE_BY_NAME.get(key.replace("_", " "))
+
+
+def route_code_from_run_dir(run_dir: Path) -> str | None:
+    numbered_match = re.match(r"^R0*([1-9])(?:_|$)", run_dir.name)
+    if numbered_match:
+        return chr(ord("A") + int(numbered_match.group(1)) - 1)
+    return None
+
+
+def display_route_title(route: str, code: str | None = None) -> str:
+    letter = code or thesis_route_letter_from_name(route)
+    name = route.replace("_", " ").title()
+    return f"Route {letter}: {name}" if letter else name
+
+
+def display_rep_label(rep: str) -> str:
+    return C2_REP_LABELS.get(rep.lower(), rep)
+
+
 def rep_label_from_run_dir(run_dir: Path) -> str:
     selected_match = re.match(r"^(C\d+)_Route[A-Z]_.+?_(r\d+)__", run_dir.name)
     if selected_match:
@@ -211,8 +288,8 @@ def rep_label_from_run_dir(run_dir: Path) -> str:
     return run_dir.parent.name
 
 
-def discover_results_runs(results_dir: Path) -> dict[str, list[tuple[str, Path]]]:
-    groups: dict[str, list[tuple[str, Path]]] = {}
+def discover_results_runs(results_dir: Path) -> dict[str, list[tuple[str, str, Path]]]:
+    groups: dict[str, list[tuple[str, str, Path]]] = {}
     for bag_dir in sorted(results_dir.glob("**/bag")):
         if not bag_dir.is_dir():
             continue
@@ -223,16 +300,91 @@ def discover_results_runs(results_dir: Path) -> dict[str, list[tuple[str, Path]]
         run_dir = bag_dir.parent
         route = route_label_from_run_dir(run_dir)
         rep = rep_label_from_run_dir(run_dir)
-        groups.setdefault(route, []).append((rep, bag_dir))
+        code = route_code_from_run_dir(run_dir) or thesis_route_letter_from_name(route) or route
+        groups.setdefault(route, []).append((code, rep, bag_dir))
     for runs in groups.values():
-        runs.sort(key=lambda item: item[0])
-    return dict(sorted(groups.items()))
+        runs.sort(key=lambda item: (item[0], item[1]))
+    return dict(sorted(groups.items(), key=lambda item: item[1][0][0] if item[1] else item[0]))
+
+
+def point_x(point: PathPoint) -> float:
+    return point[1]
+
+
+def point_y(point: PathPoint) -> float:
+    return point[2]
+
+
+def path_xs(series: list[PathPoint]) -> list[float]:
+    return [point_x(point) for point in series]
+
+
+def path_ys(series: list[PathPoint]) -> list[float]:
+    return [point_y(point) for point in series]
+
+
+def marker_indices_by_distance(series: list[PathPoint], count: int = PATH_MARKER_COUNT) -> list[int]:
+    if not series or count <= 0:
+        return []
+    if len(series) <= count:
+        return list(range(len(series)))
+
+    distances = [0.0]
+    for prev, cur in zip(series, series[1:]):
+        distances.append(distances[-1] + math.hypot(point_x(cur) - point_x(prev), point_y(cur) - point_y(prev)))
+    total = distances[-1]
+    if total <= 0.0:
+        step = (len(series) - 1) / max(count - 1, 1)
+        return sorted({round(idx * step) for idx in range(count)})
+
+    indices = set()
+    seg = 0
+    for idx in range(count):
+        target = total * idx / max(count - 1, 1)
+        while seg + 1 < len(distances) and distances[seg + 1] < target:
+            seg += 1
+        candidates = [seg]
+        if seg + 1 < len(distances):
+            candidates.append(seg + 1)
+        indices.add(min(candidates, key=lambda item: abs(distances[item] - target)))
+    return sorted(indices)
+
+
+def marker_for_topic(topic: str, args: argparse.Namespace) -> str:
+    if topic == args.uav_topic:
+        return "^"
+    return "o"
+
+
+
+def plot_path_series(
+    ax: Any,
+    series: list[PathPoint],
+    *,
+    topic: str,
+    args: argparse.Namespace,
+    markers: bool = True,
+    **kwargs: Any,
+) -> None:
+    marker_color = kwargs.get("color")
+    kwargs["linestyle"] = ("-")
+    if markers and args.trajectory_style == "markers":
+        kwargs.update(
+            {
+                "marker": marker_for_topic(topic, args),
+                "markevery": marker_indices_by_distance(series),
+                "markersize": 4.0,
+                "markerfacecolor": marker_color,
+                "markeredgecolor": marker_color,
+            }
+        )
+    ax.plot(path_xs(series), path_ys(series), **kwargs)
 
 
 def resample_path(
-    series: list[tuple[float, float]],
+    series: list[PathPoint],
     samples: int,
-) -> list[tuple[float, float]]:
+) -> list[PathPoint]:
     if not series:
         return []
     if samples <= 1 or len(series) == 1:
@@ -240,13 +392,13 @@ def resample_path(
 
     distances = [0.0]
     for prev, cur in zip(series, series[1:]):
-        distances.append(distances[-1] + math.hypot(cur[0] - prev[0], cur[1] - prev[1]))
+        distances.append(distances[-1] + math.hypot(point_x(cur) - point_x(prev), point_y(cur) - point_y(prev)))
 
     total = distances[-1]
     if total <= 0.0:
         return [series[0]] * samples
 
-    out: list[tuple[float, float]] = []
+    out: list[PathPoint] = []
     seg = 1
     for idx in range(samples):
         target = total * idx / (samples - 1)
@@ -257,28 +409,34 @@ def resample_path(
         p0 = series[seg - 1]
         p1 = series[seg]
         ratio = 0.0 if d1 <= d0 else (target - d0) / (d1 - d0)
-        out.append((p0[0] + (p1[0] - p0[0]) * ratio, p0[1] + (p1[1] - p0[1]) * ratio))
+        out.append((
+            p0[0] + (p1[0] - p0[0]) * ratio,
+            point_x(p0) + (point_x(p1) - point_x(p0)) * ratio,
+            point_y(p0) + (point_y(p1) - point_y(p0)) * ratio,
+        ))
     return out
 
 
 def average_paths(
-    paths: list[list[tuple[float, float]]],
+    paths: list[list[PathPoint]],
     samples: int = 300,
-) -> tuple[list[tuple[float, float]], int]:
+) -> tuple[list[PathPoint], int]:
     resampled = [resample_path(path, samples) for path in paths if path]
     if not resampled:
         return [], 0
-    out: list[tuple[float, float]] = []
+    out: list[PathPoint] = []
     for idx in range(samples):
-        xs = [path[idx][0] for path in resampled if idx < len(path)]
-        ys = [path[idx][1] for path in resampled if idx < len(path)]
+        ts = [path[idx][0] for path in resampled if idx < len(path)]
+        xs = [point_x(path[idx]) for path in resampled if idx < len(path)]
+        ys = [point_y(path[idx]) for path in resampled if idx < len(path)]
         if xs and ys:
-            out.append((sum(xs) / len(xs), sum(ys) / len(ys)))
+            out.append((sum(ts) / len(ts), sum(xs) / len(xs), sum(ys) / len(ys)))
     return out, len(resampled)
 
 
 def batch_out_dir(args: argparse.Namespace, results_dir: Path) -> Path:
-    out = Path(args.out).expanduser().resolve() if args.out else results_dir / "plots"
+    base = Path(args.out).expanduser().resolve() if args.out else results_dir / "plots" / "trajectory"
+    out = base / rep_output_scope(args.reps)
     out.mkdir(parents=True, exist_ok=True)
     return out
 
@@ -292,7 +450,7 @@ def configure_plot_style(args: argparse.Namespace) -> None:
     mpl.rcParams.update(
         {
             "font.family": "serif",
-            "font.serif": ["DejaVu Serif", "Times New Roman", "Times"],
+            "font.serif": ["Nimbus Roman", "Liberation Serif", "Times New Roman", "Times", "DejaVu Serif"],
             "font.size": args.font_size,
             "axes.labelsize": args.font_size,
             "axes.titlesize": args.font_size,
@@ -301,33 +459,39 @@ def configure_plot_style(args: argparse.Namespace) -> None:
             "legend.fontsize": args.font_size,
             "axes.linewidth": 0.8,
             "grid.linewidth": 0.45,
+            "lines.linewidth": 2.0,
             "lines.solid_capstyle": "round",
             "pdf.fonttype": 42,
             "ps.fonttype": 42,
-            "savefig.bbox": "tight",
         }
     )
 
-
-def set_equal_xy_limits(ax: Any) -> None:
-    xmin, xmax = ax.get_xlim()
-    ymin, ymax = ax.get_ylim()
-    if not all(math.isfinite(value) for value in (xmin, xmax, ymin, ymax)):
+def set_common_xy_limits(axes: list[Any]) -> None:
+    limits = []
+    for ax in axes:
+        xmin, xmax = ax.get_xlim()
+        ymin, ymax = ax.get_ylim()
+        if all(math.isfinite(value) for value in (xmin, xmax, ymin, ymax)):
+            limits.append((xmin, xmax, ymin, ymax))
+    if not limits:
         return
-    x_span = xmax - xmin
-    y_span = ymax - ymin
-    span = max(x_span, y_span)
+    xmin = min(item[0] for item in limits)
+    xmax = max(item[1] for item in limits)
+    ymin = min(item[2] for item in limits)
+    ymax = max(item[3] for item in limits)
+    span = max(xmax - xmin, ymax - ymin)
     if span <= 0.0:
         span = 1.0
-    pad = span * 0.06
+    pad = span * AXIS_LIMIT_PAD_FRACTION
     half = (span * 0.5) + pad
-    ax.set_xlim(((xmin + xmax) * 0.5) - half, ((xmin + xmax) * 0.5) + half)
-    ax.set_ylim(((ymin + ymax) * 0.5) - half, ((ymin + ymax) * 0.5) + half)
+    x_mid = (xmin + xmax) * 0.5
+    y_mid = (ymin + ymax) * 0.5
+    for ax in axes:
+        ax.set_xlim(x_mid - half, x_mid + half)
+        ax.set_ylim(y_mid - half, y_mid + half)
 
 
-def finish_axes(ax: Any, args: argparse.Namespace, title: str = "", legend_outside: bool = False) -> None:
-    if title:
-        ax.set_title(title, pad=8)
+def finish_axes(ax: Any, args: argparse.Namespace, title: str = "", legend_outside: bool = True) -> None:
     axis_labels = {
         "xy": ("x (m)", "y (m)"),
         "xz": ("x (m)", "z (m)"),
@@ -339,15 +503,27 @@ def finish_axes(ax: Any, args: argparse.Namespace, title: str = "", legend_outsi
     ax.grid(True, alpha=0.28)
     if not args.no_equal_aspect:
         ax.set_aspect("equal", adjustable="box")
-        set_equal_xy_limits(ax)
-    if legend_outside:
-        ax.legend(frameon=False, loc="center left", bbox_to_anchor=(1.02, 0.5))
-    else:
-        ax.legend(frameon=False, loc="best")
+        set_common_xy_limits([ax])
+    ax.legend(
+        frameon=False, 
+        loc="center",
+        bbox_to_anchor=(0.5, 1.10),
+        ncol=2,
+        handlelength=0.75,
+        handletextpad=0.25,
+        columnspacing=0.5,
+        borderaxespad=0.5,
+    )
 
 
 def save_figure(fig: Any, png_path: Path, pdf_path: Path, args: argparse.Namespace) -> None:
-    fig.tight_layout()
+    png_path.parent.mkdir(parents=True, exist_ok=True)
+    if args.pdf:
+        pdf_path.parent.mkdir(parents=True, exist_ok=True)
+    if getattr(fig, "legends", None):
+        fig.tight_layout(rect=(0.0, 0.0, 1.0, 0.90))
+    else:
+        fig.tight_layout()
     fig.savefig(png_path, dpi=args.dpi)
     if args.pdf:
         fig.savefig(pdf_path)
@@ -363,12 +539,18 @@ def out_paths(out_arg: str) -> tuple[Path, Path]:
     return stem.with_suffix(".png"), stem.with_suffix(".pdf")
 
 
+def default_single_out(bag_dir: Path, plane: str) -> str:
+    plane_suffix = "" if plane == "xy" else f"_{plane}"
+    return str(bag_dir.parent / "plots" / "trajectory" / f"trajectory{plane_suffix}")
+
+
 def read_paths(
     bag_dir: Path,
     topic_labels: dict[str, str],
+    reference_topic: str,
     warmup_s: float,
     plane: str,
-) -> dict[str, list[tuple[float, float]]]:
+) -> dict[str, list[PathPoint]]:
     try:
         import rosbag2_py
         from rclpy.serialization import deserialize_message
@@ -388,7 +570,22 @@ def read_paths(
         ),
     )
     type_map = {topic.name: topic.type for topic in reader.get_all_topics_and_types()}
-    missing = [topic for topic in topic_labels if topic not in type_map]
+
+    read_topic_to_requested: dict[str, str] = {}
+    requested_to_actual: dict[str, str] = {}
+    for requested_topic in topic_labels:
+        actual_topic = requested_topic
+        if requested_topic == reference_topic and requested_topic not in type_map:
+            actual_topic = next((topic for topic in REFERENCE_TOPIC_FALLBACKS if topic in type_map), requested_topic)
+            if actual_topic != requested_topic:
+                print(
+                    f"[plot_trajectory_paths] Using reference fallback for {bag_dir}: "
+                    f"{actual_topic}"
+                )
+        read_topic_to_requested[actual_topic] = requested_topic
+        requested_to_actual[requested_topic] = actual_topic
+
+    missing = [topic for topic, actual_topic in requested_to_actual.items() if actual_topic not in type_map]
     if missing:
         print("[plot_trajectory_paths] Warning: missing topics:", ", ".join(missing))
 
@@ -401,7 +598,7 @@ def read_paths(
         if start_ns is None:
             start_ns = int(timestamp_ns)
         rel_t = (int(timestamp_ns) - start_ns) * 1e-9
-        if rel_t < warmup_s or topic not in topic_labels:
+        if rel_t < warmup_s or topic not in read_topic_to_requested:
             continue
         msg_type_name = type_map.get(topic)
         if not msg_type_name:
@@ -412,14 +609,15 @@ def read_paths(
             msg = deserialize_message(data, msg_type_cache[msg_type_name])
         except Exception:
             continue
-        points[topic].extend(pose_points_from_msg(msg, plane))
+        requested_topic = read_topic_to_requested[topic]
+        points[requested_topic].extend((rel_t, x, y) for x, y in pose_points_from_msg(msg, plane))
 
     return points
 
 
 def plot_paths(
     topic_labels: dict[str, str],
-    points: dict[str, list[tuple[float, float]]],
+    points: dict[str, list[PathPoint]],
     args: argparse.Namespace,
 ) -> None:
     configure_plot_style(args)
@@ -431,11 +629,11 @@ def plot_paths(
     png_path, pdf_path = out_paths(args.out)
     fig, ax = plt.subplots(figsize=(args.width, args.height))
     styles = [
-        {"color": "black", "linewidth": 2.8, "linestyle": "-"},
-        {"color": "#4C78A8", "linewidth": 2.3, "linestyle": "-"},
-        {"color": "#F58518", "linewidth": 2.3, "linestyle": "-"},
-        {"color": "#54A24B", "linewidth": 2.3, "linestyle": "-"},
-        {"color": "#B279A2", "linewidth": 2.3, "linestyle": "-"},
+        {"color": "black", "linewidth": 1.2, "linestyle": (0, (3, 2))},
+        {"color": "#4C78A8", "linewidth": 1.2, "linestyle": (0, (3, 2))},
+        {"color": "#F58518", "linewidth": 1.2, "linestyle": (0, (3, 2))},
+        {"color": "#54A24B", "linewidth": 1.2, "linestyle": (0, (3, 2))},
+        {"color": "#B279A2", "linewidth": 1.2, "linestyle": (0, (3, 2))},
     ]
 
     plotted = 0
@@ -444,9 +642,14 @@ def plot_paths(
         if not series:
             print(f"[plot_trajectory_paths] Warning: no samples for {label} ({topic})")
             continue
-        xs = [p[0] for p in series]
-        ys = [p[1] for p in series]
-        ax.plot(xs, ys, label=label, **styles[min(idx, len(styles) - 1)])
+        plot_path_series(
+            ax,
+            series,
+            topic=topic,
+            args=args,
+            label=label,
+            **styles[min(idx, len(styles) - 1)],
+        )
         plotted += 1
 
     if plotted == 0:
@@ -462,14 +665,15 @@ def plot_paths(
 
 def read_results_group(
     route: str,
-    runs: list[tuple[str, Path]],
+    runs: list[tuple[str, str, Path]],
     topic_labels: dict[str, str],
     warmup_s: float,
     plane: str,
-) -> list[tuple[str, dict[str, list[tuple[float, float]]]]]:
+    args: argparse
+) -> list[tuple[str, dict[str, list[PathPoint]]]]:
     run_points = []
-    for rep, bag_dir in runs:
-        points = read_paths(bag_dir, topic_labels, warmup_s, plane)
+    for _code, rep, bag_dir in runs:
+        points = read_paths(bag_dir, topic_labels, args.reference_topic, warmup_s, plane)
         for topic, label in topic_labels.items():
             if not points.get(topic):
                 print(
@@ -487,16 +691,30 @@ def route_output_paths(out_dir: Path, route: str, mode: str, plane: str) -> tupl
     return stem.with_suffix(".png"), stem.with_suffix(".pdf")
 
 
-def route_title(route: str, mode: str, args: argparse.Namespace) -> str:
-    base = route.replace("_", " ").title()
+def route_stack_output_paths(out_dir: Path, mode: str, plane: str) -> tuple[Path, Path]:
+    plane_suffix = "" if plane == "xy" else f"_{plane}"
+    stem = out_dir / f"all_routes_trajectories_{mode}{plane_suffix}"
+    return stem.with_suffix(".png"), stem.with_suffix(".pdf")
+
+
+def route_title(route: str, mode: str, args: argparse.Namespace, code: str | None = None) -> str:
+    base = display_route_title(route, code)
     prefix = f"{args.title} - " if args.title else ""
     suffix = "mean reference" if mode == "average" else "all repetitions"
     return f"{prefix}{base} ({suffix})"
 
 
+def short_route_label(route: str, code: str | None = None) -> str:
+    letter = code or thesis_route_letter_from_name(route)
+    if letter:
+        return f"Route {letter}"
+    return display_route_title(route)
+
+
 def plot_results_group_mode(
     route: str,
-    run_points: list[tuple[str, dict[str, list[tuple[float, float]]]]],
+    code: str,
+    run_points: list[tuple[str, dict[str, list[PathPoint]]]],
     topic_labels: dict[str, str],
     args: argparse.Namespace,
     out_dir: Path,
@@ -519,7 +737,6 @@ def plot_results_group_mode(
         "#FF9DA6",
         "#9D755D",
     ]
-    topic_linestyles = ["-", "--", ":", "-."]
     plotted_any = False
     average_note = ""
 
@@ -540,14 +757,15 @@ def plot_results_group_mode(
         mean_path, mean_count = average_paths([path for _rep, path in reference_sources])
         count_notes = [f"reference_n={mean_count}"]
         if mean_path:
-            ax.plot(
-                [p[0] for p in mean_path],
-                [p[1] for p in mean_path],
-                label=f"{args.reference_label} mean (n={mean_count})",
+            plot_path_series(
+                ax,
+                mean_path,
+                topic=args.reference_topic,
+                args=args,
+                label=f"{args.reference_label} Mean (n={mean_count})",
                 color="black",
-                linewidth=3.0,
-                linestyle="-",
-                zorder=4,
+                linewidth=1.5,
+                zorder=1,
             )
             plotted_any = True
 
@@ -570,13 +788,15 @@ def plot_results_group_mode(
             if not mean_series:
                 continue
             color = colors[(topic_idx - 1) % len(colors)]
-            ax.plot(
-                [p[0] for p in mean_series],
-                [p[1] for p in mean_series],
-                label=f"{label} mean (n={count})",
+            linewidth = 1.4
+            plot_path_series(
+                ax,
+                mean_series,
+                topic=topic,
+                args=args,
+                label=f"{label} Mean (n={count})",
                 color=color,
-                linewidth=2.6,
-                linestyle=topic_linestyles[topic_idx % len(topic_linestyles)],
+                linewidth=linewidth,
                 alpha=0.95,
             )
             plotted_any = True
@@ -590,19 +810,20 @@ def plot_results_group_mode(
                     continue
                 if topic == args.reference_topic:
                     line_color = "#333333"
-                    linewidth = 1.8
+                    linewidth = 1.1
                     alpha = 0.55
                 else:
                     line_color = color
-                    linewidth = 2.2
+                    linewidth = 1.2
                     alpha = 0.9
-                ax.plot(
-                    [p[0] for p in series],
-                    [p[1] for p in series],
-                    label=f"{label} {rep}",
+                plot_path_series(
+                    ax,
+                    series,
+                    topic=topic,
+                    args=args,
+                    label=f"{label} {display_rep_label(rep)}",
                     color=line_color,
                     linewidth=linewidth,
-                    linestyle=topic_linestyles[topic_idx % len(topic_linestyles)],
                     alpha=alpha,
                 )
                 plotted_any = True
@@ -614,7 +835,7 @@ def plot_results_group_mode(
         print(f"[plot_trajectory_paths] Warning: no plottable samples for {route} ({mode})")
         return
 
-    finish_axes(ax, args, route_title(route, mode, args), legend_outside=True)
+    finish_axes(ax, args, route_title(route, mode, args, code), legend_outside=True)
     png_path, pdf_path = route_output_paths(out_dir, route, mode, args.plane)
     save_figure(fig, png_path, pdf_path, args)
     plt.close(fig)
@@ -626,15 +847,127 @@ def plot_results_group_mode(
 
 def plot_results_group(
     route: str,
-    runs: list[tuple[str, Path]],
+    runs: list[tuple[str, str, Path]],
     topic_labels: dict[str, str],
     args: argparse.Namespace,
     out_dir: Path,
 ) -> None:
-    run_points = read_results_group(route, runs, topic_labels, args.warmup, args.plane)
+    run_points = read_results_group(route, runs, topic_labels, args.warmup, args.plane, args)
+    code = runs[0][0] if runs else thesis_route_letter_from_name(route) or route
     modes = ["average", "normal"] if args.batch_plots == "both" else [args.batch_plots]
     for mode in modes:
-        plot_results_group_mode(route, run_points, topic_labels, args, out_dir, mode)
+        plot_results_group_mode(route, code, run_points, topic_labels, args, out_dir, mode)
+
+
+def plot_stacked_routes(
+    route_points: dict[str, tuple[str, list[tuple[str, dict[str, list[PathPoint]]]]]],
+    args: argparse.Namespace,
+    out_dir: Path,
+) -> None:
+    configure_plot_style(args)
+    try:
+        import matplotlib.pyplot as plt
+    except Exception as exc:
+        raise SystemExit(f"matplotlib is required: {exc}")
+
+    colors = [
+        "#4C78A8",
+        "#F58518",
+        "#54A24B",
+        "#B279A2",
+        "#E45756",
+        "#72B7B2",
+        "#FF9DA6",
+        "#9D755D",
+        "#BAB0AC",
+    ]
+
+    stacked_width = max(args.width * 2.0, WIDE_FIGURE_WIDTH_IN)
+    stacked_height = max(args.height, WIDE_FIGURE_HEIGHT_IN)
+    fig, axes = plt.subplots(1, 2, figsize=(stacked_width, stacked_height), sharex=False, sharey=False)
+    stack_specs = [
+        (axes[0], args.reference_topic, "UGV", 1.4),
+        (axes[1], args.uav_topic, "UAV", 1.4),
+    ]
+    route_handles: list[Any] = []
+    route_labels: list[str] = []
+    plotted_total = 0
+
+    for idx, (route, (code, run_points)) in enumerate(route_points.items()):
+        color = colors[idx % len(colors)]
+        route_label = short_route_label(route, code)
+        route_plotted = False
+        for ax, topic, panel_label, linewidth in stack_specs:
+            paths = [points.get(topic, []) for _rep, points in run_points if points.get(topic)]
+            mean_path, _count = average_paths(paths)
+            if not mean_path:
+                continue
+            plot_path_series(
+                ax,
+                mean_path,
+                topic=topic,
+                args=args,
+                markers=False,
+                color=color,
+                linewidth=linewidth,
+                alpha=0.95,
+            )
+            plotted_total += 1
+            route_plotted = True
+        if route_plotted:
+            route_handles.append(
+                axes[1].plot(
+                    [],
+                    [],
+                    color=color,
+                    linestyle="-",
+                    linewidth=1.4,
+                )[0]
+            )
+            route_labels.append(route_label)
+
+    if plotted_total == 0:
+        plt.close(fig)
+        print("[plot_trajectory_paths] Warning: no plottable samples for stacked route overview")
+        return
+
+    axis_labels = {
+        "xy": ("x (m)", "y (m)"),
+        "xz": ("x (m)", "z (m)"),
+        "yz": ("y (m)", "z (m)"),
+    }
+    xlabel, ylabel = axis_labels[args.plane]
+    for ax, _topic, panel_label, _linewidth in stack_specs:
+        ax.set_title(panel_label, pad=8)
+        ax.set_xlabel(xlabel)
+        ax.set_ylabel(ylabel)
+        ax.grid(True, alpha=0.28)
+        if not args.no_equal_aspect:
+            ax.set_aspect("equal", adjustable="box")
+    set_common_xy_limits(list(axes))
+
+    if route_handles:
+        ncol = min(len(route_handles), 9)
+        fig.legend(
+            route_handles,
+            route_labels,
+            frameon=False,
+            loc="upper center",
+            bbox_to_anchor=(0.5, 1.03),
+            ncol=ncol,
+            handlelength=1.0,
+            handletextpad=0.25,
+            columnspacing=0.75,
+            borderaxespad=0.75,
+        )
+
+    png_path, pdf_path = route_stack_output_paths(out_dir, "stacked", args.plane)
+    save_figure(fig, png_path, pdf_path, args)
+    plt.close(fig)
+    print(f"stacked_routes={len(route_handles)}")
+    print(f"png={png_path}")
+    if args.pdf:
+        print(f"pdf={pdf_path}")
 
 
 def main() -> None:
@@ -659,8 +992,8 @@ def main() -> None:
         if rep_filter:
             groups = {
                 route: [
-                    (rep, bag_dir)
-                    for rep, bag_dir in runs
+                    (code, rep, bag_dir)
+                    for code, rep, bag_dir in runs
                     if normalize_rep_label(rep) in rep_filter
                 ]
                 for route, runs in groups.items()
@@ -669,16 +1002,28 @@ def main() -> None:
         if not groups:
             raise SystemExit(f"No repXX/RNN_route/bag directories found under: {results_dir}")
         out_dir = batch_out_dir(args, results_dir)
+        route_points: dict[str, tuple[str, list[tuple[str, dict[str, list[PathPoint]]]]]] = {}
         for route, runs in groups.items():
-            plot_results_group(route, runs, topic_labels, args, out_dir)
+            run_points = read_results_group(route, runs, topic_labels, args.warmup, args.plane, args)
+            code = runs[0][0] if runs else thesis_route_letter_from_name(route) or route
+            route_points[route] = (code, run_points)
+            modes = ["average", "normal"] if args.batch_plots == "both" else [args.batch_plots]
+            for mode in modes:
+                plot_results_group_mode(route, code, run_points, topic_labels, args, out_dir, mode)
+        if args.stack_routes:
+            plot_stacked_routes(route_points, args, out_dir)
         return
 
     bag_dir = resolve_bag_dir(args)
     if not bag_dir.is_dir():
         raise SystemExit(f"Bag directory does not exist: {bag_dir}")
+    if not args.out:
+        args.out = default_single_out(bag_dir, args.plane)
 
-    points = read_paths(bag_dir, topic_labels, args.warmup, args.plane)
+    points = read_paths(bag_dir, topic_labels, args.reference_topic, args.warmup, args.plane)
+
     plot_paths(topic_labels, points, args)
+    
 
 
 if __name__ == "__main__":
