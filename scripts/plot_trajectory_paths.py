@@ -50,7 +50,7 @@ WIDE_FIGURE_WIDTH_IN = 6.6
 WIDE_FIGURE_HEIGHT_IN = 3.4
 AXIS_LIMIT_PAD_FRACTION = 0.03
 PATH_MARKER_COUNT = 8
-PathPoint = tuple[float, float, float]
+PathPoint = tuple[float, float, float, float | None]
 
 
 def parse_bool(value: str) -> bool:
@@ -163,6 +163,18 @@ def parse_args() -> argparse.Namespace:
         default="markers",
         help="markers draws sparse position markers; lines restores the older continuous-line style.",
     )
+    parser.add_argument(
+        "--heading-markers",
+        choices=["none", "ugv", "uav", "both"],
+        default="none",
+        help="Use rotated triangle markers from pose yaw in XY marker plots. Default: none.",
+    )
+    parser.add_argument(
+        "--heading-marker-size",
+        type=float,
+        default=5.0,
+        help="Size of rotated heading triangle markers. Default: 5.0.",
+    )
     args = parser.parse_args()
     if args.average is not None:
         args.batch_plots = "average" if args.average else "normal"
@@ -215,18 +227,22 @@ def point_from_position(position: Any, plane: str) -> tuple[float, float]:
     return x, y
 
 
-def pose_points_from_msg(msg: Any, plane: str) -> list[tuple[float, float]]:
+def point_from_pose(pose: Any, plane: str) -> tuple[float, float, float | None]:
+    x, y = point_from_position(pose.position, plane)
+    yaw = yaw_from_quat(pose.orientation) if plane == "xy" and hasattr(pose, "orientation") else None
+    return x, y, yaw
+
+
+def pose_points_from_msg(msg: Any, plane: str) -> list[tuple[float, float, float | None]]:
     """Return one or more 2D projected points from common pose-like ROS messages."""
     try:
         if hasattr(msg, "poses"):
-            points: list[tuple[float, float]] = []
+            points: list[tuple[float, float, float | None]] = []
             for pose_stamped in msg.poses:
-                p = pose_stamped.pose.position
-                points.append(point_from_position(p, plane))
+                points.append(point_from_pose(pose_stamped.pose, plane))
             return points
         pose = msg.pose.pose if hasattr(msg.pose, "pose") else msg.pose
-        p = pose.position
-        return [point_from_position(p, plane)]
+        return [point_from_pose(pose, plane)]
     except Exception:
         return []
 
@@ -315,6 +331,10 @@ def point_y(point: PathPoint) -> float:
     return point[2]
 
 
+def point_yaw(point: PathPoint) -> float | None:
+    return point[3] if len(point) > 3 else None
+
+
 def path_xs(series: list[PathPoint]) -> list[float]:
     return [point_x(point) for point in series]
 
@@ -356,6 +376,54 @@ def marker_for_topic(topic: str, args: argparse.Namespace) -> str:
     return "o"
 
 
+def topic_uses_heading_markers(topic: str, args: argparse.Namespace) -> bool:
+    if args.plane != "xy" or args.trajectory_style != "markers":
+        return False
+    if args.heading_markers in {"ugv", "both"} and topic == args.reference_topic:
+        return True
+    if args.heading_markers in {"uav", "both"} and topic == args.uav_topic:
+        return True
+    return False
+
+
+def heading_triangle_marker(yaw: float) -> Any:
+    from matplotlib.path import Path as MplPath
+
+    base_vertices = [(1.0, 0.0), (-0.55, 0.45), (-0.55, -0.45), (1.0, 0.0)]
+    c = math.cos(yaw)
+    s = math.sin(yaw)
+    vertices = [(x * c - y * s, x * s + y * c) for x, y in base_vertices]
+    return MplPath(vertices, [MplPath.MOVETO, MplPath.LINETO, MplPath.LINETO, MplPath.CLOSEPOLY])
+
+
+def plot_heading_markers(
+    ax: Any,
+    series: list[PathPoint],
+    indices: list[int],
+    *,
+    color: Any,
+    marker_size: float,
+    zorder: float | None = None,
+) -> None:
+    for idx in indices:
+        if idx < 0 or idx >= len(series):
+            continue
+        point = series[idx]
+        yaw = point_yaw(point)
+        if yaw is None or not math.isfinite(yaw):
+            continue
+        ax.scatter(
+            [point_x(point)],
+            [point_y(point)],
+            marker=heading_triangle_marker(yaw),
+            s=marker_size * marker_size,
+            facecolor=color,
+            edgecolor=color,
+            linewidths=0.0,
+            zorder=zorder,
+        )
+
+
 
 def plot_path_series(
     ax: Any,
@@ -367,18 +435,31 @@ def plot_path_series(
     **kwargs: Any,
 ) -> None:
     marker_color = kwargs.get("color")
+    marker_indices = marker_indices_by_distance(series)
+    use_heading_markers = markers and topic_uses_heading_markers(topic, args)
     kwargs["linestyle"] = ("-")
-    if markers and args.trajectory_style == "markers":
+    if markers and args.trajectory_style == "markers" and not use_heading_markers:
         kwargs.update(
             {
                 "marker": marker_for_topic(topic, args),
-                "markevery": marker_indices_by_distance(series),
+                "markevery": marker_indices,
                 "markersize": 4.0,
                 "markerfacecolor": marker_color,
                 "markeredgecolor": marker_color,
             }
         )
     ax.plot(path_xs(series), path_ys(series), **kwargs)
+    if use_heading_markers:
+        base_zorder = kwargs.get("zorder")
+        marker_zorder = None if base_zorder is None else float(base_zorder) + 0.2
+        plot_heading_markers(
+            ax,
+            series,
+            marker_indices,
+            color=marker_color,
+            marker_size=args.heading_marker_size,
+            zorder=marker_zorder,
+        )
 
 
 def resample_path(
@@ -413,6 +494,7 @@ def resample_path(
             p0[0] + (p1[0] - p0[0]) * ratio,
             point_x(p0) + (point_x(p1) - point_x(p0)) * ratio,
             point_y(p0) + (point_y(p1) - point_y(p0)) * ratio,
+            None,
         ))
     return out
 
@@ -430,7 +512,7 @@ def average_paths(
         xs = [point_x(path[idx]) for path in resampled if idx < len(path)]
         ys = [point_y(path[idx]) for path in resampled if idx < len(path)]
         if xs and ys:
-            out.append((sum(ts) / len(ts), sum(xs) / len(xs), sum(ys) / len(ys)))
+            out.append((sum(ts) / len(ts), sum(xs) / len(xs), sum(ys) / len(ys), None))
     return out, len(resampled)
 
 
@@ -610,7 +692,7 @@ def read_paths(
         except Exception:
             continue
         requested_topic = read_topic_to_requested[topic]
-        points[requested_topic].extend((rel_t, x, y) for x, y in pose_points_from_msg(msg, plane))
+        points[requested_topic].extend((rel_t, x, y, yaw) for x, y, yaw in pose_points_from_msg(msg, plane))
 
     return points
 

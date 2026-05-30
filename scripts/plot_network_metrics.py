@@ -21,6 +21,7 @@ class PoseSample:
     x: float
     y: float
     z: float
+    yaw: float | None = None
 
 
 @dataclass
@@ -90,7 +91,7 @@ THREE_D_PATH_DEFAULTS = {
     "marker_size": (("--marker-size",), 7.0),
     "view_azim": (("--view-azim",), 45.0),
     "view_elev": (("--view-elev",), 22.5),
-    "axis_padding_fraction": (("--axis-padding-fraction",), 0.025),
+    "axis_padding_fraction": (("--axis-padding-fraction",), 0.07),
     "labelpad": (("--labelpad",), 2.0),
     "z_labelpad": (("--z-labelpad",), 0.0),
     "legend_borderaxespad": (("--legend-borderaxespad",), 1.75),
@@ -218,7 +219,23 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--estimate-marker", default="s")
     parser.add_argument("--marker-count", type=int, default=8)
     parser.add_argument("--marker-size", type=float, default=4.0)
-    parser.add_argument("--path-alpha", type=float, default=0.9)
+    parser.add_argument(
+        "--heading-markers",
+        choices=("none", "ugv", "uav", "both"),
+        default="none",
+        help="Use rotated triangle markers from pose yaw in 2D XY path plots.",
+    )
+    parser.add_argument("--heading-marker-size", type=float, default=5.0)
+    parser.add_argument(
+        "--timestamp-links",
+        choices=("none", "ugv", "estimate", "both"),
+        default="both",
+        help="In 3D path plots, draw dashed links from UAV marker timestamps to matching UGV and/or estimate samples.",
+    )
+    parser.add_argument("--timestamp-link-linewidth", type=float, default=0.6)
+    parser.add_argument("--timestamp-link-alpha", type=float, default=0.55)
+    parser.add_argument("--timestamp-link-linestyle", default="--")
+    parser.add_argument("--path-alpha", type=float, default=0.95)
     parser.add_argument("--view-elev", type=float, default=25.0, help="3D view elevation.")
     parser.add_argument("--view-azim", type=float, default=-60.0, help="3D view azimuth.")
     parser.add_argument(
@@ -231,6 +248,11 @@ def parse_args() -> argparse.Namespace:
         "--per-run-plots",
         action="store_true",
         help="With --results-dir, also write per-run figures. Default is campaign overview only.",
+    )
+    parser.add_argument(
+        "--stack-routes",
+        action="store_true",
+        help="With --results-dir and path plots, write side-by-side UGV/UAV stacked route overviews.",
     )
     parser.add_argument(
         "--rep-average-plots",
@@ -434,9 +456,18 @@ def pose_from_msg(msg: Any) -> PoseSample | None:
     try:
         pose = msg.pose.pose if hasattr(msg.pose, "pose") else msg.pose
         p = pose.position
-        return PoseSample(0.0, float(p.x), float(p.y), float(p.z))
+        yaw = yaw_from_quat(pose.orientation) if hasattr(pose, "orientation") else None
+        return PoseSample(0.0, float(p.x), float(p.y), float(p.z), yaw)
     except Exception:
         return None
+
+
+def yaw_from_quat(q: Any) -> float:
+    x = float(getattr(q, "x", 0.0))
+    y = float(getattr(q, "y", 0.0))
+    z = float(getattr(q, "z", 0.0))
+    w = float(getattr(q, "w", 1.0))
+    return math.atan2(2.0 * (w * z + x * y), 1.0 - 2.0 * (y * y + z * z))
 
 
 def read_bag(
@@ -832,6 +863,57 @@ def path_plot_kwargs(args: argparse.Namespace, linestyle: str, linewidth: float,
     return kwargs
 
 
+def heading_triangle_marker(yaw: float) -> Any:
+    from matplotlib.path import Path as MplPath
+
+    base_vertices = [(1.0, 0.0), (-0.55, 0.45), (-0.55, -0.45), (1.0, 0.0)]
+    c = math.cos(yaw)
+    s = math.sin(yaw)
+    vertices = [(x * c - y * s, x * s + y * c) for x, y in base_vertices]
+    return MplPath(vertices, [MplPath.MOVETO, MplPath.LINETO, MplPath.LINETO, MplPath.CLOSEPOLY])
+
+
+def use_heading_markers(series_name: str, args: argparse.Namespace) -> bool:
+    if args.dimension != "2d" or args.trajectory_plane != "xy":
+        return False
+    if args.heading_markers in {"ugv", "both"} and series_name == "ugv":
+        return True
+    if args.heading_markers in {"uav", "both"} and series_name == "uav":
+        return True
+    return False
+
+
+def plot_heading_markers(
+    ax: Any,
+    samples: list[PoseSample],
+    indices: list[int],
+    *,
+    color: str,
+    size: float,
+    alpha: float,
+    zorder: float,
+) -> None:
+    marker_area = size * size
+    for idx in indices:
+        if idx < 0 or idx >= len(samples):
+            continue
+        sample = samples[idx]
+        if sample.yaw is None or not math.isfinite(sample.yaw):
+            continue
+        x, y = project_pose(sample, "xy")
+        ax.scatter(
+            [x],
+            [y],
+            marker=heading_triangle_marker(sample.yaw),
+            s=marker_area,
+            facecolor=color,
+            edgecolor=color,
+            linewidths=0.0,
+            alpha=alpha,
+            zorder=zorder,
+        )
+
+
 def path_linewidth(args: argparse.Namespace, value: float | None) -> float:
     return args.trajectory_linewidth if value is None else value
 
@@ -875,6 +957,7 @@ def plot_pose_series_2d(
     samples: list[PoseSample],
     args: argparse.Namespace,
     *,
+    series_name: str,
     label: str,
     color: str,
     linestyle: str,
@@ -886,10 +969,22 @@ def plot_pose_series_2d(
     if not samples:
         return
     xs, ys = zip(*(project_pose(sample, args.trajectory_plane) for sample in samples))
-    kwargs = path_plot_kwargs(args, linestyle, linewidth, marker, alpha)
-    if marker:
-        kwargs["markevery"] = marker_indices_by_distance(samples, args)
+    indices = marker_indices_by_distance(samples, args)
+    draw_heading_markers = use_heading_markers(series_name, args)
+    kwargs = path_plot_kwargs(args, linestyle, linewidth, "" if draw_heading_markers else marker, alpha)
+    if marker and not draw_heading_markers:
+        kwargs["markevery"] = indices
     ax.plot(xs, ys, label=label, color=color, zorder=zorder, **kwargs)
+    if draw_heading_markers:
+        plot_heading_markers(
+            ax,
+            samples,
+            indices,
+            color=color,
+            size=args.heading_marker_size,
+            alpha=args.path_alpha if alpha is None else alpha,
+            zorder=zorder + 0.2,
+        )
 
 
 def plot_pose_series_3d(
@@ -911,6 +1006,35 @@ def plot_pose_series_3d(
     if marker:
         kwargs["markevery"] = marker_indices_by_distance(samples, args)
     ax.plot([s.x for s in samples], [s.y for s in samples], [s.z for s in samples], label=label, color=color, zorder=zorder, **kwargs)
+
+
+def plot_timestamp_links_3d(ax: Any, data: RunData, args: argparse.Namespace) -> None:
+    if args.timestamp_links == "none" or not data.uav:
+        return
+    indices = marker_indices_by_distance(data.uav, args)
+    targets: list[tuple[str, list[PoseSample], str, float]] = []
+    if args.timestamp_links in {"ugv", "both"}:
+        targets.append(("UGV", data.ugv, "#777777", 1.4))
+    if args.timestamp_links in {"estimate", "both"}:
+        targets.append(("Estimate", data.estimate, "#F58518", 1.5))
+    for idx in indices:
+        if idx < 0 or idx >= len(data.uav):
+            continue
+        uav = data.uav[idx]
+        for _label, samples, color, zorder in targets:
+            target = nearest_pose(samples, uav.t, args.nearest_max_gap_s)
+            if target is None:
+                continue
+            ax.plot(
+                [uav.x, target.x],
+                [uav.y, target.y],
+                [uav.z, target.z],
+                color=color,
+                linestyle=args.timestamp_link_linestyle,
+                linewidth=args.timestamp_link_linewidth,
+                alpha=args.timestamp_link_alpha,
+                zorder=zorder,
+            )
 
 
 def plot_path_run(data: RunData, stem: Path, args: argparse.Namespace) -> None:
@@ -938,6 +1062,7 @@ def plot_path_run(data: RunData, stem: Path, args: argparse.Namespace) -> None:
         ax.set_zlabel("z (m)", labelpad=args.z_labelpad)
         ax.view_init(elev=args.view_elev, azim=args.view_azim)
         apply_3d_path_limits(ax, [data.ugv, data.uav, data.estimate], args)
+        plot_timestamp_links_3d(ax, data, args)
         plot_pose_series_3d(ax, data.ugv, args, label="UGV", color="#333333", linestyle=args.ugv_linestyle, linewidth=path_linewidth(args, args.ugv_linewidth), marker=args.ugv_marker, zorder=2.0)
         plot_pose_series_3d(ax, data.uav, args, label="UAV", color="#4C78A8", linestyle=args.uav_linestyle, linewidth=path_linewidth(args, args.uav_linewidth), marker=args.uav_marker, zorder=3.0)
         plot_pose_series_3d(ax, data.estimate, args, label="Estimate", color="#F58518", linestyle=args.estimate_linestyle, linewidth=path_linewidth(args, args.estimate_linewidth), marker=args.estimate_marker, alpha=0.8, zorder=4.0)
@@ -956,9 +1081,9 @@ def plot_path_run(data: RunData, stem: Path, args: argparse.Namespace) -> None:
             )
     else:
         fig, ax = plt.subplots(figsize=single_figsize(args))
-        plot_pose_series_2d(ax, data.ugv, args, label="UGV", color="#333333", linestyle=args.ugv_linestyle, linewidth=path_linewidth(args, args.ugv_linewidth), marker=args.ugv_marker, zorder=2.0)
-        plot_pose_series_2d(ax, data.uav, args, label="UAV", color="#4C78A8", linestyle=args.uav_linestyle, linewidth=path_linewidth(args, args.uav_linewidth), marker=args.uav_marker, alpha=0.8, zorder=3.0)
-        plot_pose_series_2d(ax, data.estimate, args, label="Estimate", color="#F58518", linestyle=args.estimate_linestyle, linewidth=path_linewidth(args, args.estimate_linewidth), marker=args.estimate_marker, alpha=0.8, zorder=4.0)
+        plot_pose_series_2d(ax, data.ugv, args, series_name="ugv", label="UGV", color="#333333", linestyle=args.ugv_linestyle, linewidth=path_linewidth(args, args.ugv_linewidth), marker=args.ugv_marker, zorder=2.0)
+        plot_pose_series_2d(ax, data.uav, args, series_name="uav", label="UAV", color="#4C78A8", linestyle=args.uav_linestyle, linewidth=path_linewidth(args, args.uav_linewidth), marker=args.uav_marker, alpha=0.8, zorder=3.0)
+        plot_pose_series_2d(ax, data.estimate, args, series_name="estimate", label="Estimate", color="#F58518", linestyle=args.estimate_linestyle, linewidth=path_linewidth(args, args.estimate_linewidth), marker=args.estimate_marker, alpha=0.8, zorder=4.0)
         labels = {
             "xy": ("x (m)", "y (m)"),
             "xz": ("x (m)", "z (m)"),
@@ -999,6 +1124,309 @@ def plot_path_runs(data_runs: list[RunData], out_root: Path, args: argparse.Name
     out_root = path_dimension_root(out_root, args)
     for data in data_runs:
         plot_path_run(data, out_stem_for_path_run(data, out_root), args)
+
+
+def route_sort_key(data: RunData) -> tuple[int, str]:
+    code = route_code(data)
+    if re.fullmatch(r"[A-Z]", code):
+        return ord(code) - ord("A"), data.route
+    return 99, data.route
+
+
+def short_route_label(data: RunData) -> str:
+    code = route_code(data)
+    if re.fullmatch(r"[A-Z]", code):
+        return f"Route {code}: {data.route.title()}"
+    return data.route.title()
+
+
+def resample_pose_path(samples: list[PoseSample], count: int = 300) -> list[PoseSample]:
+    if not samples:
+        return []
+    if len(samples) == 1 or count <= 1:
+        return [samples[0]]
+    distances = [0.0]
+    for prev, cur in zip(samples, samples[1:]):
+        distances.append(distances[-1] + math.sqrt((cur.x - prev.x) ** 2 + (cur.y - prev.y) ** 2 + (cur.z - prev.z) ** 2))
+    total = distances[-1]
+    if total <= 0.0:
+        return [samples[min(round(idx * (len(samples) - 1) / (count - 1)), len(samples) - 1)] for idx in range(count)]
+    out: list[PoseSample] = []
+    seg = 1
+    for idx in range(count):
+        target = total * idx / (count - 1)
+        while seg < len(distances) and distances[seg] < target:
+            seg += 1
+        if seg >= len(distances):
+            out.append(samples[-1])
+            continue
+        p0 = samples[seg - 1]
+        p1 = samples[seg]
+        d0 = distances[seg - 1]
+        d1 = distances[seg]
+        ratio = 0.0 if d1 <= d0 else (target - d0) / (d1 - d0)
+        yaw = p1.yaw if p1.yaw is not None else p0.yaw
+        out.append(
+            PoseSample(
+                p0.t + (p1.t - p0.t) * ratio,
+                p0.x + (p1.x - p0.x) * ratio,
+                p0.y + (p1.y - p0.y) * ratio,
+                p0.z + (p1.z - p0.z) * ratio,
+                yaw,
+            )
+        )
+    return out
+
+
+def average_pose_paths(paths: list[list[PoseSample]], count: int = 300) -> list[PoseSample]:
+    resampled = [resample_pose_path(path, count) for path in paths if path]
+    if not resampled:
+        return []
+    out: list[PoseSample] = []
+    for idx in range(count):
+        rows = [path[idx] for path in resampled if idx < len(path)]
+        if not rows:
+            continue
+        out.append(
+            PoseSample(
+                sum(row.t for row in rows) / len(rows),
+                sum(row.x for row in rows) / len(rows),
+                sum(row.y for row in rows) / len(rows),
+                sum(row.z for row in rows) / len(rows),
+                None,
+            )
+        )
+    return out
+
+
+def set_common_2d_limits(axes: list[Any]) -> None:
+    limits = []
+    for ax in axes:
+        xmin, xmax = ax.get_xlim()
+        ymin, ymax = ax.get_ylim()
+        if all(math.isfinite(value) for value in (xmin, xmax, ymin, ymax)):
+            limits.append((xmin, xmax, ymin, ymax))
+    if not limits:
+        return
+    xmin = min(item[0] for item in limits)
+    xmax = max(item[1] for item in limits)
+    ymin = min(item[2] for item in limits)
+    ymax = max(item[3] for item in limits)
+    span = max(xmax - xmin, ymax - ymin, 1.0)
+    pad = span * 0.02
+    half = span * 0.5 + pad
+    x_mid = (xmin + xmax) * 0.5
+    y_mid = (ymin + ymax) * 0.5
+    for ax in axes:
+        ax.set_xlim(x_mid - half, x_mid + half)
+        ax.set_ylim(y_mid - half, y_mid + half)
+
+
+def stacked_route_stem(out_root: Path, scope: str, args: argparse.Namespace) -> Path:
+    if args.dimension == "3d":
+        return out_root / "3d" / scope / "all_routes_trajectories_stacked_3d"
+    suffix = "" if args.trajectory_plane == "xy" else f"_{args.trajectory_plane}"
+    return out_root / scope / f"all_routes_trajectories_stacked{suffix}"
+
+
+def grouped_route_paths(data_runs: list[RunData]) -> dict[str, tuple[RunData, list[PoseSample], list[PoseSample]]]:
+    routes: dict[str, list[RunData]] = {}
+    for data in sorted(data_runs, key=route_sort_key):
+        routes.setdefault(route_code(data), []).append(data)
+    out: dict[str, tuple[RunData, list[PoseSample], list[PoseSample]]] = {}
+    for code, runs in routes.items():
+        ugv = average_pose_paths([run.ugv for run in runs if run.ugv])
+        uav = average_pose_paths([run.uav for run in runs if run.uav])
+        if ugv or uav:
+            out[code] = (runs[0], ugv, uav)
+    return out
+
+
+def plot_stacked_routes_3d(data_runs: list[RunData], out_root: Path, scope: str, args: argparse.Namespace) -> None:
+    configure_plot_style(args)
+    try:
+        import matplotlib.pyplot as plt
+    except Exception as exc:
+        raise SystemExit(f"matplotlib is required: {exc}")
+
+    colors = ["#4C78A8", "#F58518", "#54A24B", "#B279A2", "#E45756", "#72B7B2", "#FF9DA6", "#9D755D", "#BAB0AC"]
+    route_paths = grouped_route_paths(data_runs)
+    if not route_paths:
+        print("skip=stacked_routes_3d reason=no_path_samples")
+        return
+
+    fig = plt.figure(figsize=(max(args.width * 2.0, 6.6), max(args.height * 1.35, 4.4)))
+    ax = fig.add_subplot(111, projection="3d")
+    route_handles: list[Any] = []
+    route_labels: list[str] = []
+    all_series: list[list[PoseSample]] = []
+
+    for idx, (_code, (data, ugv, uav)) in enumerate(route_paths.items()):
+        color = colors[idx % len(colors)]
+        label = short_route_label(data)
+        if ugv:
+            plot_pose_series_3d(
+                ax,
+                ugv,
+                args,
+                label=f"{label} UGV",
+                color=color,
+                linestyle=args.ugv_linestyle,
+                linewidth=path_linewidth(args, args.ugv_linewidth),
+                marker="",
+                alpha=0.95,
+                zorder=2.0,
+            )
+            all_series.append(ugv)
+        if uav:
+            plot_pose_series_3d(
+                ax,
+                uav,
+                args,
+                label=f"{label} UAV",
+                color=color,
+                linestyle=args.uav_linestyle,
+                linewidth=path_linewidth(args, args.uav_linewidth),
+                marker="",
+                alpha=0.8,
+                zorder=3.0,
+            )
+            all_series.append(uav)
+        route_handles.append(ax.plot([], [], [], color=color, linestyle="-", linewidth=1.4)[0])
+        route_labels.append(label)
+
+    ax.set_xlabel("x (m)", labelpad=args.labelpad)
+    ax.set_ylabel("y (m)", labelpad=args.labelpad)
+    ax.set_zlabel("z (m)", labelpad=args.z_labelpad)
+    ax.view_init(elev=args.view_elev, azim=args.view_azim)
+    apply_3d_path_limits(ax, all_series, args)
+    ax.grid(True, alpha=0.28)
+    if route_handles:
+        ax.legend(
+            route_handles,
+            route_labels,
+            frameon=False,
+            loc="upper center",
+            bbox_to_anchor=(args.legend_x, args.legend_y),
+            ncol=args.legend_ncol if args.legend_ncol > 0 else min(len(route_handles), 5),
+            handlelength=args.legend_handlelength,
+            columnspacing=args.legend_columnspacing,
+            borderaxespad=args.legend_borderaxespad,
+        )
+    previous_no_tight_layout = args.no_tight_layout
+    args.no_tight_layout = True
+    try:
+        save_fig(fig, stacked_route_stem(out_root, scope, args), args)
+    finally:
+        args.no_tight_layout = previous_no_tight_layout
+    plt.close(fig)
+
+
+def plot_stacked_routes(data_runs: list[RunData], out_root: Path, scope: str, args: argparse.Namespace) -> None:
+    if args.dimension == "3d":
+        plot_stacked_routes_3d(data_runs, out_root, scope, args)
+        return
+    configure_plot_style(args)
+    try:
+        import matplotlib.pyplot as plt
+    except Exception as exc:
+        raise SystemExit(f"matplotlib is required: {exc}")
+
+    colors = ["#4C78A8", "#F58518", "#54A24B", "#B279A2", "#E45756", "#72B7B2", "#FF9DA6", "#9D755D", "#BAB0AC"]
+    route_paths = grouped_route_paths(data_runs)
+
+    fig, axes = plt.subplots(1, 2, figsize=(max(args.width * 2.0, 6.6), args.height), sharex=False, sharey=False)
+    route_handles: list[Any] = []
+    route_labels: list[str] = []
+    plotted = 0
+
+    for idx, (_code, (data, ugv, uav)) in enumerate(route_paths.items()):
+        color = colors[idx % len(colors)]
+        if not ugv and not uav:
+            continue
+        label = short_route_label(data)
+        if ugv:
+            plot_pose_series_2d(
+                axes[0],
+                ugv,
+                args,
+                series_name="ugv",
+                label=label,
+                color=color,
+                linestyle=args.ugv_linestyle,
+                linewidth=path_linewidth(args, args.ugv_linewidth),
+                marker="",
+                alpha=0.95,
+                zorder=2.0,
+            )
+            plotted += 1
+        if uav:
+            plot_pose_series_2d(
+                axes[1],
+                uav,
+                args,
+                series_name="uav",
+                label=label,
+                color=color,
+                linestyle=args.uav_linestyle,
+                linewidth=path_linewidth(args, args.uav_linewidth),
+                marker="",
+                alpha=0.8,
+                zorder=3.0,
+            )
+            plotted += 1
+        route_handles.append(axes[1].plot([], [], color=color, linestyle="-", linewidth=1.4)[0])
+        route_labels.append(label)
+
+    if plotted == 0:
+        plt.close(fig)
+        print("skip=stacked_routes reason=no_path_samples")
+        return
+
+    axis_labels = {
+        "xy": ("x (m)", "y (m)"),
+        "xz": ("x (m)", "z (m)"),
+        "yz": ("y (m)", "z (m)"),
+    }
+    xlabel, ylabel = axis_labels[args.trajectory_plane]
+    for ax, panel_label in zip(axes, ("UGV", "UAV")):
+        ax.set_title(panel_label, pad=8)
+        ax.set_xlabel(xlabel, labelpad=args.labelpad)
+        ax.set_ylabel(ylabel, labelpad=args.labelpad)
+        ax.set_aspect("equal", adjustable="box")
+        ax.grid(True, alpha=0.28)
+    set_common_2d_limits(list(axes))
+    if route_handles:
+        fig.legend(
+            route_handles,
+            route_labels,
+            frameon=False,
+            loc="upper center",
+            bbox_to_anchor=(args.legend_x, args.legend_y),
+            ncol=args.legend_ncol if args.legend_ncol > 0 else min(len(route_handles), 9),
+            handlelength=args.legend_handlelength,
+            handletextpad=0.25,
+            columnspacing=args.legend_columnspacing,
+            borderaxespad=args.legend_borderaxespad,
+        )
+    save_fig(fig, stacked_route_stem(out_root, scope, args), args)
+    plt.close(fig)
+
+
+def safe_scope_name(value: str) -> str:
+    return re.sub(r"[^A-Za-z0-9_.-]+", "_", value).strip("_") or "runs"
+
+
+def plot_stacked_route_groups(data_runs: list[RunData], out_root: Path, args: argparse.Namespace) -> None:
+    if not data_runs:
+        return
+    reps: dict[str, list[RunData]] = {}
+    for data in data_runs:
+        reps.setdefault(data.rep, []).append(data)
+    if len(reps) > 1:
+        plot_stacked_routes(data_runs, out_root, "all_reps", args)
+    for rep, runs in sorted(reps.items()):
+        plot_stacked_routes(runs, out_root, safe_scope_name(rep), args)
 
 
 def plot_time_series(
@@ -1656,11 +2084,20 @@ def main() -> None:
             if not offline_runs:
                 raise SystemExit(f"No offline_omnet/*/network_metrics.csv files found under: {results_dir}")
             if do_path and not do_network and not args.summary_only:
-                path_root = path_dimension_root(path_root, args)
-                for route, rep, bag_dir, metrics_csv in offline_runs:
-                    mode = infer_lora_mode_from_csv(metrics_csv, args.lora_mode)
-                    data = read_bag(route, rep, mode, bag_dir, args, read_ros_metrics=False)
-                    plot_path_run(data, out_stem_for_path_run(data, path_root), args)
+                data_runs = [
+                    read_bag(
+                        route,
+                        rep,
+                        infer_lora_mode_from_csv(metrics_csv, args.lora_mode),
+                        bag_dir,
+                        args,
+                        read_ros_metrics=False,
+                    )
+                    for route, rep, bag_dir, metrics_csv in offline_runs
+                ]
+                plot_path_runs(data_runs, path_root, args)
+                if args.stack_routes:
+                    plot_stacked_route_groups(data_runs, path_root, args)
                 return
             data_runs = []
             for route, rep, bag_dir, metrics_csv in offline_runs:
@@ -1684,6 +2121,8 @@ def main() -> None:
                     plot_overviews(data_runs, combined_root / "network_metrics_overview", args)
             if do_path and not args.summary_only:
                 plot_path_runs(data_runs, path_root, args)
+                if args.stack_routes:
+                    plot_stacked_route_groups(data_runs, path_root, args)
             return
 
         runs = discover_result_bags(results_dir)
@@ -1693,9 +2132,8 @@ def main() -> None:
         if not runs:
             raise SystemExit(f"No repXX/RNN_route/bag directories found under: {results_dir}")
         if do_path and not do_network and not args.summary_only:
-            path_root = path_dimension_root(path_root, args)
-            for route, rep, bag_dir in runs:
-                data = read_bag(
+            data_runs = [
+                read_bag(
                     route,
                     rep,
                     infer_lora_mode(rep, bag_dir, args.lora_mode),
@@ -1703,7 +2141,11 @@ def main() -> None:
                     args,
                     read_ros_metrics=False,
                 )
-                plot_path_run(data, out_stem_for_path_run(data, path_root), args)
+                for route, rep, bag_dir in runs
+            ]
+            plot_path_runs(data_runs, path_root, args)
+            if args.stack_routes:
+                plot_stacked_route_groups(data_runs, path_root, args)
             return
         data_runs = [
             read_bag(route, rep, infer_lora_mode(rep, bag_dir, args.lora_mode), bag_dir, args, read_ros_metrics=do_network)
@@ -1724,6 +2166,8 @@ def main() -> None:
                 plot_overviews(data_runs, combined_root / "network_metrics_overview", args)
         if do_path and not args.summary_only:
             plot_path_runs(data_runs, path_root, args)
+            if args.stack_routes:
+                plot_stacked_route_groups(data_runs, path_root, args)
         return
 
     route, rep, bag_dir = resolve_single_bag(args)
