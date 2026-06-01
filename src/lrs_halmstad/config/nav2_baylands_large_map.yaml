@@ -131,7 +131,7 @@ local_costmap:
     ros__parameters:
       enable_stamped_cmd_vel: true
       update_frequency: 10.0
-      publish_frequency: 2.0
+      publish_frequency: 0.5
       global_frame: odom
       robot_base_frame: base_link
       rolling_window: true
@@ -175,7 +175,7 @@ global_costmap:
     ros__parameters:
       enable_stamped_cmd_vel: true
       update_frequency: 1.0
-      publish_frequency: 1.0
+      publish_frequency: 0.1
       global_frame: map
       robot_base_frame: base_link
       transform_tolerance: 1.0
@@ -227,7 +227,7 @@ behavior_server:
     local_footprint_topic: local_costmap/published_footprint
     global_footprint_topic: global_costmap/published_footprint
     cycle_frequency: 10.0
-    behavior_plugins: ["spin", "backup", "drive_on_heading", "assisted_teleop", "wait"]
+    behavior_plugins: ["spin", "backup", "drive_on_heading", "wait"]
     spin:
       plugin: "nav2_behaviors::Spin"
     backup:
@@ -236,8 +236,6 @@ behavior_server:
       plugin: "nav2_behaviors::DriveOnHeading"
     wait:
       plugin: "nav2_behaviors::Wait"
-    assisted_teleop:
-      plugin: "nav2_behaviors::AssistedTeleop"
     global_frame: map
     local_frame: odom
     robot_base_frame: base_link
@@ -255,7 +253,6 @@ behavior_server:
     drive_on_heading.acceleration_limit: 3.5
     drive_on_heading.deceleration_limit: -3.5
     drive_on_heading.minimum_speed: 0.0
-    # AssistedTeleop
 
 
 waypoint_follower:

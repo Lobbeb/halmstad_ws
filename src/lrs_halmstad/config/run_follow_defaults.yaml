@@ -1,3 +1,4 @@
+
 # <<------ Shared geometry and follow distance ------- >>
 /**:
   ros__parameters:
@@ -222,7 +223,7 @@ leader_estimator:
     publish_status: true                                     # Publish estimator status strings.
     publish_fault_status: false                                # Publish fault/state transitions on fault_status_topic.
     publish_debug_image: true                                   # Publish diagnostic overlay image.
-    publish_events: true                                       # Publish estimator lifecycle events.
+    publish_events: false                                       # Publish estimator lifecycle events.
 
     # Camera geometry used for projection.
     cam_x_offset_m: 0.0                              # Camera X offset in UAV body frame.
@@ -476,7 +477,7 @@ ugv_nav2_driver:
     min_goal_xy_delta_m: 0.5                 # Skip a goal if its XY distance from current pose is below this; keep 0.01-0.5 m.
     min_goal_yaw_delta_deg: 2.0              # Skip a goal if its yaw distance from current pose is below this; keep 1-10 deg.
     pause_after_goal_s: 1.0                 # Dwell time at each completed goal before sending the next one.
-    lidar_settings_file: ""                 # Optional YAML with waypoints.<name>.pc2ls_* runtime overrides.
+    lidar_settings_file: ""                 # Empty = package baylands_route_lidar.yaml; set none/false/disabled to disable waypoint pc2ls overrides.
     pc2ls_node_name: /a201_0000/pointcloud_to_laserscan  # Node updated when waypoint lidar overrides are present.
     pc2ls_update_timeout_s: 4.0             # Timeout for runtime pointcloud_to_laserscan parameter updates.
 

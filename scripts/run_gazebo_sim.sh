@@ -61,12 +61,12 @@ Common options:
   state:=checkpoint             Saved SLAM state
   x:=... y:=... z:=... yaw:=... Explicit spawn pose
   rtf:=1.0                      Forwarded to managed_clearpath_sim.launch.py
-  clock_mode:=guarded|direct    Forwarded to managed_clearpath_sim.launch.py
+  clock_mode:=direct|guarded    Deprecated; accepted but ignored, /clock is direct
 
 Examples:
   ./run.sh gazebo_sim baylands waypoint:=rotundan_0
   ./run.sh gazebo_sim baylands false waypoint:=rotundan_0
-  ./run.sh gazebo_sim baylands gui:=true waypoint:=rotundan_0 clock_mode:=direct
+  ./run.sh gazebo_sim baylands gui:=true waypoint:=rotundan_0
 
 EOF
 }
@@ -405,7 +405,7 @@ prelaunch_safety_cleanup() {
   signal_processes_by_pattern 'ros2 launch lrs_halmstad managed_clearpath_sim\.launch\.py'
   signal_processes_by_pattern 'ros2 launch .*/managed_clearpath_sim\.launch\.py'
   signal_processes_by_pattern '/ros_gz_bridge/(bridge_node|parameter_bridge|image_bridge)(\\s|$)'
-  signal_named_nodes 'amcl|map_server|planner_server|controller_server|behavior_server|bt_navigator|waypoint_follower|velocity_smoother|smoother_server|route_server|docking_server|lifecycle_manager_localization|lifecycle_manager_navigation|ugv_nav2_driver|ugv_amcl_to_odom|ugv_amcl_to_platform_odom|ugv_amcl_to_platform_filtered_odom|ugv_platform_odom_to_tf|uav_simulator|follow_uav|follow_uav_odom|leader_detector|leader_tracker|leader_estimator|selected_target_filter|visual_target_estimator|follow_point_generator|follow_point_planner|visual_actuation_bridge|camera_tracker|clock_bridge|clock_guard|omnet_uav_pose_to_odom|omnet_tcp_bridge|omnet_metrics_bridge'
+  signal_named_nodes 'amcl|map_server|planner_server|controller_server|behavior_server|bt_navigator|waypoint_follower|velocity_smoother|smoother_server|route_server|docking_server|lifecycle_manager_localization|lifecycle_manager_navigation|ugv_nav2_driver|ugv_amcl_to_odom|ugv_amcl_to_platform_odom|ugv_amcl_to_platform_filtered_odom|ugv_platform_odom_to_tf|uav_simulator|follow_uav|follow_uav_odom|leader_detector|leader_tracker|leader_estimator|selected_target_filter|visual_target_estimator|follow_point_generator|follow_point_planner|visual_actuation_bridge|camera_tracker|clock_bridge|omnet_uav_pose_to_odom|omnet_tcp_bridge|omnet_metrics_bridge'
   signal_processes_by_pattern '(^|/)gz sim($| )'
 }
 

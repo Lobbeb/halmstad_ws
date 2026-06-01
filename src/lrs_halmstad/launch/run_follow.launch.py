@@ -303,6 +303,40 @@ def _build_camera_tracker_node(context, *args, **kwargs):
     ]
 
 
+def _build_simulator_node(context, *args, **kwargs):
+    simulator_params = {
+        'use_sim_time': True,
+        'world': LaunchConfiguration('world'),
+        'uav_name': LaunchConfiguration('uav_name'),
+        'camera_mode': LaunchConfiguration('uav_camera_mode'),
+        'start_x': LaunchConfiguration('uav_start_x'),
+        'start_y': LaunchConfiguration('uav_start_y'),
+        'start_z': LaunchConfiguration('uav_start_z'),
+        'start_yaw_deg': LaunchConfiguration('uav_start_yaw_deg'),
+        'camera_mount_pitch_deg': LaunchConfiguration('camera_mount_pitch_deg'),
+        'camera_yaw_offset_deg': LaunchConfiguration('camera_yaw_offset_deg'),
+        'camera_pan_sign': LaunchConfiguration('camera_pan_sign'),
+    }
+    pan_enable = _optional_bool_from_launch(context, 'pan_enable')
+    if pan_enable is not None:
+        simulator_params['pan_enable'] = pan_enable
+    tilt_enable = _optional_bool_from_launch(context, 'tilt_enable')
+    if tilt_enable is not None:
+        simulator_params['tilt_enable'] = tilt_enable
+    return [
+        Node(
+            package='lrs_halmstad',
+            executable='simulator',
+            name='uav_simulator',
+            output='screen',
+            parameters=[
+                simulator_params,
+                LaunchConfiguration('params_file'),
+            ],
+        )
+    ]
+
+
 def _load_node_params_from_yaml(context, node_name: str) -> dict:
     params_file = LaunchConfiguration('params_file').perform(context).strip()
     if not params_file:
@@ -1027,28 +1061,9 @@ def generate_launch_description():
         default_value=['/', LaunchConfiguration('uav_name'), '/camera/actual/center_pose'],
     )
 
-    simulator_node = Node(
-        package='lrs_halmstad',
-        executable='simulator',
-        name='uav_simulator',
-        output='screen',
+    simulator_node = OpaqueFunction(
+        function=_build_simulator_node,
         condition=IfCondition(LaunchConfiguration('start_uav_simulator')),
-        parameters=[
-            {
-                'use_sim_time': True,
-                'world': LaunchConfiguration('world'),
-                'uav_name': LaunchConfiguration('uav_name'),
-                'camera_mode': LaunchConfiguration('uav_camera_mode'),
-                'start_x': LaunchConfiguration('uav_start_x'),
-                'start_y': LaunchConfiguration('uav_start_y'),
-                'start_z': LaunchConfiguration('uav_start_z'),
-                'start_yaw_deg': LaunchConfiguration('uav_start_yaw_deg'),
-                'camera_mount_pitch_deg': LaunchConfiguration('camera_mount_pitch_deg'),
-                'camera_yaw_offset_deg': LaunchConfiguration('camera_yaw_offset_deg'),
-                'camera_pan_sign': LaunchConfiguration('camera_pan_sign'),
-            },
-            LaunchConfiguration('params_file'),
-        ],
     )
 
     detector_runtime_params = RewrittenYaml(

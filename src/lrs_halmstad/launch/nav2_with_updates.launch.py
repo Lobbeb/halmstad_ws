@@ -63,7 +63,7 @@ ARGUMENTS = [
         choices=["true", "false"],
         description="Relay the latest scan at a slower, stable rate for Nav2 consumers.",
     ),
-    DeclareLaunchArgument("scan_relay_hz", default_value="8.0"),
+    DeclareLaunchArgument("scan_relay_hz", default_value="5.0"),
     DeclareLaunchArgument("scan_relay_max_age_s", default_value="0.5"),
     DeclareLaunchArgument("scan_relay_restamp", default_value="true", choices=["true", "false"]),
     DeclareLaunchArgument("scan_relay_stamp_offset_s", default_value="0.0"),

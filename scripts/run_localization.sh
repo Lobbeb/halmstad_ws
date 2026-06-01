@@ -306,9 +306,12 @@ fi
 
 if [[ "$WORLD" == baylands* ]] && [ "$LIDAR_MODE" = "3d" ] && [ -n "$SIM_SPAWN_WAYPOINT" ]; then
   spawn_route="$(route_lidar_waypoint_route "$SIM_SPAWN_WAYPOINT")"
-  mapfile -t ROUTE_LIDAR_ARGS < <(route_lidar_preset_args "$spawn_route" "$LIDAR_MODE" "${LIDAR_REMAINING_ARGS[@]}")
+  mapfile -t ROUTE_LIDAR_ARGS < <(route_lidar_waypoint_args "$SIM_SPAWN_WAYPOINT" "${LIDAR_REMAINING_ARGS[@]}")
+  if [ "${#ROUTE_LIDAR_ARGS[@]}" -eq 0 ]; then
+    mapfile -t ROUTE_LIDAR_ARGS < <(route_lidar_preset_args "$spawn_route" "$LIDAR_MODE" "${LIDAR_REMAINING_ARGS[@]}")
+  fi
   if [ "${#ROUTE_LIDAR_ARGS[@]}" -gt 0 ]; then
-    echo "[run_localization] Applying route lidar defaults for '$spawn_route': ${ROUTE_LIDAR_ARGS[*]}" >&2
+    echo "[run_localization] Applying lidar defaults for waypoint '$SIM_SPAWN_WAYPOINT': ${ROUTE_LIDAR_ARGS[*]}" >&2
   fi
 fi
 

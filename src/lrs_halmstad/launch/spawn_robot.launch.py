@@ -54,6 +54,11 @@ def generate_launch_description():
         default_value="false",
         description='Bridge /<name>/<camera_name> RGB image, camera_info, and depth_image topics to ROS'
     )
+    bridge_depth_arg = DeclareLaunchArgument(
+        name='bridge_depth',
+        default_value="false",
+        description='Bridge /<name>/<camera_name>/depth_image to ROS'
+    )
     bridge_gimbal_arg = DeclareLaunchArgument(
         name='bridge_gimbal',
         default_value="true",
@@ -66,7 +71,7 @@ def generate_launch_description():
     )
     camera_update_rate_arg = DeclareLaunchArgument(
         name='camera_update_rate',
-        default_value="20",
+        default_value="10",
         description='Camera sensor update rate in Hz',
     )
     camera_name_arg = DeclareLaunchArgument(name='camera_name', default_value="camera0",
@@ -149,8 +154,6 @@ def generate_launch_description():
              '/image@sensor_msgs/msg/Image[ignition.msgs.Image'],
             ['/', LaunchConfiguration('name'), '/', LaunchConfiguration('camera_name'),
              '/camera_info@sensor_msgs/msg/CameraInfo[ignition.msgs.CameraInfo'],
-            ['/', LaunchConfiguration('name'), '/', LaunchConfiguration('camera_name'),
-             '/depth_image@sensor_msgs/msg/Image[ignition.msgs.Image'],
         ],
         remappings=[
             (
@@ -161,6 +164,24 @@ def generate_launch_description():
         output='screen',
         condition=IfCondition(PythonExpression([
             "'", LaunchConfiguration('bridge_camera'), "'.lower() in ('1','true','yes','on')"
+        ])),
+    )
+
+    depth_bridge = Node(
+        package='ros_gz_bridge',
+        executable='parameter_bridge',
+        name='uav_depth_bridge',
+        arguments=[
+            ['/', LaunchConfiguration('name'), '/', LaunchConfiguration('camera_name'),
+             '/depth_image@sensor_msgs/msg/Image[ignition.msgs.Image'],
+        ],
+        output='screen',
+        condition=IfCondition(PythonExpression([
+            "'",
+            LaunchConfiguration('bridge_depth'),
+            "'.lower() in ('1','true','yes','on') and '",
+            LaunchConfiguration('bridge_camera'),
+            "'.lower() in ('1','true','yes','on')"
         ])),
     )
 
@@ -198,6 +219,7 @@ def generate_launch_description():
         uav_mode_arg,
         with_camera_arg,
         bridge_camera_arg,
+        bridge_depth_arg,
         bridge_gimbal_arg,
         camera_pitch_offset_deg_arg,
         camera_update_rate_arg,
@@ -207,5 +229,6 @@ def generate_launch_description():
         name_arg,
         spawn_node,
         camera_bridge,
+        depth_bridge,
         gimbal_bridge,
     ])

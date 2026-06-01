@@ -143,7 +143,7 @@ Usage: ./run.sh nav2_tuning [start|restart|stack_stop|follow|route_stop|stop|att
   [waypoint:=rotundan_0] [nav2_goals:=rotundan] [lidar:=2d|3d]
   [pause_after_goal_s:=0.0]
   [gui:=true|false] [perspective:=NAV2] [start_rqt:=true|false] [start_collision_monitor:=true|false] [map:=maps/baylands.yaml]
-  [clock_mode:=guarded|direct]
+  [clock_mode:=direct|guarded] (deprecated; accepted but ignored, /clock is direct)
   [start_optional_teleop:=true|false]
   [spawn_uav:=true|false] [start_camera_tracker:=true|false] [with_route_driver:=true|false] [follow_start_delay_s:=10.0]
   [uav_camera_update_rate:=20]
@@ -920,7 +920,7 @@ stop_base_processes() {
 
   signal_processes_by_pattern "spawn helper" 'scripts/run_spawn_uav\.sh' || true
   signal_processes_by_pattern "spawn launch" 'ros2 launch lrs_halmstad spawn_uav_1to1\.launch\.py' || true
-  signal_named_nodes "base child nodes" 'uav_simulator|clock_bridge|clock_guard|ugv_ground_truth_bridge|twist_server_node' || true
+  signal_named_nodes "base child nodes" 'uav_simulator|clock_bridge|ugv_ground_truth_bridge|twist_server_node' || true
   signal_processes_by_pattern "ros_gz_bridge" 'ros_gz_bridge/(bridge_node|parameter_bridge|image_bridge)' || true
   signal_processes_by_pattern "interactive marker server" 'interactive_marker_twist_server/marker_server --ros-args -r __node:=twist_server_node' || true
   signal_processes_by_pattern "Gazebo sim" '(^|/)gz sim($| )' || true

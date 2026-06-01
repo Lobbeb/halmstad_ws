@@ -50,7 +50,7 @@ Options:
   target_topic:=TOPIC    Topic to publish to, default same as topic
   ugv_pose_topic:=TOPIC  UGV recorded pose/odom for mode:=pose, default $UGV_POSE_TOPIC
   uav_pose_topic:=TOPIC  UAV recorded pose for mode:=pose, default $UAV_POSE_TOPIC
-  pose_targets:=ugv,uav  Which entities to update in mode:=pose
+  pose_targets:=ugv,uav  Which entities to update in mode:=pose. Use one target if Gazebo GUI is unstable.
   world:=NAME            Gazebo world key. Default: active sim world, else baylands
   ugv_entity:=NAME       Gazebo UGV entity. Default: repo Clearpath entity
   uav_entity:=NAME       Gazebo UAV entity. Default: dji0
@@ -72,6 +72,7 @@ Options:
 Example:
   ./run.sh bag_cmd_replay_sync bag:=bags/replay_sources/ugv_cmd_test
   ./run.sh bag_cmd_replay_sync bag:=bags/replay_sources/rotundan_manual mode:=pose world:=baylands
+  ./run.sh bag_cmd_replay_sync bag:=bags/replay_sources/rotundan_manual mode:=pose pose_targets:=ugv pose_rate_hz:=10
 EOF
 }
 
@@ -430,6 +431,7 @@ import sys
 
 import rclpy
 from geometry_msgs.msg import TwistStamped
+from rclpy.executors import ExternalShutdownException
 from rclpy.parameter import Parameter
 
 
@@ -453,9 +455,12 @@ def main() -> None:
     node.create_subscription(TwistStamped, input_topic, on_msg, 10)
     try:
         rclpy.spin(node)
+    except (KeyboardInterrupt, ExternalShutdownException):
+        pass
     finally:
         node.destroy_node()
-        rclpy.shutdown()
+        if rclpy.ok():
+            rclpy.shutdown()
 
 
 if __name__ == "__main__":
@@ -495,6 +500,7 @@ import sys
 import rclpy
 from geometry_msgs.msg import PoseStamped
 from nav_msgs.msg import Odometry
+from rclpy.executors import ExternalShutdownException
 from rclpy.parameter import Parameter
 from ros_gz_interfaces.srv import SetEntityPose
 
@@ -517,25 +523,26 @@ def main() -> None:
     if not client.wait_for_service(timeout_sec=10.0):
         node.get_logger().error(f"SetEntityPose service unavailable: {service_name}")
         node.destroy_node()
-        rclpy.shutdown()
+        if rclpy.ok():
+            rclpy.shutdown()
         raise SystemExit(1)
 
     last_sent: dict[str, int] = {}
-    pending: dict[str, object] = {}
+    pending: object | None = None
 
     def send_pose(entity_name: str, pose) -> None:
-      now_ns = node.get_clock().now().nanoseconds
-      if min_period_ns and now_ns - last_sent.get(entity_name, -10**30) < min_period_ns:
-          return
-      fut = pending.get(entity_name)
-      if fut is not None and not fut.done():
-          return
-      req = SetEntityPose.Request()
-      req.entity.name = entity_name
-      req.entity.type = 2
-      req.pose = pose
-      pending[entity_name] = client.call_async(req)
-      last_sent[entity_name] = now_ns
+        nonlocal pending
+        now_ns = node.get_clock().now().nanoseconds
+        if min_period_ns and now_ns - last_sent.get(entity_name, -10**30) < min_period_ns:
+            return
+        if pending is not None and not pending.done():
+            return
+        req = SetEntityPose.Request()
+        req.entity.name = entity_name
+        req.entity.type = 2
+        req.pose = pose
+        pending = client.call_async(req)
+        last_sent[entity_name] = now_ns
 
     if ugv_topic:
         node.create_subscription(
@@ -557,9 +564,12 @@ def main() -> None:
 
     try:
         rclpy.spin(node)
+    except (KeyboardInterrupt, ExternalShutdownException):
+        pass
     finally:
         node.destroy_node()
-        rclpy.shutdown()
+        if rclpy.ok():
+            rclpy.shutdown()
 
 
 if __name__ == "__main__":

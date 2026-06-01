@@ -87,6 +87,7 @@ datasets/final
 datasets/b*
 datasets/tmp*
 datasets/pre*
+datasets/ultralytics*
 
 # --- Local debug helpers ---
 /run_follow_yaw_debug.py

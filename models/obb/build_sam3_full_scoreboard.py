@@ -9,14 +9,16 @@ from pathlib import Path
 from typing import Any
 
 
-MAIN_DATASET = "baylands_super_75_15_10"
+MAIN_DATASET = "baylands_sam3_obb_super_75_15_10"
 GENERALIZATION_DATASETS = [
-    "baylands_generalization_art",
-    "baylands_generalization_playground",
-    "baylands_generalization_road_to_art",
-    "baylands_generalization_rotundan",
+    "baylands_sam3_obb_generalization_art",
+    "baylands_sam3_obb_generalization_playground",
+    "baylands_sam3_obb_generalization_road_to_art",
+    "baylands_sam3_obb_generalization_rotundan",
 ]
 DATASETS = [MAIN_DATASET] + GENERALIZATION_DATASETS
+SAM3_DATASET_PREFIX = "baylands_sam3_obb_"
+LEGACY_DATASET_PREFIX = "baylands_"
 
 RUN_ALIASES = {
     # Local eval was once launched with 020 in the run name, but the trusted
@@ -34,6 +36,8 @@ def parse_args() -> argparse.Namespace:
         type=Path,
         default=Path("/home/ruben/halmstad_ws/models/obb/experiments/sam3_hybrid_full"),
     )
+    parser.add_argument("--prediction-analysis-root", type=Path, default=None)
+    parser.add_argument("--runs", nargs="*", default=None)
     parser.add_argument("--out-dir", type=Path, default=None)
     return parser.parse_args()
 
@@ -165,10 +169,28 @@ def eval_score(row: dict[str, Any]) -> float | None:
     )
 
 
+def legacy_dataset_name(dataset: str) -> str:
+    if dataset.startswith(SAM3_DATASET_PREFIX):
+        return LEGACY_DATASET_PREFIX + dataset[len(SAM3_DATASET_PREFIX):]
+    return dataset
+
+
+def sam3_dataset_name(dataset: str) -> str:
+    if dataset.startswith(LEGACY_DATASET_PREFIX) and not dataset.startswith(SAM3_DATASET_PREFIX):
+        return SAM3_DATASET_PREFIX + dataset[len(LEGACY_DATASET_PREFIX):]
+    return dataset
+
+
+def dataset_candidates(dataset: str) -> list[str]:
+    candidates = [dataset, legacy_dataset_name(dataset), sam3_dataset_name(dataset)]
+    return list(dict.fromkeys(candidates))
+
+
 def short_dataset(dataset: str) -> str:
-    if dataset == MAIN_DATASET:
+    legacy_name = legacy_dataset_name(dataset)
+    if legacy_name == legacy_dataset_name(MAIN_DATASET):
         return "main"
-    return dataset.replace("baylands_generalization_", "gen_")
+    return legacy_name.replace("baylands_generalization_", "gen_")
 
 
 def run_candidates(run: str) -> list[str]:
@@ -177,7 +199,7 @@ def run_candidates(run: str) -> list[str]:
 
 
 def model_version(run: str) -> str:
-    for prefix in ("baylands-leader-", "baylands-original"):
+    for prefix in ("baylands-leader-", "baylands-generalized-", "baylands-original"):
         if run.startswith(prefix):
             return run[len(prefix):]
     return run
@@ -192,11 +214,12 @@ def collect_train_metrics(exp_root: Path, run: str) -> tuple[dict[str, Any], str
 
 
 def collect_local_val_metrics(exp_root: Path, run: str, dataset: str, split: str) -> dict[str, Any]:
-    name = f"{dataset}_{split}"
     for candidate in run_candidates(run):
-        path = exp_root / "runs" / "val" / candidate / name / "metrics.json"
-        if path.exists():
-            return metric_dict(load_json(path))
+        for dataset_candidate in dataset_candidates(dataset):
+            name = f"{dataset_candidate}_{split}"
+            path = exp_root / "runs" / "val" / candidate / name / "metrics.json"
+            if path.exists():
+                return metric_dict(load_json(path))
     return {}
 
 
@@ -210,12 +233,15 @@ def add_metric_columns(row: dict[str, Any], prefix: str, metrics: dict[str, Any]
     row[f"{prefix}_metric_score"] = metric_score(metrics)
 
 
-def add_prediction_columns(exp_root: Path, row: dict[str, Any], run: str, dataset: str) -> None:
+def add_prediction_columns(analysis_root: Path, row: dict[str, Any], run: str, dataset: str) -> None:
     path = None
     for candidate in run_candidates(run):
-        candidate_path = exp_root / "runs" / "prediction_analysis" / candidate / dataset / "summary.json"
-        if candidate_path.exists():
-            path = candidate_path
+        for dataset_candidate in dataset_candidates(dataset):
+            candidate_path = analysis_root / candidate / dataset_candidate / "summary.json"
+            if candidate_path.exists():
+                path = candidate_path
+                break
+        if path is not None:
             break
     if path is None:
         return
@@ -233,7 +259,7 @@ def add_prediction_columns(exp_root: Path, row: dict[str, Any], run: str, datase
     row[f"{prefix}_false_positive_empty"] = status_count(summary, "false_positive_empty")
 
 
-def collect_run(exp_root: Path, run: str) -> dict[str, Any]:
+def collect_run(exp_root: Path, analysis_root: Path, run: str) -> dict[str, Any]:
     config_path = exp_root / "configs" / f"{run}.json"
     config = load_json(config_path) if config_path.exists() else {}
 
@@ -270,7 +296,7 @@ def collect_run(exp_root: Path, run: str) -> dict[str, Any]:
         gen_metric_scores.append(row.get(f"{prefix}_metric_score"))
 
     for dataset in DATASETS:
-        add_prediction_columns(exp_root, row, run, dataset)
+        add_prediction_columns(analysis_root, row, run, dataset)
         if dataset in GENERALIZATION_DATASETS:
             gen_pred_scores.append(row.get(f"{short_dataset(dataset)}_pred_score"))
 
@@ -283,11 +309,14 @@ def collect_run(exp_root: Path, run: str) -> dict[str, Any]:
     return row
 
 
-def fmt_md(value: Any) -> str:
+def fmt_md(value: Any, column: str) -> str:
     if value is None:
         return ""
+    if column == "epoch":
+        value_float = as_float(value)
+        return "" if value_float is None else str(int(round(value_float)))
     if isinstance(value, float):
-        return f"{value:.4f}"
+        return f"{value:.5f}"
     return str(value)
 
 
@@ -296,6 +325,7 @@ def write_csv(path: Path, rows: list[dict[str, Any]]) -> None:
         return
 
     preferred = [
+        "rank",
         "model_version",
         "eval_score",
         "train_score",
@@ -339,6 +369,7 @@ def write_csv(path: Path, rows: list[dict[str, Any]]) -> None:
 
 def write_markdown(path: Path, rows: list[dict[str, Any]]) -> None:
     columns = [
+        "rank",
         "model_version",
         "eval_score",
         "train_score",
@@ -353,31 +384,55 @@ def write_markdown(path: Path, rows: list[dict[str, Any]]) -> None:
         "mosaic",
         "epoch",
     ]
+    header = (
+        '| <div style="width:32px">#</div> | '
+        '<div style="width:180px">model version</div> |                                        '
+        '<div style="width:50px">eval score</div>  |                                             '
+        '<div style="width:50px">train score</div> |                                             '
+        '<div style="width:70px">train mAP50-95</div>  |                                         '
+        '<div style="width:80px">main test mAP50-95</div> |                                      '
+        '<div style="width:80px">gen avg mAP50-95</div>  |                                       '
+        '<div style="width:60px">pred avg score</div>  |                                         '
+        '<div style="width:70px">main pred score</div>  |                                         '
+        '<div style="width:70px">gen avg pred score</div>  |                                    '
+        '<div style="width:80px">main val mAP50-95</div>  |                                      '
+        '<div style="width:50px">lr0</div>  |                                                    '
+        '<div style="width:50px">mosaic</div>  |                                                  '
+        '<div style="width:40px">epoch</div>  |'
+    )
+    alignment = "| ---: | :--- | ---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :--- | ---: | :---: | :--- |"
 
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", encoding="utf-8") as f:
-        f.write("| " + " | ".join(columns) + " |\n")
-        f.write("| " + " | ".join(["---"] * len(columns)) + " |\n")
+        f.write(header + "\n")
+        f.write(alignment + "\n")
         for row in rows:
-            f.write("| " + " | ".join(fmt_md(row.get(column)) for column in columns) + " |\n")
+            f.write("| " + " | ".join(fmt_md(row.get(column), column) for column in columns) + " |\n")
 
 
 def main() -> int:
     args = parse_args()
     exp_root = args.exp_root.expanduser().resolve()
+    analysis_root = (
+        args.prediction_analysis_root.expanduser().resolve()
+        if args.prediction_analysis_root
+        else exp_root / "runs" / "prediction_analysis"
+    )
     out_dir = args.out_dir.expanduser().resolve() if args.out_dir else exp_root / "scoreboards"
 
-    runs = {
-        path.stem
-        for path in (exp_root / "metrics").glob("*.json")
-        if not path.stem.endswith(" copy")
-    }
+    if args.runs:
+        runs = set(args.runs)
+    else:
+        runs = {
+            path.stem
+            for path in (exp_root / "metrics").glob("*.json")
+            if not path.stem.endswith(" copy")
+        }
 
-    analysis_root = exp_root / "runs" / "prediction_analysis"
-    if analysis_root.is_dir():
+    if args.runs is None and analysis_root.is_dir():
         runs.update(RUN_ALIASES.get(path.name, path.name) for path in analysis_root.iterdir() if path.is_dir())
 
-    rows = [collect_run(exp_root, run) for run in sorted(runs)]
+    rows = [collect_run(exp_root, analysis_root, run) for run in sorted(runs)]
     rows.sort(
         key=lambda row: (
             as_float(row.get("eval_score")) is not None,
@@ -386,6 +441,8 @@ def main() -> int:
         ),
         reverse=True,
     )
+    for rank, row in enumerate(rows, start=1):
+        row["rank"] = rank
 
     write_csv(out_dir / "full_scoreboard.csv", rows)
     write_markdown(out_dir / "full_scoreboard.md", rows)

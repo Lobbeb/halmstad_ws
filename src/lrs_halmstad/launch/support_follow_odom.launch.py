@@ -232,7 +232,7 @@ def generate_launch_description():
     )
     support_camera_update_rate_arg = DeclareLaunchArgument(
         'support_camera_update_rate',
-        default_value='10',
+        default_value='5',
         description='Support UAV camera sensor update rate in Hz when support_with_camera:=true.',
     )
     support_bridge_gimbal_arg = DeclareLaunchArgument(

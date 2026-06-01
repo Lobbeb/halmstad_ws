@@ -1088,6 +1088,8 @@ class LeaderEstimator(EventEmitterMixin, Node):
     def _publish_debug_image(self, state: str, reason: str, det: Optional[Detection2D]) -> None:
         if not self.publish_debug_image or self.debug_image_pub is None or self.last_image_msg is None:
             return
+        if self.debug_image_pub.get_subscription_count() <= 0:
+            return
         img_bgr = self._image_to_bgr(self.last_image_msg)
         if img_bgr is None:
             return

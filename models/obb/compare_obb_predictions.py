@@ -31,8 +31,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--pred-dir", required=True, type=Path, help="Ultralytics predict output folder.")
     parser.add_argument("--split", default="test", help="Dataset split to compare.")
     parser.add_argument("--out-dir", required=True, type=Path, help="Folder for CSV and selected examples.")
-    parser.add_argument("--top-k", type=int, default=20, help="How many examples to copy per ranked bucket.")
-    parser.add_argument("--max-issue", type=int, default=50, help="How many examples to copy per issue bucket.")
+    parser.add_argument("--top-k", type=int, default=10, help="How many examples to copy per ranked bucket.")
+    parser.add_argument("--max-issue", type=int, default=10, help="How many examples to copy per issue bucket.")
     return parser.parse_args()
 
 
@@ -169,6 +169,9 @@ def main() -> int:
     out_dir = args.out_dir.expanduser().resolve()
     split = args.split
 
+    if not pred_dir.is_dir():
+        raise FileNotFoundError(f"Prediction directory does not exist: {pred_dir}")
+
     images = find_images(dataset / "images" / split)
     if not images:
         raise FileNotFoundError(f"No images found in {dataset / 'images' / split}")
@@ -188,7 +191,7 @@ def main() -> int:
             status = "false_positive_empty"
         elif gt and not pred:
             status = "no_prediction"
-        elif len(pred) > 1:
+        elif len(pred) > len(gt):
             status = "multi_prediction"
         elif len(pred) < len(gt):
             status = "under_prediction"

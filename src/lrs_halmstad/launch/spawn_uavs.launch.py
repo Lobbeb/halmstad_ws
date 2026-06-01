@@ -32,7 +32,7 @@ camera_mode_arg = DeclareLaunchArgument(
 )
 camera_update_rate_arg = DeclareLaunchArgument(
     'camera_update_rate',
-    default_value='20',
+    default_value='10',
     description='UAV camera sensor update rate in Hz'
 )
 dji0_x_arg = DeclareLaunchArgument('dji0_x', default_value='0.0')

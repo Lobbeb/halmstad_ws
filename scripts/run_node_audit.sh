@@ -69,7 +69,7 @@ print_matches "Required Nav2/localization nodes" \
   '(^|/)(map_server|amcl|planner_server|controller_server|behavior_server|bt_navigator|lifecycle_manager_localization|lifecycle_manager_navigation|pointcloud_to_laserscan)$'
 
 print_matches "Optional nodes that should be absent in profile:=minimal" \
-  '(^|/)(clock_guard|joy_node|teleop_twist_joy_node|twist_server_node|camera_0_static_tf|camera_0_gz_bridge|camera_0_gz_image_bridge|camera_0_gz_depth_bridge|follow_uav|camera_tracker|uav_simulator|rviz2|rqt_gui)$'
+  '(^|/)(joy_node|teleop_twist_joy_node|twist_server_node|camera_0_static_tf|camera_0_gz_bridge|camera_0_gz_image_bridge|camera_0_gz_depth_bridge|follow_uav|camera_tracker|uav_simulator|rviz2|rqt_gui)$'
 
 print_matches "Bridge nodes" \
   '(_bridge$|parameter_bridge|image_bridge)'

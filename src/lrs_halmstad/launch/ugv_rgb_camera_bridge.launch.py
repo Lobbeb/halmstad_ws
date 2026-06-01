@@ -44,6 +44,6 @@ def generate_launch_description():
         parameters=[{'use_sim_time': True}],
     )
     return LaunchDescription([
-        camera_bridge,
+        #camera_bridge,         <--- KEEP OFF UNLESS NEEDED
         camera_static_tf,
     ])

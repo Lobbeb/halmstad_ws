@@ -8,7 +8,7 @@ STATE_DIR="/tmp/halmstad_ws"
 SIM_WORLD_FILE="$STATE_DIR/gazebo_sim.world"
 CONFIG_ROOT="$WS_ROOT/src/lrs_halmstad/config"
 RVIZ_CONFIG_DIR="$CONFIG_ROOT/rviz_configs"
-BASE_RVIZ_CONFIG="$RVIZ_CONFIG_DIR/waypoints_testing.rviz"
+BASE_RVIZ_CONFIG="$RVIZ_CONFIG_DIR/follow_uav.rviz"
 RVIZ_CONFIG_OVERRIDE=""
 RVIZ_QT_PLATFORM="${RVIZ_QT_PLATFORM:-auto}"
 
@@ -30,7 +30,7 @@ Common options:
 Examples:
   ./run.sh nav2_rviz lidar:=3d
   ./run.sh nav2_rviz lidar:=2d qt_platform:=xcb
-  ./run.sh nav2_rviz rviz_config:=waypoints_testing.rviz
+  ./run.sh nav2_rviz rviz_config:=follow_uav.rviz
 EOF
 }
 

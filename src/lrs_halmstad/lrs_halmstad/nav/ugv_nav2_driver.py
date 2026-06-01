@@ -412,7 +412,7 @@ class UgvNav2Driver(Node):
         return candidate
 
     def _load_lidar_settings(self) -> dict:
-        if self.lidar_settings_file.lower() in ("", "none", "false", "disabled"):
+        if self.lidar_settings_file.lower() in ("none", "false", "disabled"):
             return {}
 
         settings_file = self.lidar_settings_file or self._default_lidar_settings_file()

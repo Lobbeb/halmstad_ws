@@ -48,7 +48,7 @@
     <xacro:arg name="laser_max_range" default="40.0"/>
     <xacro:arg name="laser_range_resolution" default="0."/>
     <xacro:arg name="laser_update_rate" default="10"/>
-    <xacro:arg name="laser_visualize" default="true"/>
+    <xacro:arg name="laser_visualize" default="false"/>
     <xacro:arg name="laser_resolution" default="1"/>
     <xacro:arg name="laser_frame_id" default="laser_frame"/>
     <xacro:arg name="laser_topic" default="scan"/>
@@ -57,7 +57,7 @@
     <xacro:arg name="camera_name" default="camera0"/>
     <xacro:arg name="camera_image_width" default="640"/>
     <xacro:arg name="camera_image_height" default="480"/>
-    <xacro:arg name="camera_update_rate" default="20"/>
+    <xacro:arg name="camera_update_rate" default="10"/>
     <xacro:arg name="camera_hfov" default="94"/>
     <xacro:arg name="camera_far_clip" default="100"/>
     <xacro:arg name="camera_pitch_offset" default="+60.0"/>

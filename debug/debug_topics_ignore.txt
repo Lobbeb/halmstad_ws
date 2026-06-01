@@ -1,0 +1,8 @@
+/rosout$
+/tf_static$
+/robot_description$
+/rc_teleop/
+/joy_teleop/
+/teleop/
+/controller_manager/statistics/
+/controller_manager/introspection_data/

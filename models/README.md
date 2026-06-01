@@ -133,11 +133,12 @@ Arguments:
 Compare predicted OBB labels against ground truth and copy useful review examples.
 
 ```bash
+RUN=baylands-leader-v9-tuned-full
 python models/obb/compare_obb_predictions.py \
   --dataset datasets/final/baylands_super_75_15_10 \
-  --pred-dir models/obb/experiments/sam3_hybrid_full/runs/predictions/my-run/baylands_super_75_15_10_test_all \
+  --pred-dir models/obb/experiments/sam3_hybrid_full/runs/predictions/$RUN/baylands_super_75_15_10_test_all \
   --split test \
-  --out-dir models/obb/experiments/sam3_hybrid_full/runs/prediction_analysis/my-run/baylands_super_75_15_10
+  --out-dir models/obb/experiments/sam3_hybrid_full/runs/prediction_analysis/$RUN/baylands_super_75_15_10
 ```
 
 Arguments:

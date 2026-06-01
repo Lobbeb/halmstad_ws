@@ -9,6 +9,7 @@ SIM_SPAWN_WAYPOINT_FILE="$STATE_DIR/gazebo_sim.spawn_waypoint"
 BAYLANDS_DEFAULT_NAV2_GOALS="baylands_waypoints"
 WORLD="baylands"
 EXTRA_ARGS=()
+CONTROL_ARGS=()
 USE_ESTIMATE="true"
 USE_OBB="true"
 USE_TRACKER="false"
@@ -66,7 +67,7 @@ route driver. YOLO mode intentionally refuses UGV odom/ground-truth inputs.
 Common options:
   waypoint:=rotundan_0
   nav2_goals:=rotundan|path.yaml
-  weights:=/path/model.pt
+  weights:=model.pt|models/obb/mymodels/model.pt|obb/mymodels/model.pt|/path/model.pt
   obb:=true|false
   tracker:=true|false
   external_detection_node:=detector|tracker
@@ -140,6 +141,19 @@ case "$MODELS_ROOT" in
     MODELS_ROOT="$HOME/${MODELS_ROOT#\~/}"
     ;;
 esac
+
+weight_exists_relative_to_roots() {
+  local rel_path="$1"
+  [[ -e "$WS_ROOT/$rel_path" || -e "$MODELS_ROOT/$rel_path" ]]
+}
+
+default_weights_rel_dir() {
+  if [ "$ARG_WEIGHTS_ROOT" = "obb" ]; then
+    echo "obb/mymodels"
+  else
+    echo "detection/mymodels"
+  fi
+}
 
 if [ -f "$SIM_WORLD_FILE" ]; then
   sim_world="$(cat "$SIM_WORLD_FILE" 2>/dev/null || true)"
@@ -489,7 +503,7 @@ if [ -z "$WEIGHTS_REL" ]; then
       WEIGHTS_REL="$DEFAULT_CUSTOM_WEIGHTS"
     fi
   fi
-elif [[ "$WEIGHTS_REL" != /* ]] && [ ! -e "$WS_ROOT/models/$WEIGHTS_REL" ]; then
+elif [[ "$WEIGHTS_REL" != /* ]] && ! weight_exists_relative_to_roots "$WEIGHTS_REL"; then
   if [[ "$WEIGHTS_REL" == */* ]]; then
     if [[ "$WEIGHTS_REL" != detection/* && "$WEIGHTS_REL" != obb/* ]]; then
       if [ "$ARG_WEIGHTS_ROOT" = "obb" ]; then
@@ -503,13 +517,13 @@ elif [[ "$WEIGHTS_REL" != /* ]] && [ ! -e "$WS_ROOT/models/$WEIGHTS_REL" ]; then
       if [ -n "$MODEL_SUBDIR" ]; then
         WEIGHTS_REL="obb/$MODEL_SUBDIR/$WEIGHTS_REL"
       else
-        WEIGHTS_REL="obb/mymodels/$WEIGHTS_REL"
+        WEIGHTS_REL="$(default_weights_rel_dir)/$WEIGHTS_REL"
       fi
     else
       if [ -n "$MODEL_SUBDIR" ]; then
         WEIGHTS_REL="detection/$MODEL_SUBDIR/$WEIGHTS_REL"
       else
-        WEIGHTS_REL="detection/mymodels/$WEIGHTS_REL"
+        WEIGHTS_REL="$(default_weights_rel_dir)/$WEIGHTS_REL"
       fi
     fi
   fi
@@ -517,6 +531,8 @@ fi
 
 if [[ "$WEIGHTS_REL" = /* ]]; then
   WEIGHTS_PATH="$WEIGHTS_REL"
+elif [ -e "$WS_ROOT/$WEIGHTS_REL" ]; then
+  WEIGHTS_PATH="$WS_ROOT/$WEIGHTS_REL"
 else
   WEIGHTS_PATH="$MODELS_ROOT/$WEIGHTS_REL"
 fi
@@ -524,7 +540,8 @@ fi
 if [ ! -f "$WEIGHTS_PATH" ]; then
   echo "YOLO weights file not found: $WEIGHTS_PATH" >&2
   echo "Resolved from weights:=${WEIGHTS_REL}" >&2
-  echo "Use an existing absolute path or a path relative to: $MODELS_ROOT" >&2
+  echo "Bare filenames are resolved under $(default_weights_rel_dir) for obb:=$USE_OBB." >&2
+  echo "Use an existing absolute path, workspace-relative path, or path relative to: $MODELS_ROOT" >&2
   exit 2
 fi
 
@@ -722,7 +739,7 @@ ros2 launch lrs_halmstad run_follow.launch.py \
   external_detection_enable:=true \
   external_detection_node:="$EXTERNAL_DETECTION_NODE" \
   range_mode:="$RANGE_MODE" \
-  yolo_weights:="$WEIGHTS_REL" \
+  yolo_weights:="$WEIGHTS_PATH" \
   "${EXTRA_ARGS[@]}" \
   "${CONTROL_ARGS[@]}" \
   world:="$WORLD"

@@ -36,6 +36,8 @@ Common options:
   camera:=attached              Camera mode. detached is intentionally unsupported.
   camera_name:=camera0          Camera namespace/name.
   camera_update_rate:=20        Camera update rate.
+  bridge_depth:=true|false      Bridge depth image. Default: false.
+  bridge_gimbal:=true|false     Bridge Gazebo gimbal joint cmd topics. Default: false.
   height:=7                     Alias for z.
   x:=... y:=... z:=... yaw:=... Spawn pose.
   next_to_ugv:=true|false       Compute spawn behind current UGV. Default: false.

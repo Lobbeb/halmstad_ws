@@ -13,6 +13,7 @@ TAG=""
 RUN_DIR=""
 DRY_RUN=false
 OMNET=false
+RECORD_IGNORE_REGEX='.*/controller_manager/(statistics|introspection_data)/.*'
 
 usage() {
   cat <<'EOF'
@@ -24,15 +25,17 @@ Record the standard experiment bag and write metadata/topics beside it.
 Common options:
   mode:=follow|yolo
   uav_name:=dji0
-  profile:=default|step2_light|vision
+  profile:=default|step2_light|vision|manual
   tag:=name
   out:=bags/experiments/...      Output run directory; bag goes under out/bag
   omnet:=true|false
+  ignore_regex:=REGEX          Extra rosbag --exclude-regex. Default excludes controller_manager stats/introspection.
+  ignore_regex:=none           Disable recorder exclude regex.
   dry_run:=true|false
 
 Examples:
   ./run.sh record_experiment baylands mode:=yolo tag:=rotundan omnet:=true
-  ./run.sh record_experiment baylands out:=bags/replay_sources/rotundan_manual dry_run:=true
+  ./run.sh record_experiment baylands profile:=manual out:=bags/replay_sources/rotundan_manual dry_run:=true
 EOF
 }
 
@@ -80,6 +83,9 @@ for arg in "$@"; do
     omnet:=*)
       OMNET="${arg#omnet:=}"
       ;;
+    ignore_regex:=*)
+      RECORD_IGNORE_REGEX="${arg#ignore_regex:=}"
+      ;;
     *)
       echo "Unknown argument: $arg" >&2
       usage >&2
@@ -98,7 +104,7 @@ case "$MODE" in
 esac
 
 case "$PROFILE" in
-  default|step2_light|vision)
+  default|step2_light|vision|manual)
     ;;
   *)
     echo "Invalid profile: $PROFILE" >&2
@@ -153,7 +159,7 @@ TOPICS=(
   "/$UAV_NAME/pose"
 )
 
-if [ "$PROFILE" != "step2_light" ]; then
+if [ "$PROFILE" != "step2_light" ] && [ "$PROFILE" != "manual" ]; then
   TOPICS+=(
     "/clock"
     "/coord/events"
@@ -167,11 +173,16 @@ if [[ "$WORLD" == baylands* ]]; then
   TOPICS+=("/a201_0000/ground_truth/odom")
 fi
 
+if [ "$PROFILE" = "manual" ]; then
+  TOPICS+=(
+    "/clock"
+    "/a201_0000/platform/cmd_vel"
+  )
+fi
 
 if [ "$MODE" = "yolo" ]; then
   TOPICS+=(
     "/coord/leader_estimate"
-    "/coord/leader_distance_debug"
     "/coord/leader_estimate_status"
     "/coord/leader_detection_status"
     "/$UAV_NAME/psdk_ros2/flight_control_setpoint_ENUposition_yaw"
@@ -244,7 +255,12 @@ else
 fi
 
 invocation="$(shell_join "$0" "$WORLD" "mode:=$MODE" "uav_name:=$UAV_NAME" "profile:=$PROFILE" "$@")"
-bag_command="$(shell_join ros2 bag record -o "$BAG_DIR" "${TOPICS[@]}")"
+RECORD_ARGS=(ros2 bag record -o "$BAG_DIR")
+if [ -n "$RECORD_IGNORE_REGEX" ] && [ "$RECORD_IGNORE_REGEX" != "none" ]; then
+  RECORD_ARGS+=(--exclude-regex "$RECORD_IGNORE_REGEX")
+fi
+RECORD_ARGS+=("${TOPICS[@]}")
+bag_command="$(shell_join "${RECORD_ARGS[@]}")"
 hostname_value="$(hostname 2>/dev/null || true)"
 started_at="$(date -Is)"
 
@@ -252,6 +268,8 @@ if [ "$DRY_RUN" = true ]; then
   echo "Run dir: $RUN_DIR_ABS"
   echo "Bag dir: $BAG_DIR"
   echo "Profile: $PROFILE"
+  echo "Ignore regex: $RECORD_IGNORE_REGEX"
+  echo "Command: $bag_command"
   echo "Topics: ${#TOPICS[@]}"
   printf '%s\n' "${TOPICS[@]}"
   exit 0
@@ -280,6 +298,7 @@ printf '%s\n' "${TOPICS[@]}" > "$TOPICS_FILE"
   printf '  "git_dirty": %s,\n' "$git_dirty"
   printf '  "invocation": "%s",\n' "$(json_escape "$invocation")"
   printf '  "bag_command": "%s",\n' "$(json_escape "$bag_command")"
+  printf '  "record_ignore_regex": "%s",\n' "$(json_escape "$RECORD_IGNORE_REGEX")"
   printf '  "topic_count": %s,\n' "${#TOPICS[@]}"
   printf '  "topics": [\n'
   for i in "${!TOPICS[@]}"; do
@@ -299,4 +318,7 @@ source "$WS_ROOT/install/setup.bash"
 set -u
 
 echo "[run_record_experiment] Recording profile=$PROFILE mode=$MODE topics=${#TOPICS[@]} bag_dir=$BAG_DIR"
-exec ros2 bag record -o "$BAG_DIR" "${TOPICS[@]}"
+if [ -n "$RECORD_IGNORE_REGEX" ] && [ "$RECORD_IGNORE_REGEX" != "none" ]; then
+  echo "[run_record_experiment] Excluding regex: $RECORD_IGNORE_REGEX"
+fi
+exec "${RECORD_ARGS[@]}"
