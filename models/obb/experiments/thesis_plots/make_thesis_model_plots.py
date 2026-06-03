@@ -132,11 +132,11 @@ MODEL_LABELS = {
     "v8c-mildgeometric": "v8c-geo",
     "v7a-ft-nomosaic-lr0002": "v7a-nomsc",
     "v7b-ft-mosaic010": "v7b-msc.01",
-    "v7c-ft-mosaic025-lowerase": "v7c-msc.25",
+    "v7c-ft-mosaic025-lowerase": "v7c-msc25",
     "v7d-color-robust": "v7d-clr",
-    "v7e-imgsz768-nomosaic": "v7e-768",
+    "v7e-imgsz768-nomosaic": "v7e-imgz768",
     "v6-nomosaic": "v6a-nomsc",
-    "v6-025mosaic": "v6b-msc.25",
+    "v6-025mosaic": "v6b-msc25",
     "v6": "v6.0",
     "v5-4": "v5.4",
     "v5-3": "v5.3",
@@ -1016,7 +1016,7 @@ def main() -> int:
                 "02b_main_vs_generalization_scatter_v6plus.png",
                 show_all_names=True,
                 skip_label_models=GENERALIZATION_V6PLUS_HIDE_LABELS,
-                focused_axis_ranges=((0.795,0.8915),(0.6615,0.78)),
+                focused_axis_ranges=((0.7995,0.8915),(0.6615,0.78)),
                 label_min_model_version=None,
                 hide_focused_low_clump_labels=True,
                 clump_label="YOLO26n+s,\nv5.3 ↓",
@@ -1031,7 +1031,7 @@ def main() -> int:
                     ((0.8230,0.675),(0.83,0.695)), # window for v7e & v6b
                     ((0.8240,0.6625),(0.8250,0.6650)), # v7d.clr,0.8246,0.6630
                     ((0.7220,0.8195),(0.7225,0.8200)), # v9.1,0.7223,0.8197
-
+                    ((0.7710,0.6940),(0.7720,0.6950)),
 
 #                   y26n.0,0.3552,0.3768
 #                   y26s.0,0.3805,0.4209
