@@ -80,6 +80,8 @@ Quick orientation:
 
 ## Code Conventions
 
+- Always provide the line or important block you changed so the user can navigate to it. Especially when tuning values or parameters.
+
 Stay consistent with the existing codebase:
 
 - Reuse existing functions and classes before adding new ones
