@@ -62,13 +62,13 @@ opt/omnetpp-*/
 *-v3*.pt
 *-v4*.pt
 *-v5*.pt
-*-v6*.pt
-*-v7*.pt
 
 # --- Local ML runs and config files ---
 models/sam*
 models/obb/experiments/sam3_hybrid_full/runs*
-models/obb/experiments/
+models/obb/experiments/sam3_hybrid_full/metrics*
+models/obb/experiments/sam3_hybrid_full/configs*
+models/obb/experiments/results*
 *yolo*.json
 *v1.json
 *v2.json
