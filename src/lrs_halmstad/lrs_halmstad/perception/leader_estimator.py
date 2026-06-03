@@ -1100,11 +1100,17 @@ class LeaderEstimator(EventEmitterMixin, Node):
                 color = self._debug_color(state)
                 if det is not None:
                     x1, y1, x2, y2 = det.bbox
-                    cv2.rectangle(out, (int(round(x1)), int(round(y1))), (int(round(x2)), int(round(y2))), color, 2)
                     if det.obb_corners is not None:
                         pts = np.asarray(det.obb_corners, dtype=np.int32).reshape((-1, 1, 2))
                         cv2.polylines(out, [pts], True, (255, 255, 0), 2, cv2.LINE_AA)
-                    cv2.circle(out, (int(round(det.u)), int(round(det.v))), 3, color, -1)
+                    else:
+                        cv2.rectangle(out, (int(round(x1)), int(round(y1))), (int(round(x2)), int(round(y2))), color, 1, cv2.LINE_AA)
+                    cv2.circle(out, (int(round(det.u)), int(round(det.v))), 1, color, -1, cv2.LINE_AA)
+                    conf_text = f"{float(det.conf):.2f}"
+                    text_x = int(round(min(x1, x2)))
+                    text_y = max(14, int(round(min(y1, y2))) - 5)
+                    cv2.putText(out, conf_text, (text_x, text_y), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (20, 20, 20), 3, cv2.LINE_AA)
+                    cv2.putText(out, conf_text, (text_x, text_y), cv2.FONT_HERSHEY_SIMPLEX, 0.45, color, 1, cv2.LINE_AA)
                 resolved_heading_yaw, resolved_heading_src = self._resolved_debug_heading(now)
                 resolved_heading_label = self._heading_direction_label(self.last_estimate_pose, resolved_heading_yaw)
                 h, w = out.shape[:2]

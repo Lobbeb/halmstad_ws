@@ -21,6 +21,7 @@ DO_COMPARE="${DO_COMPARE:-1}"
 DO_SCOREBOARD="${DO_SCOREBOARD:-}"
 CLEAN_PREDICT="${CLEAN_PREDICT:-1}"
 CLEAN_COMPARE="${CLEAN_COMPARE:-1}"
+PREDICT_STREAM="${PREDICT_STREAM:-true}"
 EVAL_DATASETS="${EVAL_DATASETS:-}"
 BOARD_TAG="${BOARD_TAG:-}"
 PREDICTIONS_ROOT="${PREDICTIONS_ROOT:-${EXP}/runs/predictions${BOARD_TAG:+_${BOARD_TAG}}}"
@@ -146,6 +147,7 @@ run_predict () {
     --save true \
     --save-txt true \
     --save-conf true \
+    --stream "$PREDICT_STREAM" \
     --project "$PREDICTIONS_ROOT/$RUN" \
     --name "${dataset}_test_all" \
     --exist-ok true
