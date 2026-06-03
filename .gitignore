@@ -85,7 +85,10 @@ models/obb/experiments/results*
 # --- Local Datasets ---
 datasets/final
 datasets/b*
-datasets/tmp*
+datasets/tmp_datasets/sam*
+datasets/tmp_datasets/super**
+datasets/tmp_datasets/*.yaml
+datasets/tmp_datasets/analysis/review*
 datasets/pre*
 datasets/ultralytics*
 
