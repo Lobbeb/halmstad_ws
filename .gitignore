@@ -69,6 +69,22 @@ models/obb/experiments/sam3_hybrid_full/runs*
 models/obb/experiments/sam3_hybrid_full/metrics*
 models/obb/experiments/sam3_hybrid_full/configs*
 models/obb/experiments/results*
+
+# Keep the small inputs needed to reproduce thesis_plots.
+!models/obb/experiments/sam3_hybrid_full/runs/
+models/obb/experiments/sam3_hybrid_full/runs/**
+!models/obb/experiments/sam3_hybrid_full/runs/prediction_analysis/
+!models/obb/experiments/sam3_hybrid_full/runs/prediction_analysis/**/
+!models/obb/experiments/sam3_hybrid_full/runs/prediction_analysis/**/summary.json
+!models/obb/experiments/sam3_hybrid_full/runs/prediction_analysis/**/comparison.csv
+!models/obb/experiments/sam3_hybrid_full/runs/tune/
+!models/obb/experiments/sam3_hybrid_full/runs/tune/*/
+!models/obb/experiments/sam3_hybrid_full/runs/tune/*/tune_results.ndjson
+!models/obb/experiments/results/
+models/obb/experiments/results/**
+!models/obb/experiments/results/analysis/
+!models/obb/experiments/results/analysis/*.csv
+
 *yolo*.json
 *v1.json
 *v2.json

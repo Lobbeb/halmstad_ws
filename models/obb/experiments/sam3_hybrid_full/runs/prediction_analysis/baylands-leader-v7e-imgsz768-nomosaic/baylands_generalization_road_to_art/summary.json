@@ -1,0 +1,12 @@
+{
+  "dataset": "/home/ruben/halmstad_ws/datasets/final/baylands_generalization_road_to_art",
+  "pred_dir": "/home/ruben/halmstad_ws/models/obb/experiments/sam3_hybrid_full/runs/predictions/baylands-leader-v7e-imgsz768-nomosaic/baylands_generalization_road_to_art_test_all",
+  "split": "test",
+  "images": 83,
+  "status_counts": {
+    "matched": 80,
+    "no_prediction": 1,
+    "multi_prediction": 2
+  },
+  "mean_best_iou_non_empty": 0.7597004878048781
+}

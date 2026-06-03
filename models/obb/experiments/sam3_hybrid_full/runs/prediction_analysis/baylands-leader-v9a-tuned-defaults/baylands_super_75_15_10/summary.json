@@ -1,0 +1,13 @@
+{
+  "dataset": "/home/ruben/halmstad_ws/datasets/final/baylands_super_75_15_10",
+  "pred_dir": "/home/ruben/halmstad_ws/models/obb/experiments/sam3_hybrid_full/runs/predictions/baylands-leader-v9a-tuned-defaults/baylands_super_75_15_10_test_all",
+  "split": "test",
+  "images": 375,
+  "status_counts": {
+    "matched": 339,
+    "correct_empty": 33,
+    "false_positive_empty": 2,
+    "multi_prediction": 1
+  },
+  "mean_best_iou_non_empty": 0.8278212323529412
+}
