@@ -126,5 +126,3 @@ datasets/ultralytics*
 # --- Local packaged training jobs ---
 /cloud_sam3*.tar.gz
 /scripts/cloud_sam3*.tar.gz
-src/lrs_halmstad/models/granso_22_medium_500k_32*
-/src/lrs_halmstad/models/granso*.sdf
