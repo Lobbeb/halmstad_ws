@@ -240,6 +240,18 @@ def focused_axis_values(
     return np.where(clipped <= low, low_part, np.where(clipped <= high, mid_part, high_part))
 
 
+def normalized_score_axis_values(
+    values: pd.Series | np.ndarray,
+    center: float = 0.75,
+    steepness: float = 8.0,
+) -> np.ndarray:
+    clipped = np.clip(np.asarray(values, dtype=float), 0.0, 1.0)
+    lo = 1.0 / (1.0 + np.exp(-steepness * (0.0 - center)))
+    hi = 1.0 / (1.0 + np.exp(-steepness * (1.0 - center)))
+    scaled = 1.0 / (1.0 + np.exp(-steepness * (clipped - center)))
+    return (scaled - lo) / (hi - lo)
+
+
 def valid_label_windows(
     label_left_windows: list[tuple[tuple[float, float], tuple[float, float]]] | None,
 ) -> list[tuple[tuple[float, float], tuple[float, float]]]:
@@ -367,6 +379,17 @@ def set_focused_axes(
     ax.axhline(low_span, color="0.75", linewidth=0.8, linestyle=":")
     ax.axvline(low_span + focus_span, color="0.75", linewidth=0.8, linestyle=":")
     ax.axhline(low_span + focus_span, color="0.75", linewidth=0.8, linestyle=":")
+
+
+def set_focused_score_xaxis(ax: plt.Axes, low: float = 0.7, high: float = 0.9) -> None:
+    ticks = [0.0, 0.5, low, 0.75, 0.8, 0.85, high, 0.95, 1.0]
+    positions = normalized_score_axis_values(np.array(ticks), center=(low + high) / 2.0)
+    labels = [str(int(tick)) if tick in {0.0, 1.0} else f"{tick:.2f}".rstrip("0").rstrip(".") for tick in ticks]
+    ax.set_xlim(0.0, 1.0)
+    ax.set_xticks(positions)
+    ax.set_xticklabels(labels)
+    ax.axvline(float(normalized_score_axis_values(np.array([low]), center=(low + high) / 2.0)[0]), color="0.75", linewidth=0.8, linestyle=":")
+    ax.axvline(float(normalized_score_axis_values(np.array([high]), center=(low + high) / 2.0)[0]), color="0.75", linewidth=0.8, linestyle=":")
 
 
 def set_compressed_axes(ax: plt.Axes, threshold: float) -> None:
@@ -542,27 +565,29 @@ def plot_model_ranking(full: pd.DataFrame, out: Path, top_n: int) -> Path:
         "eval_score": ("Combined score", "#4c78a8"),
         "main_test_mAP50-95": ("Main test mAP50-95", "#f58518"),
         "gen_avg_mAP50-95": ("Generalization mAP50-95", "#54a24b"),
-        "pred_avg_score": ("Prediction-analysis score", "#b279a2"),
     }
-    df = full.sort_values("eval_score", ascending=False).head(top_n).copy()
+    df = full.sort_values("eval_score", ascending=False).head(min(top_n, 10)).copy()
     df["label"] = df["model_version"].map(nice_model)
     y = np.arange(len(df))
-    h = 0.58
-    fig, ax = plt.subplots(figsize=(6.6, max(3.2, 0.34 * len(df))))
-    x0 = 0.6
-    for yi, (_, row) in zip(y, df.iterrows()):
-        values = [(col, float(row[col])) for col in cols if pd.notna(row[col])]
-        for col, value in sorted(values, key=lambda item: item[1], reverse=True):
-            _, color = cols[col]
-            ax.barh(yi, max(0.0, value - x0), left=x0, height=h, color=color, edgecolor="white", linewidth=0.25)
+    h = 0.3
+    offsets = np.linspace(-h, h, len(cols))
+    fig, ax = plt.subplots(figsize=(6.8, max(3.2, 0.42 * len(df))))
+    score_low, score_high = 0.7, 0.9
+    for offset, (col, (_, color)) in zip(offsets, cols.items()):
+        for yi, (_, row) in zip(y, df.iterrows()):
+            if pd.isna(row[col]):
+                continue
+            value = float(row[col])
+            plot_value = float(normalized_score_axis_values(np.array([value]), center=(score_low + score_high) / 2.0)[0])
+            ax.barh(yi + offset, plot_value, left=0.0, height=h, color=color, edgecolor="white", linewidth=0.25)
     ax.set_yticks(y)
     ax.set_yticklabels(df["label"])
     ax.invert_yaxis()
     ax.set_xlabel("Score")
-    ax.set_xlim(0.6, 1.0)
+    set_focused_score_xaxis(ax, score_low, score_high)
     ax.grid(axis="x", alpha=0.25)
     handles = [Patch(facecolor=color, label=label) for label, color in cols.values()]
-    ax.legend(handles=handles, loc="lower center", bbox_to_anchor=(0.5, 1.01), ncol=2, frameon=False)
+    ax.legend(handles=handles, loc="lower center", bbox_to_anchor=(0.5, 1.01), ncol=3, frameon=False)
     path = out / "01_model_ranking_top_models.png"
     save(fig, path)
     return path
