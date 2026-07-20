@@ -7,7 +7,7 @@ log/*
 *.log
 
 # --- Runtime output / experiment artifacts ---
-#runs/
+runs/
 bags/
 *.mcap
 *.db3
@@ -84,3 +84,14 @@ opt/omnetpp-*/
 /maps/*backup.csv
 
 /scripts/hh_*.sh
+
+# --- Local thesis, audit, and generated result artifacts ---
+/docs/
+/MasterThesis/
+/Ruben_Plots/
+/William/
+/MSc__Ruben_Willian_Project*.pdf
+/thesis*_audit_extract.txt
+/audit_v3.txt
+/*Zone.Identifier
+/scripts/thesis_plots/

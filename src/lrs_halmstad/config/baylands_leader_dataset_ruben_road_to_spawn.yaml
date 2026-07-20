@@ -1,0 +1,56 @@
+world: baylands
+output_dir: datasets/baylands_capture/road_to_spawn
+
+capture:
+  uav_name: dji0
+  target_pose_topic: /a201_0000/ground_truth/odom
+  hz: 0.5
+  save_overlay: false
+  save_metadata: true
+  save_negative_examples: true
+
+startup:
+  warmup_s: 6.0
+  stop_on_error: true
+  scenario_retry_count: 0
+  retry_delay_s: 8.0
+
+gimbal:
+  mode: random_hold
+  interval_s: 6.0
+  hold_s: 7.0
+  pan_center_deg: 0.0
+  pan_amplitude_deg: 18.0
+  pan_min_deg: -30.0
+  pan_max_deg: 30.0
+  tilt_center_deg: -45.0
+  tilt_amplitude_deg: 10.0
+  tilt_min_deg: -60.0
+  tilt_max_deg: -25.0
+
+pose_variations:
+  - name: right
+    leader_heading_offset_deg: -90.0
+    d_target_m: 8.0
+    hold_s: 20.0
+  - name: right_wide
+    leader_heading_offset_deg: -45.0
+    d_target_m: 12.0
+    hold_s: 20.0
+  - name: center_close
+    leader_heading_offset_deg: 0.0
+    d_target_m: 5.0
+    hold_s: 20.0
+  - name: left_wide
+    leader_heading_offset_deg: 45.0
+    d_target_m: 12.0
+    hold_s: 20.0
+  - name: left
+    leader_heading_offset_deg: 90.0
+    d_target_m: 8.0
+    hold_s: 20.0
+
+scenarios:
+  - name: road_to_spawn
+    waypoint: road_to_spawn_0
+    nav2_goals: road_to_spawn

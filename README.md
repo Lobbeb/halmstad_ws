@@ -1,9 +1,7 @@
 # Halmstad ROS 2 + Gazebo Testbed — Workspace Snapshot
 Current source of truth
 -----------------------
-- `AGENT.md`
-- `CURRENT_STATE.md`
-- `RUNNING_SIM.md`
+- `AGENTS.md`
 - `src/lrs_halmstad/README.md`
 
 Current tested baseline:

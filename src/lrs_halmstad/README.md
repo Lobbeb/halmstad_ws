@@ -2,7 +2,7 @@
 
 Reference for the current 1-to-1 Gazebo/ROS 2 workflow.
 
-For repo-level conventions and handoff notes, also read `../../AGENT.md`.
+For repo-level conventions and handoff notes, also read `../../AGENTS.md`.
 
 Current real follow launch:
 - `run_follow.launch.py`

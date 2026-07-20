@@ -115,7 +115,7 @@ After code changes, use the smallest useful validation:
 After workflow or operator-facing changes:
 
 - Update `README.md` and `src/lrs_halmstad/README.md`
-- If logic changes update `HOW_TO_RUN.md` and `FOLLOW_MODES_GUIDE.md`
+- If logic changes update `README.md` and `src/lrs_halmstad/README.md`
 
 Put new descriptions in `/descriptions`
 
