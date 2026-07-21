@@ -3,6 +3,7 @@ import os
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, GroupAction, IncludeLaunchDescription
+from launch.conditions import IfCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration, PythonExpression
 from launch_ros.actions import Node, PushRosNamespace
@@ -29,30 +30,37 @@ def _support_instance(
     bridge_gimbal,
     camera_pitch_offset_deg,
     camera_update_rate,
+    pose_frame_id,
+    camera_frame_id,
+    condition=None,
 ):
-    spawn_group = GroupAction([
-        PushRosNamespace(f'support_follow_spawn_{instance_id}'),
-        IncludeLaunchDescription(
-            PythonLaunchDescriptionSource(
-                os.path.join(share_dir, 'spawn_robot.launch.py')
+    spawn_group = GroupAction(
+        [
+            PushRosNamespace(f'support_follow_spawn_{instance_id}'),
+            IncludeLaunchDescription(
+                PythonLaunchDescriptionSource(
+                    os.path.join(share_dir, 'spawn_robot.launch.py')
+                ),
+                launch_arguments={
+                    'world': world,
+                    'name': uav_name,
+                    'type': 'm100',
+                    'uav_mode': uav_mode,
+                    'with_camera': with_camera,
+                    'bridge_camera': with_camera,
+                    'bridge_gimbal': bridge_gimbal,
+                    'camera_pitch_offset_deg': camera_pitch_offset_deg,
+                    'camera_update_rate': camera_update_rate,
+                    'camera_frame_id': camera_frame_id,
+                    'x': start_x,
+                    'y': start_y,
+                    'z': start_z,
+                    'Y': start_yaw_deg,
+                }.items(),
             ),
-            launch_arguments={
-                'world': world,
-                'name': uav_name,
-                'type': 'm100',
-                'uav_mode': uav_mode,
-                'with_camera': with_camera,
-                'bridge_camera': with_camera,
-                'bridge_gimbal': bridge_gimbal,
-                'camera_pitch_offset_deg': camera_pitch_offset_deg,
-                'camera_update_rate': camera_update_rate,
-                'x': start_x,
-                'y': start_y,
-                'z': start_z,
-                'Y': start_yaw_deg,
-            }.items(),
-        ),
-    ])
+        ],
+        condition=condition,
+    )
 
     simulator_params = RewrittenYaml(
         source_file=params_file,
@@ -85,6 +93,7 @@ def _support_instance(
         executable='simulator',
         name=f'support_follow_{instance_id}_simulator',
         output='screen',
+        condition=condition,
         parameters=[
             simulator_params,
             {
@@ -92,6 +101,8 @@ def _support_instance(
                 'world': world,
                 'uav_name': uav_name,
                 'camera_mode': 'integrated_joint',
+                'camera_mount_pitch_deg': camera_pitch_offset_deg,
+                'pose_frame_id': pose_frame_id,
                 'start_x': start_x,
                 'start_y': start_y,
                 'start_z': start_z,
@@ -105,6 +116,7 @@ def _support_instance(
         executable='follow_uav_odom',
         name=f'support_follow_{instance_id}_odom_controller',
         output='screen',
+        condition=condition,
         parameters=[
             follow_params,
             {
@@ -290,6 +302,16 @@ def generate_launch_description():
         'dji1_start_yaw_deg',
         default_value=LaunchConfiguration('leader_start_yaw_deg'),
     )
+    dji1_pose_frame_id_arg = DeclareLaunchArgument(
+        'dji1_pose_frame_id',
+        default_value='odom',
+        description='Frame label for the dji1 simulator pose; Task 5 explicitly uses gazebo_world.',
+    )
+    dji1_camera_frame_id_arg = DeclareLaunchArgument(
+        'dji1_camera_frame_id',
+        default_value='/dji1/camera0/image_frame',
+        description='CameraInfo/image frame ID; legacy default is retained unless explicitly overridden.',
+    )
     dji2_name_arg = DeclareLaunchArgument('dji2_name', default_value='dji2')
     dji2_d_target_arg = DeclareLaunchArgument(
         'dji2_d_target',
@@ -340,6 +362,19 @@ def generate_launch_description():
         'dji2_start_yaw_deg',
         default_value=LaunchConfiguration('leader_start_yaw_deg'),
     )
+    dji2_pose_frame_id_arg = DeclareLaunchArgument(
+        'dji2_pose_frame_id',
+        default_value='odom',
+    )
+    dji2_camera_frame_id_arg = DeclareLaunchArgument(
+        'dji2_camera_frame_id',
+        default_value='/dji2/camera0/image_frame',
+    )
+    dji2_enable_arg = DeclareLaunchArgument(
+        'dji2_enable',
+        default_value='true',
+        description='Start the legacy dji2 support slot; Task 5 dji1-only validation disables it.',
+    )
 
     leader_pose_to_odom = Node(
         package='lrs_halmstad',
@@ -374,6 +409,8 @@ def generate_launch_description():
         bridge_gimbal=LaunchConfiguration('support_bridge_gimbal'),
         camera_pitch_offset_deg=LaunchConfiguration('support_camera_pitch_offset_deg'),
         camera_update_rate=LaunchConfiguration('support_camera_update_rate'),
+        pose_frame_id=LaunchConfiguration('dji1_pose_frame_id'),
+        camera_frame_id=LaunchConfiguration('dji1_camera_frame_id'),
     )
     support_dji2_actions = _support_instance(
         instance_id='dji2',
@@ -394,6 +431,9 @@ def generate_launch_description():
         bridge_gimbal=LaunchConfiguration('support_bridge_gimbal'),
         camera_pitch_offset_deg=LaunchConfiguration('support_camera_pitch_offset_deg'),
         camera_update_rate=LaunchConfiguration('support_camera_update_rate'),
+        pose_frame_id=LaunchConfiguration('dji2_pose_frame_id'),
+        camera_frame_id=LaunchConfiguration('dji2_camera_frame_id'),
+        condition=IfCondition(LaunchConfiguration('dji2_enable')),
     )
 
     return LaunchDescription([
@@ -419,6 +459,8 @@ def generate_launch_description():
         dji1_start_y_arg,
         dji1_start_z_arg,
         dji1_start_yaw_deg_arg,
+        dji1_pose_frame_id_arg,
+        dji1_camera_frame_id_arg,
         dji2_name_arg,
         dji2_d_target_arg,
         dji2_forward_offset_m_arg,
@@ -427,6 +469,9 @@ def generate_launch_description():
         dji2_start_y_arg,
         dji2_start_z_arg,
         dji2_start_yaw_deg_arg,
+        dji2_pose_frame_id_arg,
+        dji2_camera_frame_id_arg,
+        dji2_enable_arg,
         leader_pose_to_odom,
         *support_dji1_actions,
         *support_dji2_actions,

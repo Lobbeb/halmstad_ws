@@ -61,6 +61,7 @@
     <xacro:arg name="camera_hfov" default="94"/>
     <xacro:arg name="camera_far_clip" default="100"/>
     <xacro:arg name="camera_pitch_offset" default="+60.0"/>
+    <xacro:arg name="camera_frame_id" default="camera0/image_frame"/>
 
     <xacro:property name="prop_type" value="$(arg robot_type)"/>    
     <xacro:if value="${prop_type == 'piraya'}">
@@ -137,7 +138,7 @@
                                  link_name="${camera_link_name}"
                                  hfov_deg="$(arg camera_hfov)"
                                  topic_base="${camera_prefix}"
-                                 frame_id="${camera_prefix}/image_frame"
+                                 frame_id="$(arg camera_frame_id)"
                                  im_width="$(arg camera_image_width)"
                                  im_height="$(arg camera_image_height)"
                                  update_rate="$(arg camera_update_rate)"

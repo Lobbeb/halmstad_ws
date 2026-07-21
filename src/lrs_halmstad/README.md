@@ -114,6 +114,45 @@ For the on-route scenario, run the bounded observer while the hazard is active, 
 
 The `support_hazard` rosbag profile records the four typed hazard topics, global costmap, global plan, AMCL pose, NavigateToPose action status, and `/coord/events`; it does not add raw image topics. Return the three verifier reports under `/tmp/halmstad_ws/aerial_support_validation/`, terminal logs, the rosbag run directory, a global-costmap screenshot, and before/after plan snapshots.
 
+## Task 5: dji1 RGB-D hazard projection
+
+The real projector is opt-in and dji1-only. The tmux wrapper enables its required simulation-localization TF, Gazebo gimbal-command bridge, and typed dji1→dji0→UGV chain when `hazard_projector_enable:=true`, and disables the legacy dji2 support slot for this validation; the synthetic source remains available but cannot be enabled at the same time. The aerial costmap layer remains disabled unless `aerial_support_layer_enable:=true` is supplied.
+
+The verified simulation contract is:
+
+- RGB `/dji1/camera0/image_raw`, `sensor_msgs/Image`, `rgb8`;
+- aligned depth `/dji1/camera0/depth_image`, `sensor_msgs/Image`, `32FC1` metres, with `+inf` for invalid pixels;
+- CameraInfo `/dji1/camera0/camera_info`;
+- optical frame `dji1/camera0/image_optical_frame`, using ROS +x-right, +y-down, +z-forward axes;
+- timestamped Gazebo-world poses on `/dji1/pose` and `/dji1/camera0/actual/center_pose`;
+- TF chain `map → dji1/base_link → dji1/camera0/image_optical_frame` at the source acquisition timestamp.
+
+The Baylands support-observation wrapper defaults to the available Baylands checkpoint `models/obb/mymodels/baylands-leader-v4-3.pt` with the Ultralytics backend. Its verified class is `ugv`; this is a geometry and transport fixture, not a validated environmental-hazard detector.
+
+World→map is a simulation-only planar calibration fitted from the existing `parkinglot_west` world/AMCL waypoint pairs. `parkinglot_west_0` is held out: the current fit has 1.152 m maximum fit residual and 0.578 m held-out XY error, below the configurable 1.25 m and 0.75 m gates. This calibration is not a claim that the full Baylands raster is globally rigid, and it must not be reused outside its calibrated route without new evidence.
+
+Start the geometry and typed-chain validation without changing the global costmap:
+
+```bash
+./run.sh tmux_support_chain baylands mode:=follow \
+  hazard_projector_enable:=true \
+  record:=true record_profile:=support_hazard record_tag:=task5_rgbd
+```
+
+For an explicit downstream-layer observation, add `aerial_support_layer_enable:=true`. Use that only after confirming the selected class is appropriate: the currently verified existing weights detect class `ugv`, so this first proof validates RGB-D geometry and transport, not a trained environmental-hazard detector. No detection accuracy, precision, recall, or mAP claim is made.
+
+Useful evidence commands from a second sourced terminal are:
+
+```bash
+ros2 topic echo --once /coord/support/dji1/hazard_detection
+ros2 topic echo --once /coord/support/dji1/aerial_hazards
+ros2 topic echo --once /coord/dji0/aerial_hazards
+ros2 topic echo --once /coord/ugv/aerial_hazards
+ros2 run tf2_ros tf2_echo map dji1/camera0/image_optical_frame -t <acquisition_stamp_seconds>
+```
+
+The `support_hazard` bag remains image-free but now also records dji1 hazard detector metadata, dji1 simulation pose contracts, and `/tf`. Use a separate, short diagnostic bag for RGB/depth/CameraInfo only when timestamp or depth debugging is required.
+
 OMNeT++ network metrics topics (published by `omnet_metrics_bridge` when OMNeT is running,
 requires `start_omnet_bridge:=true` in `run_follow.launch.py`; all `std_msgs/Float64`, ~10 Hz):
 

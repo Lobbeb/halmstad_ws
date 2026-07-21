@@ -18,6 +18,7 @@ def _support_detector_instance(
     detector_backend,
     detector_onnx_model,
     yolo_weights,
+    condition=None,
 ):
     node_name = f'support_{instance_id}_leader_detector'
     detector_params = RewrittenYaml(
@@ -49,6 +50,7 @@ def _support_detector_instance(
         executable='leader_detector',
         name=node_name,
         output='screen',
+        condition=condition,
         parameters=[
             detector_params,
             {
@@ -60,14 +62,60 @@ def _support_detector_instance(
     )
 
 
+def _support_hazard_detector_instance(*, params_file):
+    node_name = 'support_dji1_hazard_detector'
+    detector_params = RewrittenYaml(
+        source_file=params_file,
+        param_rewrites={
+            'event_topic': LaunchConfiguration('hazard_detector_event_topic'),
+            'out_topic': LaunchConfiguration('hazard_detector_topic'),
+            'status_topic': LaunchConfiguration('hazard_detector_status_topic'),
+            'backend': LaunchConfiguration('hazard_detector_backend'),
+            'onnx_model': LaunchConfiguration('hazard_detector_onnx_model'),
+            'yolo_weights': LaunchConfiguration('hazard_detector_yolo_weights'),
+            'device': LaunchConfiguration('hazard_detector_device'),
+            'conf_threshold': LaunchConfiguration('hazard_detector_confidence_threshold'),
+            'target_class_name': LaunchConfiguration('hazard_target_class'),
+            'target_class_id': '-1',
+            'async_inference': LaunchConfiguration('detector_async_inference'),
+            'latest_frame_only': LaunchConfiguration('detector_latest_frame_only'),
+            'stale_detection_threshold_ms': LaunchConfiguration(
+                'detector_stale_detection_threshold_ms'
+            ),
+            'metrics_window_s': LaunchConfiguration('detector_metrics_window_s'),
+            'benchmark_csv_path': '',
+            'image_qos_depth': LaunchConfiguration('detector_image_qos_depth'),
+            'image_qos_reliability': LaunchConfiguration('detector_image_qos_reliability'),
+        },
+        key_rewrites={'leader_detector': node_name},
+        convert_types=True,
+    )
+    return Node(
+        package='lrs_halmstad',
+        executable='leader_detector',
+        name=node_name,
+        output='screen',
+        condition=IfCondition(LaunchConfiguration('hazard_projector_enable')),
+        parameters=[
+            detector_params,
+            {
+                'use_sim_time': True,
+                'uav_name': 'dji1',
+                'camera_topic': LaunchConfiguration('hazard_rgb_topic'),
+                'yolo_weights': LaunchConfiguration('hazard_detector_yolo_weights'),
+            },
+        ],
+    )
+
+
 def generate_launch_description():
     share_dir = get_package_share_directory('lrs_halmstad')
     default_params_file = os.path.join(share_dir, 'config', 'run_follow_defaults.yaml')
 
     world_arg = DeclareLaunchArgument(
         'world',
-        default_value='warehouse',
-        description='Unused operator-facing symmetry argument so the overlay matches repo run patterns.',
+        default_value='baylands',
+        description='Baylands support-observation world/operator context.',
     )
     params_file_arg = DeclareLaunchArgument(
         'params_file',
@@ -77,6 +125,11 @@ def generate_launch_description():
     camera_name_arg = DeclareLaunchArgument('camera_name', default_value='camera0')
     dji1_name_arg = DeclareLaunchArgument('dji1_name', default_value='dji1')
     dji2_name_arg = DeclareLaunchArgument('dji2_name', default_value='dji2')
+    dji2_enable_arg = DeclareLaunchArgument(
+        'dji2_enable',
+        default_value='true',
+        description='Start the legacy dji2 detector; Task 5 dji1-only validation disables it.',
+    )
     detector_backend_arg = DeclareLaunchArgument('detector_backend', default_value='onnx_cpu')
     detector_onnx_model_arg = DeclareLaunchArgument('detector_onnx_model', default_value='')
     yolo_weights_arg = DeclareLaunchArgument('yolo_weights', default_value='')
@@ -292,6 +345,213 @@ def generate_launch_description():
         'support_camera_scan_rate_hz',
         default_value='10.0',
     )
+    hazard_localization_enable_arg = DeclareLaunchArgument(
+        'hazard_localization_enable',
+        default_value='false',
+        description='Enable the simulation-only dji1 map-to-camera TF contract for Task 5.',
+    )
+    hazard_localization_pose_topic_arg = DeclareLaunchArgument(
+        'hazard_localization_pose_topic', default_value='/dji1/pose'
+    )
+    hazard_localization_camera_pose_topic_arg = DeclareLaunchArgument(
+        'hazard_localization_camera_pose_topic',
+        default_value='/dji1/camera0/actual/center_pose',
+    )
+    hazard_localization_world_frame_arg = DeclareLaunchArgument(
+        'hazard_localization_world_frame', default_value='gazebo_world'
+    )
+    hazard_localization_map_frame_arg = DeclareLaunchArgument(
+        'hazard_localization_map_frame', default_value='map'
+    )
+    hazard_localization_body_frame_arg = DeclareLaunchArgument(
+        'hazard_localization_body_frame', default_value='dji1/base_link'
+    )
+    hazard_localization_optical_frame_arg = DeclareLaunchArgument(
+        'hazard_localization_optical_frame',
+        default_value='dji1/camera0/image_optical_frame',
+    )
+    hazard_localization_sync_queue_size_arg = DeclareLaunchArgument(
+        'hazard_localization_sync_queue_size', default_value='20'
+    )
+    hazard_localization_sync_tolerance_s_arg = DeclareLaunchArgument(
+        'hazard_localization_sync_tolerance_s', default_value='0.03'
+    )
+    hazard_localization_calibration_csv_arg = DeclareLaunchArgument(
+        'hazard_localization_calibration_csv',
+        default_value=os.path.join(share_dir, 'maps', 'waypoints_baylands_groups.csv'),
+        description='Simulation-only world/map calibration manifest.',
+    )
+    hazard_localization_calibration_group_arg = DeclareLaunchArgument(
+        'hazard_localization_calibration_group', default_value='parkinglot_west'
+    )
+    hazard_localization_calibration_map_z_m_arg = DeclareLaunchArgument(
+        'hazard_localization_calibration_map_z_m', default_value='0.0'
+    )
+    hazard_localization_calibration_validation_place_arg = DeclareLaunchArgument(
+        'hazard_localization_calibration_validation_place',
+        default_value='parkinglot_west_0',
+    )
+    hazard_localization_calibration_min_points_arg = DeclareLaunchArgument(
+        'hazard_localization_calibration_min_points', default_value='10'
+    )
+    hazard_localization_calibration_max_fit_error_m_arg = DeclareLaunchArgument(
+        'hazard_localization_calibration_max_fit_error_m', default_value='1.25'
+    )
+    hazard_localization_calibration_max_validation_error_m_arg = DeclareLaunchArgument(
+        'hazard_localization_calibration_max_validation_error_m', default_value='0.75'
+    )
+    hazard_localization_base_to_gimbal_x_m_arg = DeclareLaunchArgument(
+        'hazard_localization_base_to_gimbal_x_m', default_value='0.0'
+    )
+    hazard_localization_base_to_gimbal_y_m_arg = DeclareLaunchArgument(
+        'hazard_localization_base_to_gimbal_y_m', default_value='0.0'
+    )
+    hazard_localization_base_to_gimbal_z_m_arg = DeclareLaunchArgument(
+        'hazard_localization_base_to_gimbal_z_m', default_value='-0.1'
+    )
+    hazard_localization_camera_sensor_x_m_arg = DeclareLaunchArgument(
+        'hazard_localization_camera_sensor_x_m', default_value='0.027'
+    )
+    hazard_localization_camera_sensor_y_m_arg = DeclareLaunchArgument(
+        'hazard_localization_camera_sensor_y_m', default_value='0.0'
+    )
+    hazard_localization_camera_sensor_z_m_arg = DeclareLaunchArgument(
+        'hazard_localization_camera_sensor_z_m', default_value='-0.027'
+    )
+    hazard_localization_optical_roll_rad_arg = DeclareLaunchArgument(
+        'hazard_localization_optical_roll_rad', default_value='-1.5707963267948966'
+    )
+    hazard_localization_optical_pitch_rad_arg = DeclareLaunchArgument(
+        'hazard_localization_optical_pitch_rad', default_value='0.0'
+    )
+    hazard_localization_optical_yaw_rad_arg = DeclareLaunchArgument(
+        'hazard_localization_optical_yaw_rad', default_value='-1.5707963267948966'
+    )
+    hazard_projector_enable_arg = DeclareLaunchArgument(
+        'hazard_projector_enable',
+        default_value='false',
+        description='Enable the dji1-only Task 5 detector and RGB-D hazard projector.',
+    )
+    hazard_rgb_topic_arg = DeclareLaunchArgument(
+        'hazard_rgb_topic', default_value='/dji1/camera0/image_raw'
+    )
+    hazard_depth_topic_arg = DeclareLaunchArgument(
+        'hazard_depth_topic', default_value='/dji1/camera0/depth_image'
+    )
+    hazard_camera_info_topic_arg = DeclareLaunchArgument(
+        'hazard_camera_info_topic', default_value='/dji1/camera0/camera_info'
+    )
+    hazard_detector_topic_arg = DeclareLaunchArgument(
+        'hazard_detector_topic', default_value='/coord/support/dji1/hazard_detection'
+    )
+    hazard_detector_status_topic_arg = DeclareLaunchArgument(
+        'hazard_detector_status_topic',
+        default_value='/coord/support/dji1/hazard_detection_status',
+    )
+    hazard_detector_event_topic_arg = DeclareLaunchArgument(
+        'hazard_detector_event_topic',
+        default_value='/coord/support/dji1/hazard_detection_events',
+    )
+    hazard_output_topic_arg = DeclareLaunchArgument(
+        'hazard_output_topic', default_value='/coord/support/dji1/aerial_hazards'
+    )
+    hazard_target_frame_arg = DeclareLaunchArgument('hazard_target_frame', default_value='map')
+    hazard_optical_frame_arg = DeclareLaunchArgument(
+        'hazard_optical_frame', default_value='dji1/camera0/image_optical_frame'
+    )
+    hazard_source_uav_arg = DeclareLaunchArgument('hazard_source_uav', default_value='dji1')
+    hazard_target_class_arg = DeclareLaunchArgument('hazard_target_class', default_value='ugv')
+    hazard_detector_backend_arg = DeclareLaunchArgument(
+        'hazard_detector_backend', default_value=LaunchConfiguration('dji1_detector_backend')
+    )
+    hazard_detector_onnx_model_arg = DeclareLaunchArgument(
+        'hazard_detector_onnx_model',
+        default_value=LaunchConfiguration('dji1_detector_onnx_model'),
+    )
+    hazard_detector_yolo_weights_arg = DeclareLaunchArgument(
+        'hazard_detector_yolo_weights', default_value=LaunchConfiguration('dji1_yolo_weights')
+    )
+    hazard_detector_device_arg = DeclareLaunchArgument(
+        'hazard_detector_device', default_value=LaunchConfiguration('yolo_device')
+    )
+    hazard_detector_confidence_threshold_arg = DeclareLaunchArgument(
+        'hazard_detector_confidence_threshold', default_value='0.5'
+    )
+    hazard_projector_minimum_confidence_arg = DeclareLaunchArgument(
+        'hazard_projector_minimum_confidence',
+        default_value=LaunchConfiguration('hazard_detector_confidence_threshold'),
+    )
+    hazard_stable_track_id_arg = DeclareLaunchArgument('hazard_stable_track_id', default_value='')
+    hazard_sync_queue_size_arg = DeclareLaunchArgument('hazard_sync_queue_size', default_value='30')
+    hazard_sync_tolerance_s_arg = DeclareLaunchArgument(
+        'hazard_sync_tolerance_s', default_value='0.02'
+    )
+    hazard_stale_timeout_s_arg = DeclareLaunchArgument(
+        'hazard_stale_timeout_s', default_value='0.5'
+    )
+    hazard_depth_encoding_arg = DeclareLaunchArgument(
+        'hazard_depth_encoding', default_value='32FC1'
+    )
+    hazard_depth_scale_arg = DeclareLaunchArgument('hazard_depth_scale', default_value='1.0')
+    hazard_inner_box_fraction_arg = DeclareLaunchArgument(
+        'hazard_inner_box_fraction', default_value='0.5'
+    )
+    hazard_minimum_valid_pixels_arg = DeclareLaunchArgument(
+        'hazard_minimum_valid_pixels', default_value='20'
+    )
+    hazard_minimum_depth_m_arg = DeclareLaunchArgument(
+        'hazard_minimum_depth_m', default_value='0.2'
+    )
+    hazard_maximum_depth_m_arg = DeclareLaunchArgument(
+        'hazard_maximum_depth_m', default_value='100.0'
+    )
+    hazard_depth_statistic_arg = DeclareLaunchArgument(
+        'hazard_depth_statistic', default_value='median'
+    )
+    hazard_depth_percentile_arg = DeclareLaunchArgument(
+        'hazard_depth_percentile', default_value='50.0'
+    )
+    hazard_transform_timeout_s_arg = DeclareLaunchArgument(
+        'hazard_transform_timeout_s', default_value='0.2'
+    )
+    hazard_ttl_s_arg = DeclareLaunchArgument('hazard_ttl_s', default_value='1.0')
+    hazard_confirm_hits_arg = DeclareLaunchArgument('hazard_confirm_hits', default_value='3')
+    hazard_expiry_check_rate_hz_arg = DeclareLaunchArgument(
+        'hazard_expiry_check_rate_hz', default_value='10.0'
+    )
+    hazard_summary_period_s_arg = DeclareLaunchArgument(
+        'hazard_summary_period_s', default_value='5.0'
+    )
+    hazard_depth_stddev_base_m_arg = DeclareLaunchArgument(
+        'hazard_depth_stddev_base_m', default_value='0.25'
+    )
+    hazard_depth_stddev_per_m_arg = DeclareLaunchArgument(
+        'hazard_depth_stddev_per_m', default_value='0.02'
+    )
+    hazard_image_stddev_px_arg = DeclareLaunchArgument(
+        'hazard_image_stddev_px', default_value='2.0'
+    )
+    hazard_transform_stddev_m_arg = DeclareLaunchArgument(
+        'hazard_transform_stddev_m', default_value='1.25'
+    )
+    hazard_orientation_stddev_rad_arg = DeclareLaunchArgument(
+        'hazard_orientation_stddev_rad', default_value='0.35'
+    )
+    hazard_class_dimension_x_m_arg = DeclareLaunchArgument(
+        'hazard_class_dimension_x_m', default_value='1.0'
+    )
+    hazard_class_dimension_y_m_arg = DeclareLaunchArgument(
+        'hazard_class_dimension_y_m', default_value='1.0'
+    )
+    hazard_class_dimension_z_m_arg = DeclareLaunchArgument(
+        'hazard_class_dimension_z_m', default_value='1.8'
+    )
+    hazard_class_yaw_rad_arg = DeclareLaunchArgument(
+        'hazard_class_yaw_rad', default_value='0.0'
+    )
+    hazard_projector_provenance_arg = DeclareLaunchArgument(
+        'hazard_projector_provenance', default_value='rgbd_projector:dji1'
+    )
 
     support_dji1_detector = _support_detector_instance(
         instance_id='dji1',
@@ -310,6 +570,102 @@ def generate_launch_description():
         detector_backend=LaunchConfiguration('dji2_detector_backend'),
         detector_onnx_model=LaunchConfiguration('dji2_detector_onnx_model'),
         yolo_weights=LaunchConfiguration('dji2_yolo_weights'),
+        condition=IfCondition(LaunchConfiguration('dji2_enable')),
+    )
+    support_dji1_hazard_detector = _support_hazard_detector_instance(
+        params_file=LaunchConfiguration('params_file')
+    )
+
+    support_dji1_hazard_projector = Node(
+        package='lrs_halmstad',
+        executable='support_hazard_projector',
+        name='support_dji1_hazard_projector',
+        output='screen',
+        condition=IfCondition(LaunchConfiguration('hazard_projector_enable')),
+        parameters=[{
+            'use_sim_time': True,
+            'source_uav': LaunchConfiguration('hazard_source_uav'),
+            'rgb_topic': LaunchConfiguration('hazard_rgb_topic'),
+            'depth_topic': LaunchConfiguration('hazard_depth_topic'),
+            'camera_info_topic': LaunchConfiguration('hazard_camera_info_topic'),
+            'detector_topic': LaunchConfiguration('hazard_detector_topic'),
+            'output_topic': LaunchConfiguration('hazard_output_topic'),
+            'target_frame': LaunchConfiguration('hazard_target_frame'),
+            'optical_frame': LaunchConfiguration('hazard_optical_frame'),
+            'target_class': LaunchConfiguration('hazard_target_class'),
+            'minimum_confidence': LaunchConfiguration('hazard_projector_minimum_confidence'),
+            'stable_track_id': LaunchConfiguration('hazard_stable_track_id'),
+            'sync_queue_size': LaunchConfiguration('hazard_sync_queue_size'),
+            'sync_tolerance_s': LaunchConfiguration('hazard_sync_tolerance_s'),
+            'stale_timeout_s': LaunchConfiguration('hazard_stale_timeout_s'),
+            'supported_depth_encoding': LaunchConfiguration('hazard_depth_encoding'),
+            'depth_scale': LaunchConfiguration('hazard_depth_scale'),
+            'inner_box_fraction': LaunchConfiguration('hazard_inner_box_fraction'),
+            'minimum_valid_pixels': LaunchConfiguration('hazard_minimum_valid_pixels'),
+            'minimum_depth_m': LaunchConfiguration('hazard_minimum_depth_m'),
+            'maximum_depth_m': LaunchConfiguration('hazard_maximum_depth_m'),
+            'depth_statistic': LaunchConfiguration('hazard_depth_statistic'),
+            'depth_percentile': LaunchConfiguration('hazard_depth_percentile'),
+            'transform_timeout_s': LaunchConfiguration('hazard_transform_timeout_s'),
+            'ttl_s': LaunchConfiguration('hazard_ttl_s'),
+            'confirm_hits': LaunchConfiguration('hazard_confirm_hits'),
+            'expiry_check_rate_hz': LaunchConfiguration('hazard_expiry_check_rate_hz'),
+            'summary_period_s': LaunchConfiguration('hazard_summary_period_s'),
+            'depth_stddev_base_m': LaunchConfiguration('hazard_depth_stddev_base_m'),
+            'depth_stddev_per_m': LaunchConfiguration('hazard_depth_stddev_per_m'),
+            'image_stddev_px': LaunchConfiguration('hazard_image_stddev_px'),
+            'transform_stddev_m': LaunchConfiguration('hazard_transform_stddev_m'),
+            'orientation_stddev_rad': LaunchConfiguration('hazard_orientation_stddev_rad'),
+            'class_dimension_x_m': LaunchConfiguration('hazard_class_dimension_x_m'),
+            'class_dimension_y_m': LaunchConfiguration('hazard_class_dimension_y_m'),
+            'class_dimension_z_m': LaunchConfiguration('hazard_class_dimension_z_m'),
+            'class_yaw_rad': LaunchConfiguration('hazard_class_yaw_rad'),
+            'provenance': LaunchConfiguration('hazard_projector_provenance'),
+        }],
+    )
+
+    simulation_uav_localization = Node(
+        package='lrs_halmstad',
+        executable='simulation_uav_localization',
+        name='dji1_simulation_localization',
+        output='screen',
+        condition=IfCondition(LaunchConfiguration('hazard_localization_enable')),
+        parameters=[{
+            'use_sim_time': True,
+            'pose_topic': LaunchConfiguration('hazard_localization_pose_topic'),
+            'camera_pose_topic': LaunchConfiguration('hazard_localization_camera_pose_topic'),
+            'world_frame': LaunchConfiguration('hazard_localization_world_frame'),
+            'map_frame': LaunchConfiguration('hazard_localization_map_frame'),
+            'body_frame': LaunchConfiguration('hazard_localization_body_frame'),
+            'optical_frame': LaunchConfiguration('hazard_localization_optical_frame'),
+            'sync_queue_size': LaunchConfiguration('hazard_localization_sync_queue_size'),
+            'sync_tolerance_s': LaunchConfiguration('hazard_localization_sync_tolerance_s'),
+            'calibration_mode': 'manifest',
+            'calibration_csv': LaunchConfiguration('hazard_localization_calibration_csv'),
+            'calibration_group': LaunchConfiguration('hazard_localization_calibration_group'),
+            'calibration_map_z_m': LaunchConfiguration('hazard_localization_calibration_map_z_m'),
+            'calibration_validation_place': LaunchConfiguration(
+                'hazard_localization_calibration_validation_place'
+            ),
+            'calibration_min_points': LaunchConfiguration(
+                'hazard_localization_calibration_min_points'
+            ),
+            'calibration_max_fit_error_m': LaunchConfiguration(
+                'hazard_localization_calibration_max_fit_error_m'
+            ),
+            'calibration_max_validation_error_m': LaunchConfiguration(
+                'hazard_localization_calibration_max_validation_error_m'
+            ),
+            'base_to_gimbal_x_m': LaunchConfiguration('hazard_localization_base_to_gimbal_x_m'),
+            'base_to_gimbal_y_m': LaunchConfiguration('hazard_localization_base_to_gimbal_y_m'),
+            'base_to_gimbal_z_m': LaunchConfiguration('hazard_localization_base_to_gimbal_z_m'),
+            'camera_sensor_x_m': LaunchConfiguration('hazard_localization_camera_sensor_x_m'),
+            'camera_sensor_y_m': LaunchConfiguration('hazard_localization_camera_sensor_y_m'),
+            'camera_sensor_z_m': LaunchConfiguration('hazard_localization_camera_sensor_z_m'),
+            'optical_roll_rad': LaunchConfiguration('hazard_localization_optical_roll_rad'),
+            'optical_pitch_rad': LaunchConfiguration('hazard_localization_optical_pitch_rad'),
+            'optical_yaw_rad': LaunchConfiguration('hazard_localization_optical_yaw_rad'),
+        }],
     )
 
     support_detection_mux = Node(
@@ -410,6 +766,7 @@ def generate_launch_description():
         camera_name_arg,
         dji1_name_arg,
         dji2_name_arg,
+        dji2_enable_arg,
         detector_backend_arg,
         detector_onnx_model_arg,
         yolo_weights_arg,
@@ -472,8 +829,81 @@ def generate_launch_description():
         support_camera_scan_pitch_period_s_arg,
         support_camera_scan_pitch_phase_offsets_deg_arg,
         support_camera_scan_rate_hz_arg,
+        hazard_localization_enable_arg,
+        hazard_localization_pose_topic_arg,
+        hazard_localization_camera_pose_topic_arg,
+        hazard_localization_world_frame_arg,
+        hazard_localization_map_frame_arg,
+        hazard_localization_body_frame_arg,
+        hazard_localization_optical_frame_arg,
+        hazard_localization_sync_queue_size_arg,
+        hazard_localization_sync_tolerance_s_arg,
+        hazard_localization_calibration_csv_arg,
+        hazard_localization_calibration_group_arg,
+        hazard_localization_calibration_map_z_m_arg,
+        hazard_localization_calibration_validation_place_arg,
+        hazard_localization_calibration_min_points_arg,
+        hazard_localization_calibration_max_fit_error_m_arg,
+        hazard_localization_calibration_max_validation_error_m_arg,
+        hazard_localization_base_to_gimbal_x_m_arg,
+        hazard_localization_base_to_gimbal_y_m_arg,
+        hazard_localization_base_to_gimbal_z_m_arg,
+        hazard_localization_camera_sensor_x_m_arg,
+        hazard_localization_camera_sensor_y_m_arg,
+        hazard_localization_camera_sensor_z_m_arg,
+        hazard_localization_optical_roll_rad_arg,
+        hazard_localization_optical_pitch_rad_arg,
+        hazard_localization_optical_yaw_rad_arg,
+        hazard_projector_enable_arg,
+        hazard_rgb_topic_arg,
+        hazard_depth_topic_arg,
+        hazard_camera_info_topic_arg,
+        hazard_detector_topic_arg,
+        hazard_detector_status_topic_arg,
+        hazard_detector_event_topic_arg,
+        hazard_output_topic_arg,
+        hazard_target_frame_arg,
+        hazard_optical_frame_arg,
+        hazard_source_uav_arg,
+        hazard_target_class_arg,
+        hazard_detector_backend_arg,
+        hazard_detector_onnx_model_arg,
+        hazard_detector_yolo_weights_arg,
+        hazard_detector_device_arg,
+        hazard_detector_confidence_threshold_arg,
+        hazard_projector_minimum_confidence_arg,
+        hazard_stable_track_id_arg,
+        hazard_sync_queue_size_arg,
+        hazard_sync_tolerance_s_arg,
+        hazard_stale_timeout_s_arg,
+        hazard_depth_encoding_arg,
+        hazard_depth_scale_arg,
+        hazard_inner_box_fraction_arg,
+        hazard_minimum_valid_pixels_arg,
+        hazard_minimum_depth_m_arg,
+        hazard_maximum_depth_m_arg,
+        hazard_depth_statistic_arg,
+        hazard_depth_percentile_arg,
+        hazard_transform_timeout_s_arg,
+        hazard_ttl_s_arg,
+        hazard_confirm_hits_arg,
+        hazard_expiry_check_rate_hz_arg,
+        hazard_summary_period_s_arg,
+        hazard_depth_stddev_base_m_arg,
+        hazard_depth_stddev_per_m_arg,
+        hazard_image_stddev_px_arg,
+        hazard_transform_stddev_m_arg,
+        hazard_orientation_stddev_rad_arg,
+        hazard_class_dimension_x_m_arg,
+        hazard_class_dimension_y_m_arg,
+        hazard_class_dimension_z_m_arg,
+        hazard_class_yaw_rad_arg,
+        hazard_projector_provenance_arg,
         support_dji1_detector,
         support_dji2_detector,
+        support_dji1_hazard_detector,
+        support_dji1_hazard_projector,
+        simulation_uav_localization,
         support_detection_mux,
         support_hazard_fusion,
         dji0_to_ugv_forwarder,

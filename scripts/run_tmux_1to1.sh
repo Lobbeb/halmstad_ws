@@ -545,6 +545,7 @@ build_line() {
   shift 3
   local line=""
   printf -v line 'cd %q && ' "$WS_ROOT"
+  printf -v line '%sunset VIRTUAL_ENV PYTHONHOME PYTHONPATH && export PATH=/usr/bin:/bin:/usr/sbin:/sbin:$PATH && hash -r && ' "$line"
   printf -v line '%sexport ROS_DOMAIN_ID=%q && export RMW_IMPLEMENTATION=%q && ' "$line" "$ROS_DOMAIN_ID_EFFECTIVE" "$RMW_IMPLEMENTATION_EFFECTIVE"
   if [ "$wait_for_sim" = true ]; then
     printf -v line '%swhile [ ! -f %q ]; do sleep 1; done && ' "$line" "$SIM_PID_FILE"
@@ -553,10 +554,10 @@ build_line() {
     printf -v line '%ssleep %q && ' "$line" "$delay_s"
   fi
   if [ "$wait_for_sim" = true ]; then
-    printf -v line '%sbash -lc %q && ' "$line" "$(build_gazebo_ready_cmd)"
+    printf -v line '%s/bin/bash --noprofile --norc -c %q && ' "$line" "$(build_gazebo_ready_cmd)"
   fi
   if [ -n "$ready_cmd" ]; then
-    printf -v line '%sbash -lc %q && ' "$line" "$ready_cmd"
+    printf -v line '%s/bin/bash --noprofile --norc -c %q && ' "$line" "$ready_cmd"
   fi
   printf -v line '%s%s' "$line" "$(shell_join "$@")"
   printf '%s' "$line"

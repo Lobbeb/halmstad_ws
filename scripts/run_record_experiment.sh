@@ -165,6 +165,8 @@ fi
 
 if [ "$PROFILE" = "support_hazard" ]; then
   TOPICS+=(
+    "/coord/support/dji1/hazard_detection"
+    "/coord/support/dji1/hazard_detection_status"
     "/coord/support/dji1/aerial_hazards"
     "/coord/support/dji2/aerial_hazards"
     "/coord/dji0/aerial_hazards"
@@ -173,6 +175,9 @@ if [ "$PROFILE" = "support_hazard" ]; then
     "/a201_0000/plan"
     "/a201_0000/amcl_pose"
     "/a201_0000/navigate_to_pose/_action/status"
+    "/dji1/pose"
+    "/dji1/camera0/actual/center_pose"
+    "/tf"
   )
 fi
 

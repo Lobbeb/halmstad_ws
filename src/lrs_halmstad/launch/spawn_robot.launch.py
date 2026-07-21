@@ -71,6 +71,13 @@ def generate_launch_description():
     )
     camera_name_arg = DeclareLaunchArgument(name='camera_name', default_value="camera0",
                                             description='Attached camera name')
+    camera_frame_id_arg = DeclareLaunchArgument(
+        name='camera_frame_id',
+        default_value=[
+            '/', LaunchConfiguration('name'), '/', LaunchConfiguration('camera_name'), '/image_frame'
+        ],
+        description='Camera optical frame ID; the default preserves the legacy per-UAV generated frame ID.',
+    )
 
     x = LaunchConfiguration('x')
     y = LaunchConfiguration('y')
@@ -128,6 +135,7 @@ def generate_launch_description():
                     " -p base_link_kinematic:=", base_link_kinematic_for_mode,
                     " -p camera_pitch_offset_deg:=", LaunchConfiguration('camera_pitch_offset_deg'),
                     " -p camera_name:=", LaunchConfiguration('camera_name'),
+                    " -p camera_frame_id:=", LaunchConfiguration('camera_frame_id'),
                     " -p camera_update_rate:=", LaunchConfiguration('camera_update_rate')
                 ]),
                 '-x', LaunchConfiguration('x'),
@@ -169,10 +177,10 @@ def generate_launch_description():
         arguments=[
             ['/model/', LaunchConfiguration('name'),
              '/joint/', LaunchConfiguration('name'),
-             '_gimbal_joint/pitch/cmd_pos@std_msgs/msg/Float64@ignition.msgs.Double'],
+             '_gimbal_joint/pitch/cmd_pos@std_msgs/msg/Float64]gz.msgs.Double'],
             ['/model/', LaunchConfiguration('name'),
              '/joint/', LaunchConfiguration('name'),
-             '_gimbal_joint/yaw/cmd_pos@std_msgs/msg/Float64@ignition.msgs.Double'],
+             '_gimbal_joint/yaw/cmd_pos@std_msgs/msg/Float64]gz.msgs.Double'],
         ],
         output='screen',
         condition=IfCondition(PythonExpression([
@@ -200,6 +208,7 @@ def generate_launch_description():
         camera_pitch_offset_deg_arg,
         camera_update_rate_arg,
         camera_name_arg,
+        camera_frame_id_arg,
         model_arg,
         world_arg,        
         name_arg,

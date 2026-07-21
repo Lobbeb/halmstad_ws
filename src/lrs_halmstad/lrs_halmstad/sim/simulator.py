@@ -30,6 +30,7 @@ class Simulator(Node):
         self.declare_parameter("update_rate_hz", 20.0)
         self.declare_parameter("camera_mode", "integrated_joint")
         self.declare_parameter("camera_name", "camera0")
+        self.declare_parameter("pose_frame_id", "odom")
         yaml_param(self, "camera_x_offset_m")
         yaml_param(self, "camera_y_offset_m")
         yaml_param(self, "camera_z_offset_m")
@@ -45,7 +46,9 @@ class Simulator(Node):
         self.declare_parameter("startup_set_pose_grace_s", 20.0)
         self.declare_parameter("set_pose_failure_backoff_s", 2.0)
 
-        self.frame_id = "odom"
+        self.frame_id = str(self.get_parameter("pose_frame_id").value).strip()
+        if not self.frame_id:
+            raise ValueError("pose_frame_id must not be empty")
         self.world = self.get_parameter("world").value
         self.gz_world = gazebo_world_name(self.world)
         self.uav_name = self._resolve_uav_name()

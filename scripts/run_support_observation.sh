@@ -10,12 +10,13 @@ FOLLOW_SIM=false
 LAUNCH_PID=""
 WATCH_PID=""
 MODELS_ROOT="${LRS_HALMSTAD_MODELS_ROOT:-$WS_ROOT/models}"
-DEFAULT_ONNX_MODEL="$MODELS_ROOT/warehouse-v1-yolo26n-obb.onnx"
-DEFAULT_YOLO_WEIGHTS="$MODELS_ROOT/warehouse-v1-yolo26n-obb.pt"
-DETECTOR_BACKEND="onnx_cpu"
+DEFAULT_ONNX_MODEL=""
+DEFAULT_YOLO_WEIGHTS="$MODELS_ROOT/obb/mymodels/baylands-leader-v4-3.pt"
+DETECTOR_BACKEND="ultralytics"
 DETECTOR_ONNX_MODEL="$DEFAULT_ONNX_MODEL"
 YOLO_WEIGHTS="$DEFAULT_YOLO_WEIGHTS"
 YOLO_DEVICE="auto"
+DJI2_ENABLE=true
 EXTRA_ARGS=()
 
 sim_helper_running() {
@@ -125,6 +126,10 @@ for arg in "$@"; do
     target_class_name:=*|target_class_id:=*)
       EXTRA_ARGS+=("$arg")
       ;;
+    dji2_enable:=*)
+      DJI2_ENABLE="${arg#dji2_enable:=}"
+      EXTRA_ARGS+=("$arg")
+      ;;
     *)
       EXTRA_ARGS+=("$arg")
       ;;
@@ -156,17 +161,21 @@ topic_exists_any() {
   return 1
 }
 
-echo "[run_support_observation] Starting dji1+dji2 support observation overlay on top of the support-follow motion baseline."
+if [ "$DJI2_ENABLE" = "true" ]; then
+  echo "[run_support_observation] Starting dji1+dji2 support observation overlay on top of the support-follow motion baseline."
+else
+  echo "[run_support_observation] Starting dji1-only support observation overlay on top of the support-follow motion baseline."
+fi
 if ! topic_exists '/dji1/pose'; then
   echo "[run_support_observation] Warning: /dji1/pose is not visible yet. Start support_follow_odom first." >&2
 fi
-if ! topic_exists '/dji2/pose'; then
+if [ "$DJI2_ENABLE" = "true" ] && ! topic_exists '/dji2/pose'; then
   echo "[run_support_observation] Warning: /dji2/pose is not visible yet. Start support_follow_odom first." >&2
 fi
 if ! topic_exists_any '/dji1/camera0/image_raw' '/dji1/camera0/image'; then
   echo "[run_support_observation] Warning: neither /dji1/camera0/image_raw nor /dji1/camera0/image is visible. Restart support_follow_odom with support_with_camera:=true." >&2
 fi
-if ! topic_exists_any '/dji2/camera0/image_raw' '/dji2/camera0/image'; then
+if [ "$DJI2_ENABLE" = "true" ] && ! topic_exists_any '/dji2/camera0/image_raw' '/dji2/camera0/image'; then
   echo "[run_support_observation] Warning: neither /dji2/camera0/image_raw nor /dji2/camera0/image is visible. Restart support_follow_odom with support_with_camera:=true." >&2
 fi
 if [ "$DETECTOR_BACKEND" != "ultralytics" ] && [ ! -f "$DETECTOR_ONNX_MODEL" ]; then
@@ -176,12 +185,18 @@ if [ "$DETECTOR_BACKEND" = "ultralytics" ] && [ ! -f "$YOLO_WEIGHTS" ]; then
   echo "[run_support_observation] Warning: yolo_weights not found: $YOLO_WEIGHTS" >&2
 fi
 
+LAUNCH_ARGS=(
+  "world:=$WORLD"
+  "detector_backend:=$DETECTOR_BACKEND"
+  "yolo_weights:=$YOLO_WEIGHTS"
+  "yolo_device:=$YOLO_DEVICE"
+)
+if [ -n "$DETECTOR_ONNX_MODEL" ]; then
+  LAUNCH_ARGS+=("detector_onnx_model:=$DETECTOR_ONNX_MODEL")
+fi
+
 setsid ros2 launch lrs_halmstad support_observation.launch.py \
-  world:="$WORLD" \
-  detector_backend:="$DETECTOR_BACKEND" \
-  detector_onnx_model:="$DETECTOR_ONNX_MODEL" \
-  yolo_weights:="$YOLO_WEIGHTS" \
-  yolo_device:="$YOLO_DEVICE" \
+  "${LAUNCH_ARGS[@]}" \
   "${EXTRA_ARGS[@]}" &
 LAUNCH_PID=$!
 

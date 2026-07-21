@@ -75,6 +75,8 @@ The typed topics are `/coord/support/dji1/aerial_hazards`, `/coord/support/dji2/
 
 Closed-loop synthetic hazard validation is also opt-in. `hazard_chain_enable:=true` enables fusion and forwarding, `hazard_synthetic_enable:=true` starts one deterministic dji1 source, and `aerial_support_layer_enable:=true` enables the Baylands global-costmap layer only. The layer remains disabled by default, and no raw images are included in the `support_hazard` rosbag profile. See `src/lrs_halmstad/README.md` for the interactive runbook and bounded evidence commands.
 
+Task 5 real RGB-D projection is separately opt-in with `hazard_projector_enable:=true`. The tmux wrapper then enables the dji1 simulation-localization contract, its Gazebo gimbal-command bridge, and typed forwarding, while the aerial costmap layer remains off unless explicitly requested. This path uses only dji1 RGB, aligned `32FC1` depth, CameraInfo, detector acquisition stamps, and timestamped TF; it has no operational dependency on UGV pose or odometry. The current verified model class is `ugv`, so this validates geometry and integration only—not hazard-detector accuracy or suitability.
+
 The rest of this README contains older reference material and may be stale compared with the two files above.
 
 Running experiments (current runbook)

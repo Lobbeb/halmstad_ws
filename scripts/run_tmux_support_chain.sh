@@ -22,6 +22,13 @@ SUPPORT_OBSERVATION_ARGS=()
 HAZARD_CHAIN_ENABLE=false
 AERIAL_SUPPORT_LAYER_ENABLE=false
 HAZARD_SYNTHETIC_ENABLE=false
+HAZARD_LOCALIZATION_ENABLE=false
+HAZARD_LOCALIZATION_WORLD_FRAME="gazebo_world"
+HAZARD_LOCALIZATION_OPTICAL_FRAME="dji1/camera0/image_optical_frame"
+HAZARD_PROJECTOR_ENABLE=false
+HAZARD_PROJECTOR_TARGET_FRAME="map"
+HAZARD_PROJECTOR_OPTICAL_FRAME="dji1/camera0/image_optical_frame"
+SUPPORT_DJI2_ENABLE=true
 HAZARD_SYNTHETIC_DELAY_S="2"
 HAZARD_SYNTHETIC_TOPIC="/coord/support/dji1/aerial_hazards"
 HAZARD_SYNTHETIC_SOURCE_UAV="dji1"
@@ -67,13 +74,14 @@ build_line() {
   shift 2
   local line=""
   printf -v line 'cd %q && ' "$WS_ROOT"
+  printf -v line '%sunset VIRTUAL_ENV PYTHONHOME PYTHONPATH && export PATH=/usr/bin:/bin:/usr/sbin:/sbin:$PATH && hash -r && ' "$line"
   printf -v line '%sexport ROS_DOMAIN_ID=%q && export RMW_IMPLEMENTATION=%q && ' \
     "$line" "$ROS_DOMAIN_ID_EFFECTIVE" "$RMW_IMPLEMENTATION_EFFECTIVE"
   if [ "$delay_s" != "0" ] && [ "$delay_s" != "0.0" ]; then
     printf -v line '%ssleep %q && ' "$line" "$delay_s"
   fi
   if [ -n "$ready_cmd" ]; then
-    printf -v line '%sbash -lc %q && ' "$line" "$ready_cmd"
+    printf -v line '%s/bin/bash --noprofile --norc -c %q && ' "$line" "$ready_cmd"
   fi
   printf -v line '%s%s' "$line" "$(shell_join "$@")"
   printf '%s' "$line"
@@ -121,10 +129,14 @@ export RMW_IMPLEMENTATION="$RMW_IMPLEMENTATION_EFFECTIVE"
 set -u
 $(build_wait_for_topic_message_fn)
 wait_for_topic_message '/dji1/pose' 'support_observation_ready'
-wait_for_topic_message '/dji2/pose' 'support_observation_ready'
 wait_for_topic_message '/dji1/camera0/image_raw' 'support_observation_ready'
+EOF
+  if [ "$SUPPORT_DJI2_ENABLE" = true ]; then
+    cat <<'EOF'
+wait_for_topic_message '/dji2/pose' 'support_observation_ready'
 wait_for_topic_message '/dji2/camera0/image_raw' 'support_observation_ready'
 EOF
+  fi
 }
 
 signal_processes_by_pattern() {
@@ -158,7 +170,7 @@ prelaunch_support_cleanup() {
   signal_processes_by_pattern 'ros2 launch lrs_halmstad support_follow_odom\.launch\.py'
   signal_processes_by_pattern 'ros2 launch lrs_halmstad support_observation\.launch\.py'
   signal_named_nodes \
-    'support_follow_dji0_pose_to_odom|support_follow_dji1_simulator|support_follow_dji1_odom_controller|support_follow_dji2_simulator|support_follow_dji2_odom_controller|support_dji1_leader_detector|support_dji2_leader_detector|support_detection_mux|support_hazard_fusion|dji0_to_ugv_forwarder|synthetic_hazard_publisher'
+    'support_follow_dji0_pose_to_odom|support_follow_dji1_simulator|support_follow_dji1_odom_controller|support_follow_dji2_simulator|support_follow_dji2_odom_controller|support_dji1_leader_detector|support_dji2_leader_detector|support_dji1_hazard_detector|support_dji1_hazard_projector|dji1_simulation_localization|support_detection_mux|support_hazard_fusion|dji0_to_ugv_forwarder|synthetic_hazard_publisher'
 }
 
 for arg in "$@"; do
@@ -214,6 +226,31 @@ for arg in "$@"; do
       ;;
     hazard_synthetic_enable:=*)
       HAZARD_SYNTHETIC_ENABLE="${arg#hazard_synthetic_enable:=}"
+      ;;
+    hazard_localization_enable:=*)
+      HAZARD_LOCALIZATION_ENABLE="${arg#hazard_localization_enable:=}"
+      ;;
+    hazard_localization_world_frame:=*)
+      HAZARD_LOCALIZATION_WORLD_FRAME="${arg#hazard_localization_world_frame:=}"
+      SUPPORT_OBSERVATION_ARGS+=("$arg")
+      ;;
+    hazard_localization_optical_frame:=*)
+      HAZARD_LOCALIZATION_OPTICAL_FRAME="${arg#hazard_localization_optical_frame:=}"
+      SUPPORT_OBSERVATION_ARGS+=("$arg")
+      ;;
+    hazard_projector_enable:=*)
+      HAZARD_PROJECTOR_ENABLE="${arg#hazard_projector_enable:=}"
+      ;;
+    dji2_enable:=*)
+      SUPPORT_DJI2_ENABLE="${arg#dji2_enable:=}"
+      ;;
+    hazard_target_frame:=*)
+      HAZARD_PROJECTOR_TARGET_FRAME="${arg#hazard_target_frame:=}"
+      SUPPORT_OBSERVATION_ARGS+=("$arg")
+      ;;
+    hazard_optical_frame:=*)
+      HAZARD_PROJECTOR_OPTICAL_FRAME="${arg#hazard_optical_frame:=}"
+      SUPPORT_OBSERVATION_ARGS+=("$arg")
       ;;
     hazard_synthetic_delay_s:=*)
       HAZARD_SYNTHETIC_DELAY_S="${arg#hazard_synthetic_delay_s:=}"
@@ -295,10 +332,10 @@ for arg in "$@"; do
           ;;
       esac
       ;;
-    support_vertical_offset_m:=*|support_camera_pitch_offset_deg:=*|support_camera_update_rate:=*|support_bridge_gimbal:=*|leader_nominal_z:=*|leader_start_x:=*|leader_start_y:=*|leader_start_yaw_deg:=*|leader_pose_topic:=*|leader_odom_topic:=*|uav_mode:=*|params_file:=*|dji1_name:=*|dji1_d_target:=*|dji1_forward_offset_m:=*|dji1_start_x:=*|dji1_start_y:=*|dji1_start_z:=*|dji1_start_yaw_deg:=*|dji1_lateral_offset_m:=*|dji2_name:=*|dji2_d_target:=*|dji2_forward_offset_m:=*|dji2_start_x:=*|dji2_start_y:=*|dji2_start_z:=*|dji2_start_yaw_deg:=*|dji2_lateral_offset_m:=*)
+    support_vertical_offset_m:=*|support_camera_pitch_offset_deg:=*|support_camera_update_rate:=*|support_bridge_gimbal:=*|leader_nominal_z:=*|leader_start_x:=*|leader_start_y:=*|leader_start_yaw_deg:=*|leader_pose_topic:=*|leader_odom_topic:=*|uav_mode:=*|params_file:=*|dji1_name:=*|dji1_d_target:=*|dji1_forward_offset_m:=*|dji1_start_x:=*|dji1_start_y:=*|dji1_start_z:=*|dji1_start_yaw_deg:=*|dji1_lateral_offset_m:=*|dji1_pose_frame_id:=*|dji1_camera_frame_id:=*|dji2_name:=*|dji2_d_target:=*|dji2_forward_offset_m:=*|dji2_start_x:=*|dji2_start_y:=*|dji2_start_z:=*|dji2_start_yaw_deg:=*|dji2_lateral_offset_m:=*|dji2_pose_frame_id:=*|dji2_camera_frame_id:=*)
       SUPPORT_FOLLOW_ARGS+=("$arg")
       ;;
-    support_mux_enable:=*|support_mux_publish_rate_hz:=*|support_mux_source_stale_timeout_s:=*|support_mux_out_detection_topic:=*|support_mux_out_status_topic:=*|support_mux_out_summary_topic:=*|support_mux_relation_source:=*|support_mux_relation_quality:=*|support_mux_relation_note:=*|hazard_fusion_enable:=*|hazard_fusion_dji1_topic:=*|hazard_fusion_dji2_topic:=*|hazard_fusion_out_topic:=*|hazard_fusion_stale_timeout_s:=*|hazard_fusion_max_covariance:=*|hazard_fusion_publish_rate_hz:=*|ugv_forward_enable:=*|ugv_forward_owner:=*|ugv_forward_stage:=*|ugv_forward_out_detection_topic:=*|ugv_forward_out_status_topic:=*|ugv_forward_out_summary_topic:=*|hazard_forward_enable:=*|hazard_in_topic:=*|hazard_out_topic:=*|start_ugv_support_awareness:=*|support_awareness_publish_advisory:=*|ugv_support_awareness_status_topic:=*|ugv_support_path_advisory_topic:=*|support_camera_scan_enable:=*|support_camera_scan_uavs:=*|support_camera_scan_yaw_center_deg:=*|support_camera_scan_yaw_amplitude_deg:=*|support_camera_scan_period_s:=*|support_camera_scan_pan_phase_offsets_deg:=*|support_camera_scan_pitch_deg:=*|support_camera_scan_pitch_amplitude_deg:=*|support_camera_scan_pitch_period_s:=*|support_camera_scan_pitch_phase_offsets_deg:=*|support_camera_scan_rate_hz:=*|support_detector_backend:=*|support_detector_onnx_model:=*|support_yolo_weights:=*|dji1_detector_backend:=*|dji1_detector_onnx_model:=*|dji1_yolo_weights:=*|dji2_detector_backend:=*|dji2_detector_onnx_model:=*|dji2_yolo_weights:=*|camera_name:=*|yolo_weights:=*|target_class_name:=*|target_class_id:=*)
+    support_mux_enable:=*|support_mux_publish_rate_hz:=*|support_mux_source_stale_timeout_s:=*|support_mux_out_detection_topic:=*|support_mux_out_status_topic:=*|support_mux_out_summary_topic:=*|support_mux_relation_source:=*|support_mux_relation_quality:=*|support_mux_relation_note:=*|hazard_fusion_enable:=*|hazard_fusion_dji1_topic:=*|hazard_fusion_dji2_topic:=*|hazard_fusion_out_topic:=*|hazard_fusion_stale_timeout_s:=*|hazard_fusion_max_covariance:=*|hazard_fusion_publish_rate_hz:=*|ugv_forward_enable:=*|ugv_forward_owner:=*|ugv_forward_stage:=*|ugv_forward_out_detection_topic:=*|ugv_forward_out_status_topic:=*|ugv_forward_out_summary_topic:=*|hazard_forward_enable:=*|hazard_in_topic:=*|hazard_out_topic:=*|start_ugv_support_awareness:=*|support_awareness_publish_advisory:=*|ugv_support_awareness_status_topic:=*|ugv_support_path_advisory_topic:=*|support_camera_scan_enable:=*|support_camera_scan_uavs:=*|support_camera_scan_yaw_center_deg:=*|support_camera_scan_yaw_amplitude_deg:=*|support_camera_scan_period_s:=*|support_camera_scan_pan_phase_offsets_deg:=*|support_camera_scan_pitch_deg:=*|support_camera_scan_pitch_amplitude_deg:=*|support_camera_scan_pitch_period_s:=*|support_camera_scan_pitch_phase_offsets_deg:=*|support_camera_scan_rate_hz:=*|support_detector_backend:=*|support_detector_onnx_model:=*|support_yolo_weights:=*|dji1_detector_backend:=*|dji1_detector_onnx_model:=*|dji1_yolo_weights:=*|dji2_detector_backend:=*|dji2_detector_onnx_model:=*|dji2_yolo_weights:=*|camera_name:=*|yolo_weights:=*|target_class_name:=*|target_class_id:=*|hazard_localization_pose_topic:=*|hazard_localization_camera_pose_topic:=*|hazard_localization_map_frame:=*|hazard_localization_body_frame:=*|hazard_localization_sync_queue_size:=*|hazard_localization_sync_tolerance_s:=*|hazard_localization_calibration_csv:=*|hazard_localization_calibration_group:=*|hazard_localization_calibration_map_z_m:=*|hazard_localization_calibration_validation_place:=*|hazard_localization_calibration_min_points:=*|hazard_localization_calibration_max_fit_error_m:=*|hazard_localization_calibration_max_validation_error_m:=*|hazard_localization_base_to_gimbal_x_m:=*|hazard_localization_base_to_gimbal_y_m:=*|hazard_localization_base_to_gimbal_z_m:=*|hazard_localization_camera_sensor_x_m:=*|hazard_localization_camera_sensor_y_m:=*|hazard_localization_camera_sensor_z_m:=*|hazard_localization_optical_roll_rad:=*|hazard_localization_optical_pitch_rad:=*|hazard_localization_optical_yaw_rad:=*|hazard_rgb_topic:=*|hazard_depth_topic:=*|hazard_camera_info_topic:=*|hazard_detector_topic:=*|hazard_detector_status_topic:=*|hazard_detector_event_topic:=*|hazard_output_topic:=*|hazard_source_uav:=*|hazard_target_class:=*|hazard_detector_backend:=*|hazard_detector_onnx_model:=*|hazard_detector_yolo_weights:=*|hazard_detector_device:=*|hazard_detector_confidence_threshold:=*|hazard_projector_minimum_confidence:=*|hazard_stable_track_id:=*|hazard_sync_queue_size:=*|hazard_sync_tolerance_s:=*|hazard_stale_timeout_s:=*|hazard_depth_encoding:=*|hazard_depth_scale:=*|hazard_inner_box_fraction:=*|hazard_minimum_valid_pixels:=*|hazard_minimum_depth_m:=*|hazard_maximum_depth_m:=*|hazard_depth_statistic:=*|hazard_depth_percentile:=*|hazard_transform_timeout_s:=*|hazard_ttl_s:=*|hazard_confirm_hits:=*|hazard_expiry_check_rate_hz:=*|hazard_summary_period_s:=*|hazard_depth_stddev_base_m:=*|hazard_depth_stddev_per_m:=*|hazard_image_stddev_px:=*|hazard_transform_stddev_m:=*|hazard_orientation_stddev_rad:=*|hazard_class_dimension_x_m:=*|hazard_class_dimension_y_m:=*|hazard_class_dimension_z_m:=*|hazard_class_yaw_rad:=*|hazard_projector_provenance:=*)
       SUPPORT_OBSERVATION_ARGS+=("$arg")
       ;;
     detector_backend:=*|detector_onnx_model:=*|detector_async_inference:=*|detector_latest_frame_only:=*|detector_stale_detection_threshold_ms:=*|detector_metrics_window_s:=*|detector_benchmark_csv_path:=*|detector_image_qos_depth:=*|detector_image_qos_reliability:=*|yolo_device:=*)
@@ -370,17 +407,50 @@ validate_boolean() {
 validate_boolean "hazard_chain_enable" "$HAZARD_CHAIN_ENABLE"
 validate_boolean "aerial_support_layer_enable" "$AERIAL_SUPPORT_LAYER_ENABLE"
 validate_boolean "hazard_synthetic_enable" "$HAZARD_SYNTHETIC_ENABLE"
+validate_boolean "hazard_localization_enable" "$HAZARD_LOCALIZATION_ENABLE"
+validate_boolean "hazard_projector_enable" "$HAZARD_PROJECTOR_ENABLE"
+validate_boolean "dji2_enable" "$SUPPORT_DJI2_ENABLE"
 validate_boolean "hazard_synthetic_publish_empty_after_active_duration" "$HAZARD_SYNTHETIC_PUBLISH_EMPTY"
 
 if [ "$HAZARD_SYNTHETIC_ENABLE" = true ] && [ "$HAZARD_CHAIN_ENABLE" = false ]; then
   echo "[tmux_support_chain] enabling the typed hazard chain for the synthetic source" >&2
   HAZARD_CHAIN_ENABLE=true
 fi
+if [ "$HAZARD_PROJECTOR_ENABLE" = true ] && [ "$HAZARD_SYNTHETIC_ENABLE" = true ]; then
+  echo "hazard_projector_enable and hazard_synthetic_enable cannot both publish the dji1 source." >&2
+  exit 2
+fi
+if [ "$HAZARD_PROJECTOR_ENABLE" = true ]; then
+  HAZARD_CHAIN_ENABLE=true
+  HAZARD_LOCALIZATION_ENABLE=true
+  HAZARD_LOCALIZATION_OPTICAL_FRAME="$HAZARD_PROJECTOR_OPTICAL_FRAME"
+  SUPPORT_DJI2_ENABLE=false
+  SUPPORT_OBSERVATION_ARGS+=(
+    "hazard_projector_enable:=true"
+    "hazard_localization_map_frame:=$HAZARD_PROJECTOR_TARGET_FRAME"
+    "hazard_localization_optical_frame:=$HAZARD_PROJECTOR_OPTICAL_FRAME"
+  )
+  SUPPORT_FOLLOW_ARGS+=("support_bridge_gimbal:=true")
+fi
+SUPPORT_FOLLOW_ARGS+=("dji2_enable:=$SUPPORT_DJI2_ENABLE")
+SUPPORT_OBSERVATION_ARGS+=("dji2_enable:=$SUPPORT_DJI2_ENABLE")
 if [ "$HAZARD_CHAIN_ENABLE" = true ]; then
   SUPPORT_OBSERVATION_ARGS+=("hazard_fusion_enable:=true" "hazard_forward_enable:=true")
 fi
+if [ "$HAZARD_LOCALIZATION_ENABLE" = true ]; then
+  SUPPORT_FOLLOW_ARGS+=(
+    "dji1_pose_frame_id:=$HAZARD_LOCALIZATION_WORLD_FRAME"
+    "dji1_camera_frame_id:=$HAZARD_LOCALIZATION_OPTICAL_FRAME"
+  )
+  SUPPORT_OBSERVATION_ARGS+=("hazard_localization_enable:=true")
+fi
 if [ "$AERIAL_SUPPORT_LAYER_ENABLE" = true ]; then
   BASE_ARGS+=("aerial_support_layer_enable:=true")
+fi
+
+FOLLOW_WAIT_TOPICS="/dji1/pose,/dji2/pose"
+if [ "$SUPPORT_DJI2_ENABLE" = false ]; then
+  FOLLOW_WAIT_TOPICS="/dji1/pose"
 fi
 
 BASE_CMD=(
@@ -388,7 +458,7 @@ BASE_CMD=(
   "session:=$SESSION"
   "tmux_attach:=false"
   "layout:=$LAYOUT"
-  "follow_wait_topics:=/dji1/pose,/dji2/pose"
+  "follow_wait_topics:=$FOLLOW_WAIT_TOPICS"
   "${BASE_ARGS[@]}"
 )
 SUPPORT_FOLLOW_CMD=(./run.sh support_follow_odom "$WORLD" "support_with_camera:=true" "${SUPPORT_FOLLOW_ARGS[@]}")
@@ -419,7 +489,7 @@ SYNTHETIC_HAZARD_ROS_COMMAND=(
   -p "provenance:=$HAZARD_SYNTHETIC_PROVENANCE"
 )
 SYNTHETIC_HAZARD_COMMAND=(
-  bash -lc "source /opt/ros/jazzy/setup.bash && source $(printf '%q' "$WS_ROOT/install/setup.bash") && exec $(shell_join "${SYNTHETIC_HAZARD_ROS_COMMAND[@]}")"
+  /bin/bash --noprofile --norc -c "source /opt/ros/jazzy/setup.bash && source $(printf '%q' "$WS_ROOT/install/setup.bash") && exec $(shell_join "${SYNTHETIC_HAZARD_ROS_COMMAND[@]}")"
 )
 
 SUPPORT_FOLLOW_READY_CMD="$(build_support_follow_ready_cmd)"

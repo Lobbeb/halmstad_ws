@@ -30,6 +30,9 @@ class GenSdf(Node):
         self.declare_parameter("camera_name", "camera0")
         self.camera_name = self.get_parameter('camera_name').get_parameter_value().string_value
 
+        self.declare_parameter("camera_frame_id", "")
+        self.camera_frame_id = self.get_parameter('camera_frame_id').get_parameter_value().string_value
+
         self.declare_parameter("laser_name", "laser0")
         self.laser_name = self.get_parameter('laser_name').get_parameter_value().string_value
 
@@ -78,6 +81,11 @@ class GenSdf(Node):
             mappings["base_link_kinematic"] = "true" if self.base_link_kinematic else "false"
             mappings["camera_pitch_offset"] = f'{self.camera_pitch_offset_deg}'
             mappings["camera_update_rate"] = f'{self.camera_update_rate}'
+            mappings["camera_frame_id"] = (
+                self.camera_frame_id
+                if self.camera_frame_id
+                else f'/{self.name}/{self.camera_name}/image_frame'
+            )
             if self.with_camera:
                 mappings["with_camera"] = "true"
             else:
