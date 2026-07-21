@@ -41,6 +41,20 @@ Perception / estimate topics:
 - `/coord/leader_debug_image`
 - `/coord/leader_distance_debug`
 
+Optional typed support-hazard topics:
+- `/coord/support/dji1/aerial_hazards`
+- `/coord/support/dji2/aerial_hazards`
+- `/coord/dji0/aerial_hazards`
+- `/coord/ugv/aerial_hazards`
+
+The typed path is disabled by default. Enable its conservative map-frame selector and UGV forwarding explicitly when running the support overlay:
+
+```bash
+./run.sh support_observation baylands hazard_fusion_enable:=true hazard_forward_enable:=true
+```
+
+The path validates age, TTL, dimensions, confidence, and covariance, then selects a pass-through source by state, freshness, quality, and deterministic source order. It does not implement RGB/depth perception or Nav2 integration.
+
 OMNeT++ network metrics topics (published by `omnet_metrics_bridge` when OMNeT is running,
 requires `start_omnet_bridge:=true` in `run_follow.launch.py`; all `std_msgs/Float64`, ~10 Hz):
 

@@ -7,6 +7,7 @@ from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
 from std_msgs.msg import String
 
+from lrs_halmstad_interfaces.msg import AerialHazardArray
 from lrs_halmstad.perception.detection_protocol import decode_detection_payload, encode_detection_payload
 from lrs_halmstad.perception.detection_status import parse_status_line
 
@@ -51,6 +52,15 @@ class Dji0ToUgvForwarder(Node):
 
         self.forward_owner = str(self.declare_parameter("forward_owner", "dji0").value).strip() or "dji0"
         self.forward_stage = str(self.declare_parameter("forward_stage", "dji0_to_ugv").value).strip() or "dji0_to_ugv"
+        self.hazard_forward_enable = _coerce_bool(
+            self.declare_parameter("hazard_forward_enable", False).value
+        )
+        self.in_hazard_topic = str(
+            self.declare_parameter("in_hazard_topic", "/coord/dji0/aerial_hazards").value
+        ).strip() or "/coord/dji0/aerial_hazards"
+        self.out_hazard_topic = str(
+            self.declare_parameter("out_hazard_topic", "/coord/ugv/aerial_hazards").value
+        ).strip() or "/coord/ugv/aerial_hazards"
 
         self._out_detection_pub = self.create_publisher(String, self.out_detection_topic, 10)
         self._out_status_pub = self.create_publisher(String, self.out_status_topic, 10)
@@ -65,10 +75,22 @@ class Dji0ToUgvForwarder(Node):
             if self.publish_advisory
             else None
         )
+        self._out_hazard_pub = (
+            self.create_publisher(AerialHazardArray, self.out_hazard_topic, 5)
+            if self.hazard_forward_enable
+            else None
+        )
 
         self.create_subscription(String, self.in_detection_topic, self._on_detection, 10)
         self.create_subscription(String, self.in_status_topic, self._on_status, 10)
         self.create_subscription(String, self.in_summary_topic, self._on_summary, 10)
+        if self.hazard_forward_enable:
+            self.create_subscription(
+                AerialHazardArray,
+                self.in_hazard_topic,
+                self._on_hazard,
+                5,
+            )
 
         self.get_logger().info(
             "[dji0_to_ugv_forwarder] Started: "
@@ -77,8 +99,14 @@ class Dji0ToUgvForwarder(Node):
             f"in_summary={self.in_summary_topic}, out_summary={self.out_summary_topic}, "
             f"awareness_enable={self.awareness_enable}, awareness_status={self.out_awareness_status_topic}, "
             f"publish_advisory={self.publish_advisory}, advisory={self.out_advisory_topic}, "
-            f"forward_owner={self.forward_owner}, forward_stage={self.forward_stage}"
+            f"forward_owner={self.forward_owner}, forward_stage={self.forward_stage}, "
+            f"hazard_forward_enable={self.hazard_forward_enable}, "
+            f"hazard_in={self.in_hazard_topic}, hazard_out={self.out_hazard_topic}"
         )
+
+    def _on_hazard(self, msg: AerialHazardArray) -> None:
+        if self._out_hazard_pub is not None:
+            self._out_hazard_pub.publish(msg)
 
     def _on_detection(self, msg: String) -> None:
         out = String()

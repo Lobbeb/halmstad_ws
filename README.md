@@ -62,6 +62,17 @@ Current important notes:
 - `./run.sh 1to1_yolo ...` is the quiet/default YOLO wrapper; bare `ros2 launch ... run_follow.launch.py ...` does not automatically inherit those quiet overrides
 - use `./run.sh follow_control keyboard --uav-name dji0` for live distance/angle/gimbal tuning; gimbal commands publish directly to `/dji0/update_pan` and `/dji0/update_tilt`
 
+Optional typed support-hazard chain
+-----------------------------------
+The typed hazard path is opt-in and does not change the legacy C4 support topics by default. When enabled, it selects validated map-frame hazards from dji1/dji2, publishes them at dji0, and can forward them to the UGV:
+
+```bash
+./run.sh support_observation baylands \
+  hazard_fusion_enable:=true hazard_forward_enable:=true
+```
+
+The typed topics are `/coord/support/dji1/aerial_hazards`, `/coord/support/dji2/aerial_hazards`, `/coord/dji0/aerial_hazards`, and `/coord/ugv/aerial_hazards`. The same opt-in arguments are accepted by `./run.sh tmux_support_chain baylands`. This path is a typed pass-through/selection skeleton only; it does not add RGB/depth perception or Nav2 costmap integration.
+
 The rest of this README contains older reference material and may be stale compared with the two files above.
 
 Running experiments (current runbook)

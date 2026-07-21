@@ -171,6 +171,35 @@ def generate_launch_description():
         'support_mux_relation_note',
         default_value='support_slots',
     )
+    hazard_fusion_enable_arg = DeclareLaunchArgument(
+        'hazard_fusion_enable',
+        default_value='false',
+        description='Enable the typed dji1/dji2 to dji0 hazard selector.',
+    )
+    hazard_fusion_dji1_topic_arg = DeclareLaunchArgument(
+        'hazard_fusion_dji1_topic',
+        default_value='/coord/support/dji1/aerial_hazards',
+    )
+    hazard_fusion_dji2_topic_arg = DeclareLaunchArgument(
+        'hazard_fusion_dji2_topic',
+        default_value='/coord/support/dji2/aerial_hazards',
+    )
+    hazard_fusion_out_topic_arg = DeclareLaunchArgument(
+        'hazard_fusion_out_topic',
+        default_value='/coord/dji0/aerial_hazards',
+    )
+    hazard_fusion_stale_timeout_s_arg = DeclareLaunchArgument(
+        'hazard_fusion_stale_timeout_s',
+        default_value='0.75',
+    )
+    hazard_fusion_max_covariance_arg = DeclareLaunchArgument(
+        'hazard_fusion_max_covariance',
+        default_value='4.0',
+    )
+    hazard_fusion_publish_rate_hz_arg = DeclareLaunchArgument(
+        'hazard_fusion_publish_rate_hz',
+        default_value='10.0',
+    )
     ugv_forward_enable_arg = DeclareLaunchArgument('ugv_forward_enable', default_value='true')
     ugv_forward_owner_arg = DeclareLaunchArgument('ugv_forward_owner', default_value='dji0')
     ugv_forward_stage_arg = DeclareLaunchArgument('ugv_forward_stage', default_value='dji0_to_ugv')
@@ -185,6 +214,19 @@ def generate_launch_description():
     ugv_forward_out_summary_topic_arg = DeclareLaunchArgument(
         'ugv_forward_out_summary_topic',
         default_value='/coord/ugv/support_observation_summary',
+    )
+    hazard_forward_enable_arg = DeclareLaunchArgument(
+        'hazard_forward_enable',
+        default_value='false',
+        description='Enable typed dji0 to UGV hazard forwarding.',
+    )
+    hazard_in_topic_arg = DeclareLaunchArgument(
+        'hazard_in_topic',
+        default_value='/coord/dji0/aerial_hazards',
+    )
+    hazard_out_topic_arg = DeclareLaunchArgument(
+        'hazard_out_topic',
+        default_value='/coord/ugv/aerial_hazards',
     )
     start_ugv_support_awareness_arg = DeclareLaunchArgument(
         'start_ugv_support_awareness',
@@ -293,6 +335,25 @@ def generate_launch_description():
         ],
     )
 
+    support_hazard_fusion = Node(
+        package='lrs_halmstad',
+        executable='support_hazard_fusion',
+        name='support_hazard_fusion',
+        output='screen',
+        condition=IfCondition(LaunchConfiguration('hazard_fusion_enable')),
+        parameters=[
+            {
+                'use_sim_time': True,
+                'dji1_topic': LaunchConfiguration('hazard_fusion_dji1_topic'),
+                'dji2_topic': LaunchConfiguration('hazard_fusion_dji2_topic'),
+                'output_topic': LaunchConfiguration('hazard_fusion_out_topic'),
+                'stale_timeout_s': LaunchConfiguration('hazard_fusion_stale_timeout_s'),
+                'max_covariance': LaunchConfiguration('hazard_fusion_max_covariance'),
+                'publish_rate_hz': LaunchConfiguration('hazard_fusion_publish_rate_hz'),
+            }
+        ],
+    )
+
     dji0_to_ugv_forwarder = Node(
         package='lrs_halmstad',
         executable='dji0_to_ugv_forwarder',
@@ -314,6 +375,9 @@ def generate_launch_description():
                 'out_advisory_topic': LaunchConfiguration('ugv_support_path_advisory_topic'),
                 'forward_owner': LaunchConfiguration('ugv_forward_owner'),
                 'forward_stage': LaunchConfiguration('ugv_forward_stage'),
+                'hazard_forward_enable': LaunchConfiguration('hazard_forward_enable'),
+                'in_hazard_topic': LaunchConfiguration('hazard_in_topic'),
+                'out_hazard_topic': LaunchConfiguration('hazard_out_topic'),
             }
         ],
     )
@@ -377,12 +441,22 @@ def generate_launch_description():
         support_mux_relation_source_arg,
         support_mux_relation_quality_arg,
         support_mux_relation_note_arg,
+        hazard_fusion_enable_arg,
+        hazard_fusion_dji1_topic_arg,
+        hazard_fusion_dji2_topic_arg,
+        hazard_fusion_out_topic_arg,
+        hazard_fusion_stale_timeout_s_arg,
+        hazard_fusion_max_covariance_arg,
+        hazard_fusion_publish_rate_hz_arg,
         ugv_forward_enable_arg,
         ugv_forward_owner_arg,
         ugv_forward_stage_arg,
         ugv_forward_out_detection_topic_arg,
         ugv_forward_out_status_topic_arg,
         ugv_forward_out_summary_topic_arg,
+        hazard_forward_enable_arg,
+        hazard_in_topic_arg,
+        hazard_out_topic_arg,
         start_ugv_support_awareness_arg,
         ugv_support_awareness_status_topic_arg,
         support_awareness_publish_advisory_arg,
@@ -401,6 +475,7 @@ def generate_launch_description():
         support_dji1_detector,
         support_dji2_detector,
         support_detection_mux,
+        support_hazard_fusion,
         dji0_to_ugv_forwarder,
         support_camera_scanner,
     ])

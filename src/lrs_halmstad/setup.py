@@ -93,6 +93,7 @@ setup(
             "leader_detector = lrs_halmstad.perception.leader_detector:main",
             "leader_tracker = lrs_halmstad.perception.leader_tracker:main",
             "support_detection_mux = lrs_halmstad.perception.support_detection_mux:main",
+            "support_hazard_fusion = lrs_halmstad.perception.support_hazard_fusion:main",
             "dji0_to_ugv_forwarder = lrs_halmstad.perception.dji0_to_ugv_forwarder:main",
             "leader_estimator = lrs_halmstad.perception.leader_estimator:main",
             "gazebo_pose_tcp_bridge = lrs_halmstad.sim.gazebo_pose_tcp_bridge:main",
@@ -114,6 +115,7 @@ setup(
             "run_dataset_prune_negatives = lrs_halmstad.dataset.prune_negatives:main",
             "run_dataset_sync_check = lrs_halmstad.dataset.sync_check:main",
             "run_perception_benchmark_summary = lrs_halmstad.tools.perception_benchmark_summary:main",
+            "synthetic_hazard_publisher = lrs_halmstad.tools.synthetic_hazard_publisher:main",
             "ugv_nav2_driver = lrs_halmstad.nav.ugv_nav2_driver:main",
             "ugv_nav2_goal_tester = lrs_halmstad.nav.ugv_nav2_goal_tester:main",
               # optional later:
