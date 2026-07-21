@@ -53,7 +53,66 @@ The typed path is disabled by default. Enable its conservative map-frame selecto
 ./run.sh support_observation baylands hazard_fusion_enable:=true hazard_forward_enable:=true
 ```
 
-The path validates age, TTL, dimensions, confidence, and covariance, then selects a pass-through source by state, freshness, quality, and deterministic source order. It does not implement RGB/depth perception or Nav2 integration.
+The path validates age, TTL, dimensions, confidence, and covariance, then selects a pass-through source by state, freshness, quality, and deterministic source order. RGB/depth perception remains out of scope. The Baylands global costmap can consume the typed UGV output only when explicitly enabled below.
+
+## Task 4: interactive synthetic hazard validation
+
+This is an operator-run simulation workflow. It does not establish runtime success until its evidence has been reviewed. The existing C1-C4 behavior remains unchanged because both the typed chain and the aerial layer default to disabled.
+
+Start a Baylands stack with the typed chain, aerial layer, and the no-image hazard rosbag profile enabled, but without a synthetic source. This gives a stable baseline before injecting a hazard:
+
+```bash
+./run.sh tmux_support_chain baylands \
+  hazard_chain_enable:=true aerial_support_layer_enable:=true \
+  record:=true record_profile:=support_hazard record_tag:=aerial_baseline
+```
+
+After the Nav2 route is visible, capture the baseline in another sourced terminal:
+
+```bash
+./run.sh verify_aerial_support_chain phase:=baseline
+```
+
+For an outside-route control, start a second support-chain session only when the first has been stopped, or use this as the first command instead of the baseline command. The configured point is outside the documented `parkinglot_west` route corridor:
+
+```bash
+./run.sh tmux_support_chain baylands \
+  hazard_chain_enable:=true hazard_synthetic_enable:=true \
+  aerial_support_layer_enable:=true record:=true record_profile:=support_hazard \
+  record_tag:=hazard_outside \
+  hazard_synthetic_x:=-20.0 hazard_synthetic_y:=230.0 \
+  hazard_synthetic_active_duration_s:=15.0 hazard_synthetic_ttl_s:=4.0
+```
+
+For the route-intersection case, use the same command with the documented `parkinglot_west` route and the map-frame point near its segment between waypoints 1 and 2:
+
+```bash
+./run.sh tmux_support_chain baylands \
+  nav2_goals:=parkinglot_west hazard_chain_enable:=true \
+  hazard_synthetic_enable:=true aerial_support_layer_enable:=true \
+  record:=true record_profile:=support_hazard record_tag:=hazard_on_route \
+  hazard_synthetic_x:=-72.0 hazard_synthetic_y:=195.5 \
+  hazard_synthetic_size_x:=2.0 hazard_synthetic_size_y:=2.0 \
+  hazard_synthetic_active_duration_s:=15.0 hazard_synthetic_ttl_s:=4.0
+```
+
+For stale-message rejection, keep the chain and layer enabled but use a timestamp that is two seconds behind simulation time. The typed fusion should reject it, so this is a rejection check rather than a costmap-marking test:
+
+```bash
+./run.sh tmux_support_chain baylands \
+  hazard_chain_enable:=true hazard_synthetic_enable:=true \
+  aerial_support_layer_enable:=true \
+  hazard_synthetic_stamp_offset_s:=-2.0 hazard_synthetic_active_duration_s:=15.0
+```
+
+For the on-route scenario, run the bounded observer while the hazard is active, then after the publisher changes to an empty array:
+
+```bash
+./run.sh verify_aerial_support_chain phase:=hazard
+./run.sh verify_aerial_support_chain phase:=expiry timeout_s:=20
+```
+
+The `support_hazard` rosbag profile records the four typed hazard topics, global costmap, global plan, AMCL pose, NavigateToPose action status, and `/coord/events`; it does not add raw image topics. Return the three verifier reports under `/tmp/halmstad_ws/aerial_support_validation/`, terminal logs, the rosbag run directory, a global-costmap screenshot, and before/after plan snapshots.
 
 OMNeT++ network metrics topics (published by `omnet_metrics_bridge` when OMNeT is running,
 requires `start_omnet_bridge:=true` in `run_follow.launch.py`; all `std_msgs/Float64`, ~10 Hz):

@@ -68,6 +68,7 @@ SPAWN_ARGS=()
 FOLLOW_ARGS=()
 GAZEBO_ARGS=()
 NAV_LIDAR_ARGS=()
+NAV2_EXTRA_ARGS=()
 RECORD_CMD=()
 OMNET="false"
 
@@ -284,6 +285,9 @@ for arg in "$@"; do
     record_delay_s:=*)
       RECORD_DELAY_OVERRIDE="${arg#record_delay_s:=}"
       ;;
+    aerial_support_layer_enable:=*)
+      NAV2_EXTRA_ARGS+=("$arg")
+      ;;
     lidar:=2d|scan_sensor:=2d)
       NAV_LIDAR_MODE="2d"
       ;;
@@ -395,7 +399,7 @@ for arg in "$@"; do
       ;;
     *)
       echo "Unknown argument: $arg" >&2
-      echo "Usage: $0 [world] [mode:=follow|yolo] [record:=true|false] [record_profile:=default|step2_light|vision] [record_tag:=name] [record_out:=bags/experiments/...] [camera:=attached] [follow_yaw:=true|false] [pan_enable:=true|false] [use_tilt:=true|false] [height:=7] [mount_pitch_deg:=45] [uav_name:=dji0] [weights:=...] [target:=...] [yolo_control_mode:=visual_bridge|follow_uav_estimate] [visual_follow_logic:=legacy|follow_core] [obb:=true|false] [tracker:=true|false] [external_detection_node:=detector|tracker] [tracker_config:=botsort.yaml] [detector_backend:=ultralytics|onnx_cpu|onnx_directml] [detector_async_inference:=true|false] [yolo_device:=cpu|auto] [detector_onnx_model:=...] [params_file:=/path/run_follow_defaults.yaml] [ugv_start_delay_s:=12.0] [follow_point_prefer_target_pose_heading:=true|false] [follow_point_prefer_target_pose_position:=true|false] [start_visual_actuation_bridge:=true|false] [start_visual_follow_point_generator:=true|false] [start_visual_follow_planner:=true|false] [start_visual_follow_controller:=true|false] [nav2_goals:=parkinglot_east|route.yaml] [ugv_goal_sequence_csv:=x,y,yaw;...] [ugv_goal_sequence_randomize:=true|false] [ugv_goal_sequence_random_reverse:=true|false] [ugv_goal_sequence_relative_to_current_pose:=true|false] [folder:=...] [map:=/path/map.yaml] [lidar:=2d|3d] [pc2ls_min_height:=...] [pc2ls_max_height:=...] [scan_relay_hz:=...] [gui:=true|false] [rtf:=1.0] [x:=...] [y:=...] [z:=...] [yaw:=...] [state:=checkpoint] [waypoint:=name] [delay_s:=9] [spawn_delay_s:=9] [localization_delay_s:=11] [nav2_delay_s:=11] [follow_delay_s:=13] [follow_wait_topics:=/topic_a,/topic_b] [record_delay_s:=13] [session:=name] [tmux_attach:=true|false] [dry_run:=true|false] [layout:=windows|panes] [omnet:=true|false] [omnet_network:=wifi|5g|lora] [omnet_ui:=cmdenv|qtenv] [omnet_project:=/path/UAV_UGV] [omnet_result_dir:=/path] [omnet_bridge_port:=5555] [omnet_start_delay_s:=3.0] [ugv_start_delay_s:=3.0] [uav_start_delay_s:=12.0]" >&2
+      echo "Usage: $0 [world] [mode:=follow|yolo] [record:=true|false] [record_profile:=default|step2_light|vision|support_hazard] [record_tag:=name] [record_out:=bags/experiments/...] [aerial_support_layer_enable:=true|false] [camera:=attached] [follow_yaw:=true|false] [pan_enable:=true|false] [use_tilt:=true|false] [height:=7] [mount_pitch_deg:=45] [uav_name:=dji0] [weights:=...] [target:=...] [yolo_control_mode:=visual_bridge|follow_uav_estimate] [visual_follow_logic:=legacy|follow_core] [obb:=true|false] [tracker:=true|false] [external_detection_node:=detector|tracker] [tracker_config:=botsort.yaml] [detector_backend:=ultralytics|onnx_cpu|onnx_directml] [detector_async_inference:=true|false] [yolo_device:=cpu|auto] [detector_onnx_model:=...] [params_file:=/path/run_follow_defaults.yaml] [ugv_start_delay_s:=12.0] [follow_point_prefer_target_pose_heading:=true|false] [follow_point_prefer_target_pose_position:=true|false] [start_visual_actuation_bridge:=true|false] [start_visual_follow_point_generator:=true|false] [start_visual_follow_planner:=true|false] [start_visual_follow_controller:=true|false] [nav2_goals:=parkinglot_east|route.yaml] [ugv_goal_sequence_csv:=x,y,yaw;...] [ugv_goal_sequence_randomize:=true|false] [ugv_goal_sequence_random_reverse:=true|false] [ugv_goal_sequence_relative_to_current_pose:=true|false] [folder:=...] [map:=/path/map.yaml] [lidar:=2d|3d] [pc2ls_min_height:=...] [pc2ls_max_height:=...] [scan_relay_hz:=...] [gui:=true|false] [rtf:=1.0] [x:=...] [y:=...] [z:=...] [yaw:=...] [state:=checkpoint] [waypoint:=name] [delay_s:=9] [spawn_delay_s:=9] [localization_delay_s:=11] [nav2_delay_s:=11] [follow_delay_s:=13] [follow_wait_topics:=/topic_a,/topic_b] [record_delay_s:=13] [session:=name] [tmux_attach:=true|false] [dry_run:=true|false] [layout:=windows|panes] [omnet:=true|false] [omnet_network:=wifi|5g|lora] [omnet_ui:=cmdenv|qtenv] [omnet_project:=/path/UAV_UGV] [omnet_result_dir:=/path] [omnet_bridge_port:=5555] [omnet_start_delay_s:=3.0] [uav_start_delay_s:=12.0]" >&2
       exit 2
       ;;
   esac
@@ -460,11 +464,11 @@ case "$RECORD" in
 esac
 
 case "$RECORD_PROFILE" in
-  default|step2_light|vision)
+  default|step2_light|vision|support_hazard)
     ;;
   *)
     echo "Invalid record_profile: $RECORD_PROFILE" >&2
-    echo "Use record_profile:=default, step2_light, or vision" >&2
+    echo "Use record_profile:=default, step2_light, vision, or support_hazard" >&2
     exit 2
     ;;
 esac
@@ -920,6 +924,9 @@ if [ "${#NAV_LIDAR_ARGS[@]}" -gt 0 ]; then
         ;;
     esac
   done
+fi
+if [ "${#NAV2_EXTRA_ARGS[@]}" -gt 0 ]; then
+  NAV2_CMD+=("${NAV2_EXTRA_ARGS[@]}")
 fi
 if [[ "$WORLD" == baylands* ]] && [ -n "$NAV2_GOALS_FOR_LIDAR" ]; then
   mapfile -t route_default_lidar_args < <(route_lidar_preset_args "$NAV2_GOALS_FOR_LIDAR" "${EFFECTIVE_NAV_LIDAR_MODE:-}" "${NAV_LIDAR_ARGS[@]}")

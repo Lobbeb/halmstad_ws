@@ -71,7 +71,9 @@ The typed hazard path is opt-in and does not change the legacy C4 support topics
   hazard_fusion_enable:=true hazard_forward_enable:=true
 ```
 
-The typed topics are `/coord/support/dji1/aerial_hazards`, `/coord/support/dji2/aerial_hazards`, `/coord/dji0/aerial_hazards`, and `/coord/ugv/aerial_hazards`. The same opt-in arguments are accepted by `./run.sh tmux_support_chain baylands`. This path is a typed pass-through/selection skeleton only; it does not add RGB/depth perception or Nav2 costmap integration.
+The typed topics are `/coord/support/dji1/aerial_hazards`, `/coord/support/dji2/aerial_hazards`, `/coord/dji0/aerial_hazards`, and `/coord/ugv/aerial_hazards`. The same opt-in arguments are accepted by `./run.sh tmux_support_chain baylands`.
+
+Closed-loop synthetic hazard validation is also opt-in. `hazard_chain_enable:=true` enables fusion and forwarding, `hazard_synthetic_enable:=true` starts one deterministic dji1 source, and `aerial_support_layer_enable:=true` enables the Baylands global-costmap layer only. The layer remains disabled by default, and no raw images are included in the `support_hazard` rosbag profile. See `src/lrs_halmstad/README.md` for the interactive runbook and bounded evidence commands.
 
 The rest of this README contains older reference material and may be stale compared with the two files above.
 

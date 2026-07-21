@@ -47,7 +47,7 @@ for arg in "$@"; do
       ;;
     *)
       echo "Unknown argument: $arg" >&2
-      echo "Usage: $0 [world] [mode:=follow|yolo] [uav_name:=dji0] [profile:=default|step2_light|vision] [tag:=name] [out:=bags/experiments/...] [dry_run:=true|false]" >&2
+      echo "Usage: $0 [world] [mode:=follow|yolo] [uav_name:=dji0] [profile:=default|step2_light|vision|support_hazard] [tag:=name] [out:=bags/experiments/...] [dry_run:=true|false]" >&2
       exit 2
       ;;
   esac
@@ -63,7 +63,7 @@ case "$MODE" in
 esac
 
 case "$PROFILE" in
-  default|step2_light|vision)
+  default|step2_light|vision|support_hazard)
     ;;
   *)
     echo "Invalid profile: $PROFILE" >&2
@@ -160,6 +160,19 @@ if [ "$PROFILE" = "vision" ]; then
   TOPICS+=(
     "/$UAV_NAME/camera0/image_raw"
     "/$UAV_NAME/camera0/camera_info"
+  )
+fi
+
+if [ "$PROFILE" = "support_hazard" ]; then
+  TOPICS+=(
+    "/coord/support/dji1/aerial_hazards"
+    "/coord/support/dji2/aerial_hazards"
+    "/coord/dji0/aerial_hazards"
+    "/coord/ugv/aerial_hazards"
+    "/a201_0000/global_costmap/costmap_raw"
+    "/a201_0000/plan"
+    "/a201_0000/amcl_pose"
+    "/a201_0000/navigate_to_pose/_action/status"
   )
 fi
 

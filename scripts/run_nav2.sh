@@ -32,6 +32,7 @@ USE_SCAN_RELAY_OVERRIDE=""
 SCAN_RELAY_STAMP_OFFSET_S=""
 PC2LS_ARGS_IGNORED=()
 NAV2_PASSTHROUGH_ARGS=()
+AERIAL_SUPPORT_LAYER_ENABLE=""
 
 for arg in "${LIDAR_REMAINING_ARGS[@]}"; do
   case "$arg" in
@@ -44,12 +45,31 @@ for arg in "${LIDAR_REMAINING_ARGS[@]}"; do
     use_pointcloud_to_laserscan:=*|pc2ls_*|pointcloud_topic:=*)
       PC2LS_ARGS_IGNORED+=("$arg")
       ;;
+    aerial_support_layer_enable:=*)
+      AERIAL_SUPPORT_LAYER_ENABLE="${arg#aerial_support_layer_enable:=}"
+      ;;
     *)
       NAV2_PASSTHROUGH_ARGS+=("$arg")
       ;;
   esac
 done
 LIDAR_REMAINING_ARGS=("${NAV2_PASSTHROUGH_ARGS[@]}")
+
+if [ -n "$AERIAL_SUPPORT_LAYER_ENABLE" ]; then
+  case "$AERIAL_SUPPORT_LAYER_ENABLE" in
+    true|false)
+      ;;
+    *)
+      echo "Invalid aerial_support_layer_enable option: $AERIAL_SUPPORT_LAYER_ENABLE" >&2
+      echo "Use aerial_support_layer_enable:=true or aerial_support_layer_enable:=false" >&2
+      exit 2
+      ;;
+  esac
+  if [ "$BASE_NAV2_PARAMS" != "$BAYLANDS_NAV2_PARAMS" ]; then
+    echo "aerial_support_layer_enable is available only in the Baylands Nav2 profile." >&2
+    exit 2
+  fi
+fi
 
 if [ "$LIDAR_SCAN_TOPIC" = "$(lidar_mode_scan_topic 3d)" ]; then
   if [ "$USE_SCAN_RELAY_OVERRIDE" != "true" ]; then
@@ -80,8 +100,19 @@ fi
 
 mkdir -p "$STATE_DIR"
 
-awk '
+awk -v aerial_enabled="$AERIAL_SUPPORT_LAYER_ENABLE" '
   {
+    if ($0 ~ /^[[:space:]]*aerial_support_layer:[[:space:]]*$/) {
+      in_aerial_support_layer = 1
+      print
+      next
+    }
+    if (in_aerial_support_layer && aerial_enabled != "" && $0 ~ /^[[:space:]]*enabled:[[:space:]]*(true|false)[[:space:]]*$/) {
+      sub(/(true|false)[[:space:]]*$/, aerial_enabled)
+      in_aerial_support_layer = 0
+      print
+      next
+    }
     print
     if ($0 ~ /^[[:space:]]*plugin: "nav2_costmap_2d::StaticLayer"$/) {
       match($0, /^ */)
@@ -90,6 +121,10 @@ awk '
     }
   }
 ' "$BASE_NAV2_PARAMS" > "$TMP_NAV2_PARAMS"
+
+if [ -n "$AERIAL_SUPPORT_LAYER_ENABLE" ]; then
+  echo "[run_nav2] Baylands aerial support layer enabled=$AERIAL_SUPPORT_LAYER_ENABLE" >&2
+fi
 
 set +u
 source /opt/ros/jazzy/setup.bash

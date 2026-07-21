@@ -19,6 +19,31 @@ UGV_NAMESPACE="a201_0000"
 BASE_ARGS=()
 SUPPORT_FOLLOW_ARGS=()
 SUPPORT_OBSERVATION_ARGS=()
+HAZARD_CHAIN_ENABLE=false
+AERIAL_SUPPORT_LAYER_ENABLE=false
+HAZARD_SYNTHETIC_ENABLE=false
+HAZARD_SYNTHETIC_DELAY_S="2"
+HAZARD_SYNTHETIC_TOPIC="/coord/support/dji1/aerial_hazards"
+HAZARD_SYNTHETIC_SOURCE_UAV="dji1"
+HAZARD_SYNTHETIC_CLASS_NAME="hazard"
+HAZARD_SYNTHETIC_TRACK_ID="synthetic_hazard_0"
+HAZARD_SYNTHETIC_X="-20.0"
+HAZARD_SYNTHETIC_Y="230.0"
+HAZARD_SYNTHETIC_Z="0.5"
+HAZARD_SYNTHETIC_YAW="0.0"
+HAZARD_SYNTHETIC_SIZE_X="2.0"
+HAZARD_SYNTHETIC_SIZE_Y="2.0"
+HAZARD_SYNTHETIC_SIZE_Z="1.0"
+HAZARD_SYNTHETIC_CONFIDENCE="0.9"
+HAZARD_SYNTHETIC_STATE="1"
+HAZARD_SYNTHETIC_START_DELAY_S="0.0"
+HAZARD_SYNTHETIC_PUBLISH_RATE_HZ="2.0"
+HAZARD_SYNTHETIC_TTL_S="4.0"
+HAZARD_SYNTHETIC_ACTIVE_DURATION_S="15.0"
+HAZARD_SYNTHETIC_PUBLISH_EMPTY="true"
+HAZARD_SYNTHETIC_STAMP_OFFSET_S="0.0"
+HAZARD_SYNTHETIC_SUPPORT_QUALITY="1.0"
+HAZARD_SYNTHETIC_PROVENANCE="synthetic_task4"
 
 if [ "$#" -gt 0 ] && [[ "$1" != *":="* ]] && [[ "$1" != *=* ]]; then
   WORLD="$1"
@@ -129,10 +154,11 @@ signal_named_nodes() {
 prelaunch_support_cleanup() {
   signal_processes_by_pattern 'scripts/run_support_follow_odom\.sh'
   signal_processes_by_pattern 'scripts/run_support_observation\.sh'
+  signal_processes_by_pattern 'ros2 run lrs_halmstad synthetic_hazard_publisher'
   signal_processes_by_pattern 'ros2 launch lrs_halmstad support_follow_odom\.launch\.py'
   signal_processes_by_pattern 'ros2 launch lrs_halmstad support_observation\.launch\.py'
   signal_named_nodes \
-    'support_follow_dji0_pose_to_odom|support_follow_dji1_simulator|support_follow_dji1_odom_controller|support_follow_dji2_simulator|support_follow_dji2_odom_controller|support_dji1_leader_detector|support_dji2_leader_detector|support_detection_mux|dji0_to_ugv_forwarder'
+    'support_follow_dji0_pose_to_odom|support_follow_dji1_simulator|support_follow_dji1_odom_controller|support_follow_dji2_simulator|support_follow_dji2_odom_controller|support_dji1_leader_detector|support_dji2_leader_detector|support_detection_mux|support_hazard_fusion|dji0_to_ugv_forwarder|synthetic_hazard_publisher'
 }
 
 for arg in "$@"; do
@@ -179,6 +205,81 @@ for arg in "$@"; do
       ;;
     support_observation_delay_s:=*)
       SUPPORT_OBSERVATION_DELAY_S="${arg#support_observation_delay_s:=}"
+      ;;
+    hazard_chain_enable:=*)
+      HAZARD_CHAIN_ENABLE="${arg#hazard_chain_enable:=}"
+      ;;
+    aerial_support_layer_enable:=*)
+      AERIAL_SUPPORT_LAYER_ENABLE="${arg#aerial_support_layer_enable:=}"
+      ;;
+    hazard_synthetic_enable:=*)
+      HAZARD_SYNTHETIC_ENABLE="${arg#hazard_synthetic_enable:=}"
+      ;;
+    hazard_synthetic_delay_s:=*)
+      HAZARD_SYNTHETIC_DELAY_S="${arg#hazard_synthetic_delay_s:=}"
+      ;;
+    hazard_synthetic_topic:=*)
+      HAZARD_SYNTHETIC_TOPIC="${arg#hazard_synthetic_topic:=}"
+      ;;
+    hazard_synthetic_source_uav:=*)
+      HAZARD_SYNTHETIC_SOURCE_UAV="${arg#hazard_synthetic_source_uav:=}"
+      ;;
+    hazard_synthetic_class_name:=*)
+      HAZARD_SYNTHETIC_CLASS_NAME="${arg#hazard_synthetic_class_name:=}"
+      ;;
+    hazard_synthetic_track_id:=*)
+      HAZARD_SYNTHETIC_TRACK_ID="${arg#hazard_synthetic_track_id:=}"
+      ;;
+    hazard_synthetic_x:=*)
+      HAZARD_SYNTHETIC_X="${arg#hazard_synthetic_x:=}"
+      ;;
+    hazard_synthetic_y:=*)
+      HAZARD_SYNTHETIC_Y="${arg#hazard_synthetic_y:=}"
+      ;;
+    hazard_synthetic_z:=*)
+      HAZARD_SYNTHETIC_Z="${arg#hazard_synthetic_z:=}"
+      ;;
+    hazard_synthetic_yaw:=*)
+      HAZARD_SYNTHETIC_YAW="${arg#hazard_synthetic_yaw:=}"
+      ;;
+    hazard_synthetic_size_x:=*)
+      HAZARD_SYNTHETIC_SIZE_X="${arg#hazard_synthetic_size_x:=}"
+      ;;
+    hazard_synthetic_size_y:=*)
+      HAZARD_SYNTHETIC_SIZE_Y="${arg#hazard_synthetic_size_y:=}"
+      ;;
+    hazard_synthetic_size_z:=*)
+      HAZARD_SYNTHETIC_SIZE_Z="${arg#hazard_synthetic_size_z:=}"
+      ;;
+    hazard_synthetic_confidence:=*)
+      HAZARD_SYNTHETIC_CONFIDENCE="${arg#hazard_synthetic_confidence:=}"
+      ;;
+    hazard_synthetic_state:=*)
+      HAZARD_SYNTHETIC_STATE="${arg#hazard_synthetic_state:=}"
+      ;;
+    hazard_synthetic_start_delay_s:=*)
+      HAZARD_SYNTHETIC_START_DELAY_S="${arg#hazard_synthetic_start_delay_s:=}"
+      ;;
+    hazard_synthetic_publish_rate_hz:=*)
+      HAZARD_SYNTHETIC_PUBLISH_RATE_HZ="${arg#hazard_synthetic_publish_rate_hz:=}"
+      ;;
+    hazard_synthetic_ttl_s:=*)
+      HAZARD_SYNTHETIC_TTL_S="${arg#hazard_synthetic_ttl_s:=}"
+      ;;
+    hazard_synthetic_active_duration_s:=*)
+      HAZARD_SYNTHETIC_ACTIVE_DURATION_S="${arg#hazard_synthetic_active_duration_s:=}"
+      ;;
+    hazard_synthetic_publish_empty_after_active_duration:=*)
+      HAZARD_SYNTHETIC_PUBLISH_EMPTY="${arg#hazard_synthetic_publish_empty_after_active_duration:=}"
+      ;;
+    hazard_synthetic_stamp_offset_s:=*)
+      HAZARD_SYNTHETIC_STAMP_OFFSET_S="${arg#hazard_synthetic_stamp_offset_s:=}"
+      ;;
+    hazard_synthetic_support_quality:=*)
+      HAZARD_SYNTHETIC_SUPPORT_QUALITY="${arg#hazard_synthetic_support_quality:=}"
+      ;;
+    hazard_synthetic_provenance:=*)
+      HAZARD_SYNTHETIC_PROVENANCE="${arg#hazard_synthetic_provenance:=}"
       ;;
     support_with_camera:=*)
       case "${arg#support_with_camera:=}" in
@@ -252,6 +353,36 @@ case "$DRY_RUN" in
     ;;
 esac
 
+validate_boolean() {
+  local label="$1"
+  local value="$2"
+  case "$value" in
+    true|false)
+      ;;
+    *)
+      echo "Invalid $label option: $value" >&2
+      echo "Use true or false." >&2
+      exit 2
+      ;;
+  esac
+}
+
+validate_boolean "hazard_chain_enable" "$HAZARD_CHAIN_ENABLE"
+validate_boolean "aerial_support_layer_enable" "$AERIAL_SUPPORT_LAYER_ENABLE"
+validate_boolean "hazard_synthetic_enable" "$HAZARD_SYNTHETIC_ENABLE"
+validate_boolean "hazard_synthetic_publish_empty_after_active_duration" "$HAZARD_SYNTHETIC_PUBLISH_EMPTY"
+
+if [ "$HAZARD_SYNTHETIC_ENABLE" = true ] && [ "$HAZARD_CHAIN_ENABLE" = false ]; then
+  echo "[tmux_support_chain] enabling the typed hazard chain for the synthetic source" >&2
+  HAZARD_CHAIN_ENABLE=true
+fi
+if [ "$HAZARD_CHAIN_ENABLE" = true ]; then
+  SUPPORT_OBSERVATION_ARGS+=("hazard_fusion_enable:=true" "hazard_forward_enable:=true")
+fi
+if [ "$AERIAL_SUPPORT_LAYER_ENABLE" = true ]; then
+  BASE_ARGS+=("aerial_support_layer_enable:=true")
+fi
+
 BASE_CMD=(
   ./run.sh tmux_1to1 "$WORLD"
   "session:=$SESSION"
@@ -262,11 +393,40 @@ BASE_CMD=(
 )
 SUPPORT_FOLLOW_CMD=(./run.sh support_follow_odom "$WORLD" "support_with_camera:=true" "${SUPPORT_FOLLOW_ARGS[@]}")
 SUPPORT_OBSERVATION_CMD=(./run.sh support_observation "$WORLD" "${SUPPORT_OBSERVATION_ARGS[@]}")
+SYNTHETIC_HAZARD_ROS_COMMAND=(
+  ros2 run lrs_halmstad synthetic_hazard_publisher --ros-args
+  -p use_sim_time:=true
+  -p "topic:=$HAZARD_SYNTHETIC_TOPIC"
+  -p "source_uav:=$HAZARD_SYNTHETIC_SOURCE_UAV"
+  -p "class_name:=$HAZARD_SYNTHETIC_CLASS_NAME"
+  -p "stable_track_id:=$HAZARD_SYNTHETIC_TRACK_ID"
+  -p "center_x:=$HAZARD_SYNTHETIC_X"
+  -p "center_y:=$HAZARD_SYNTHETIC_Y"
+  -p "center_z:=$HAZARD_SYNTHETIC_Z"
+  -p "yaw:=$HAZARD_SYNTHETIC_YAW"
+  -p "dimension_x:=$HAZARD_SYNTHETIC_SIZE_X"
+  -p "dimension_y:=$HAZARD_SYNTHETIC_SIZE_Y"
+  -p "dimension_z:=$HAZARD_SYNTHETIC_SIZE_Z"
+  -p "confidence:=$HAZARD_SYNTHETIC_CONFIDENCE"
+  -p "state:=$HAZARD_SYNTHETIC_STATE"
+  -p "start_delay_s:=$HAZARD_SYNTHETIC_START_DELAY_S"
+  -p "publish_rate_hz:=$HAZARD_SYNTHETIC_PUBLISH_RATE_HZ"
+  -p "ttl_s:=$HAZARD_SYNTHETIC_TTL_S"
+  -p "active_duration_s:=$HAZARD_SYNTHETIC_ACTIVE_DURATION_S"
+  -p "publish_empty_after_active_duration:=$HAZARD_SYNTHETIC_PUBLISH_EMPTY"
+  -p "stamp_offset_s:=$HAZARD_SYNTHETIC_STAMP_OFFSET_S"
+  -p "support_quality:=$HAZARD_SYNTHETIC_SUPPORT_QUALITY"
+  -p "provenance:=$HAZARD_SYNTHETIC_PROVENANCE"
+)
+SYNTHETIC_HAZARD_COMMAND=(
+  bash -lc "source /opt/ros/jazzy/setup.bash && source $(printf '%q' "$WS_ROOT/install/setup.bash") && exec $(shell_join "${SYNTHETIC_HAZARD_ROS_COMMAND[@]}")"
+)
 
 SUPPORT_FOLLOW_READY_CMD="$(build_support_follow_ready_cmd)"
 SUPPORT_OBSERVATION_READY_CMD="$(build_support_observation_ready_cmd)"
 SUPPORT_FOLLOW_LINE="$(build_line "$SUPPORT_FOLLOW_DELAY_S" "$SUPPORT_FOLLOW_READY_CMD" "${SUPPORT_FOLLOW_CMD[@]}")"
 SUPPORT_OBSERVATION_LINE="$(build_line "$SUPPORT_OBSERVATION_DELAY_S" "$SUPPORT_OBSERVATION_READY_CMD" "${SUPPORT_OBSERVATION_CMD[@]}")"
+SYNTHETIC_HAZARD_LINE="$(build_line "$HAZARD_SYNTHETIC_DELAY_S" "" "${SYNTHETIC_HAZARD_COMMAND[@]}")"
 
 if [ "$DRY_RUN" = true ]; then
   echo "Session: $SESSION"
@@ -276,6 +436,9 @@ if [ "$DRY_RUN" = true ]; then
   "${BASE_CMD[@]}" "dry_run:=true"
   echo "[support_follow] $SUPPORT_FOLLOW_LINE"
   echo "[support_observation] $SUPPORT_OBSERVATION_LINE"
+  if [ "$HAZARD_SYNTHETIC_ENABLE" = true ]; then
+    echo "[synthetic_hazard] $SYNTHETIC_HAZARD_LINE"
+  fi
   exit 0
 fi
 
@@ -308,6 +471,12 @@ tmux select-pane -t "$support_observation_pane" -T support_observation
 
 tmux send-keys -t "$support_follow_pane" "$SUPPORT_FOLLOW_LINE" C-m
 tmux send-keys -t "$support_observation_pane" "$SUPPORT_OBSERVATION_LINE" C-m
+
+if [ "$HAZARD_SYNTHETIC_ENABLE" = true ]; then
+  synthetic_hazard_pane="$(tmux split-window -d -P -F '#{pane_id}' -t "$support_observation_pane" -v -l 35%)"
+  tmux select-pane -t "$synthetic_hazard_pane" -T synthetic_hazard
+  tmux send-keys -t "$synthetic_hazard_pane" "$SYNTHETIC_HAZARD_LINE" C-m
+fi
 
 tmux select-window -t "$SESSION:support"
 tmux select-pane -t "$support_follow_pane"

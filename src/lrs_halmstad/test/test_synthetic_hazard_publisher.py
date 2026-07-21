@@ -78,3 +78,10 @@ def test_activity_is_deterministic_before_during_and_after_window():
     assert activity_state(11_999_999_999, 10_000_000_000, 2.0) == "active"
     assert activity_state(12_000_000_000, 10_000_000_000, 2.0) == "expired"
     assert activity_state(100, 0, 0.0) == "active"
+
+
+def test_stale_observation_timestamp_can_be_constructed_deterministically():
+    hazard = _build(first_seen_ns=8_000_000_000, last_seen_ns=8_000_000_000)
+
+    assert hazard.first_seen == Time(sec=8, nanosec=0)
+    assert hazard.last_seen == Time(sec=8, nanosec=0)

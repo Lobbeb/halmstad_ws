@@ -195,6 +195,7 @@ class SyntheticHazardPublisher(Node):
         self.declare_parameter("ttl_s", 5.0)
         self.declare_parameter("active_duration_s", 0.0)
         self.declare_parameter("publish_empty_after_active_duration", True)
+        self.declare_parameter("stamp_offset_s", 0.0)
         self.declare_parameter("support_quality", 1.0)
         self.declare_parameter("provenance", "synthetic")
 
@@ -221,6 +222,7 @@ class SyntheticHazardPublisher(Node):
         self.publish_empty_after_active_duration = bool(
             self.get_parameter("publish_empty_after_active_duration").value
         )
+        self.stamp_offset_s = float(self.get_parameter("stamp_offset_s").value)
         self.support_quality = float(self.get_parameter("support_quality").value)
         self.provenance = str(self.get_parameter("provenance").value)
 
@@ -230,6 +232,8 @@ class SyntheticHazardPublisher(Node):
             raise ValueError("start_delay_s must be finite and non-negative")
         if not math.isfinite(self.active_duration_s) or self.active_duration_s < 0.0:
             raise ValueError("active_duration_s must be finite and non-negative")
+        if not math.isfinite(self.stamp_offset_s) or self.stamp_offset_s > 0.0:
+            raise ValueError("stamp_offset_s must be finite and less than or equal to zero")
         if not str(self.topic).startswith("/"):
             raise ValueError("topic must be an absolute ROS topic")
 
@@ -240,6 +244,10 @@ class SyntheticHazardPublisher(Node):
 
     def _on_timer(self) -> None:
         now_ns = int(self.get_clock().now().nanoseconds)
+        observation_ns = now_ns + int(round(self.stamp_offset_s * 1_000_000_000.0))
+        if observation_ns < 0:
+            self.get_logger().warn("synthetic hazard stamp offset precedes simulation epoch; skipping publication")
+            return
         if self._start_ns is None:
             self._start_ns = now_ns + int(round(self.start_delay_s * 1_000_000_000.0))
 
@@ -250,7 +258,7 @@ class SyntheticHazardPublisher(Node):
             return
 
         message = AerialHazardArray()
-        message.header = Header(stamp=_time_from_ns(now_ns), frame_id=MAP_FRAME)
+        message.header = Header(stamp=_time_from_ns(observation_ns), frame_id=MAP_FRAME)
         if state == "active":
             if self._first_seen_ns is None:
                 self._first_seen_ns = now_ns
@@ -265,8 +273,8 @@ class SyntheticHazardPublisher(Node):
                     confidence=self.confidence,
                     covariance=self.covariance,
                     state=self.state,
-                    first_seen_ns=self._first_seen_ns,
-                    last_seen_ns=now_ns,
+                    first_seen_ns=self._first_seen_ns + int(round(self.stamp_offset_s * 1_000_000_000.0)),
+                    last_seen_ns=observation_ns,
                     ttl_s=self.ttl_s,
                     support_quality=self.support_quality,
                     provenance=self.provenance,
