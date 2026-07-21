@@ -185,10 +185,26 @@ global_costmap:
       track_unknown_space: true
       trinary_costmap: true
       always_send_full_costmap: false
-      plugins: ["static_layer", "inflation_layer"]
+      plugins: ["static_layer", "aerial_support_layer", "inflation_layer"]
       static_layer:
         plugin: "nav2_costmap_2d::StaticLayer"
         map_subscribe_transient_local: true
+      aerial_support_layer:
+        plugin: "lrs_halmstad_nav_plugins::AerialSupportLayer"
+        enabled: false
+        topic: "/coord/ugv/aerial_hazards"
+        target_frame: "map"
+        transform_tolerance_s: 0.30
+        max_observation_age_s: 1.00
+        default_ttl_s: 2.00
+        min_confidence: 0.35
+        max_xy_variance_m2: 1.00
+        confirmed_cost: 254
+        tentative_cost: 200
+        conflict_cost: 220
+        covariance_sigma_scale: 2.0
+        min_footprint_size_m: 0.30
+        subscription_depth: 10
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
         cost_scaling_factor: 3.0

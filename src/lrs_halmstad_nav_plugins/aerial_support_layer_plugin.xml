@@ -1,0 +1,10 @@
+<library path="aerial_support_layer">
+  <class
+    name="lrs_halmstad_nav_plugins::AerialSupportLayer"
+    type="lrs_halmstad_nav_plugins::AerialSupportLayer"
+    base_class_type="nav2_costmap_2d::Layer">
+    <description>
+      Marks validated typed aerial hazards in the Nav2 global costmap.
+    </description>
+  </class>
+</library>
