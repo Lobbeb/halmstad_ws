@@ -263,8 +263,14 @@ This is user-operated and requires the existing Baylands simulation. It keeps dj
 # Terminal 1
 ./run.sh tmux_support_chain baylands mode:=follow \
   hazard_projector_enable:=true \
-  record:=true record_profile:=support_hazard record_tag:=task8_task5_rgbd \
-  gui:=false tmux_attach:=true
+  record:=true record_profile:=support_hazard record_tag:=task5_live_retry_down60 \
+  gui:=false tmux_attach:=false \
+  support_camera_scan_enable:=true \
+  support_camera_scan_uavs:=dji1 \
+  support_camera_scan_yaw_center_deg:=0.0 \
+  support_camera_scan_yaw_amplitude_deg:=0.0 \
+  support_camera_scan_pitch_deg:=-60.0 \
+  support_camera_scan_pitch_amplitude_deg:=0.0
 
 # Terminal 2, after sourcing ROS and install/setup.bash
 EVIDENCE="bags/validation/$(date +%Y%m%dT%H%M%S)_task5_live"
@@ -276,7 +282,9 @@ ros2 run lrs_halmstad support_hazard_evidence live \
 
 Expected evidence: non-empty dji1, dji0, and UGV typed topics; exact dji0→UGV forwarding; a source-matched covariance; acquisition age; selected source; state history; JSON/CSV/timeline files; and the separate `support_hazard` bag. This validates typed transport and the already implemented geometry contract only. Runtime success must be judged from the actual terminal output and bag.
 
-A bounded headless Baylands run on 2026-07-22 recorded detector output, but the sampled records remained `valid:false`. The projector received detector messages but produced zero successful projections and therefore published no dji1 typed hazards; dji0 and the UGV published only empty arrays. This is retained as an optional live-validation limitation, not a Task 8 implementation failure and not evidence of end-to-end runtime success. The generated report and bag remain under ignored `bags/validation/` and `bags/experiments/` paths. Do not infer detector accuracy from this run, and do not change projector geometry solely to force a positive result.
+A bounded headless Baylands run on 2026-07-22 recorded detector output, but its records remained `valid:false` because the dji1 camera had no explicit downward pitch and the target was outside its view. The model, projector, fusion, and source-selection paths were not the cause. A single bounded retry using the command above fixed the dji1-only camera scanner at `-60.0` degrees. It produced non-empty `AerialHazardArray` messages at `/coord/support/dji1/aerial_hazards`, `/coord/dji0/aerial_hazards`, and `/coord/ugv/aerial_hazards`; the verifier selected dji1, matched the selected-source covariance without reduction, and confirmed exact dji0-to-UGV forwarding. This validates the live typed contract under the corrected camera orientation only.
+
+The generated report and bag remain under ignored `bags/validation/` and `bags/experiments/` paths. This result does not establish detector accuracy, environmental hazard perception, closed-loop navigation success, or quantitative safety improvement, and it does not justify changing projector geometry.
 
 Task 8 completion is based on the deterministic synthetic/replayed typed-message checks below for Task 6 association/confirmation/conflict and Task 7 freshness/source selection/expiry. Optional live Task 5, dji2, and costmap runs provide additional runtime evidence only when their own verifier reports pass.
 
