@@ -193,3 +193,59 @@ def test_task7_configured_source_quality_routes_without_enabling_dji2():
     assert "hazard_fusion_dji1_communication_penalty:=0.1" in output
     assert "dji2_enable:=false" in output
     assert "hazard_fusion_dji2_enable:=true" not in output
+
+
+def test_task8_quality_fixture_is_bounded_baylands_and_explicitly_two_source():
+    output = _dry_run(
+        [
+            "validate_support_hazards",
+            "scenario:=task7_quality",
+            "record:=false",
+            "dry_run:=true",
+        ]
+    )
+
+    assert "World: baylands" in output
+    assert "dji2 opt-in: true" in output
+    assert "Aerial costmap: false" in output
+    assert "quality_weight_communication:=0.6" in output
+    assert "dji1_communication_quality:=1.0" in output
+    assert "dji2_communication_quality:=0.0" in output
+    assert "warehouse" not in output.lower()
+
+
+def test_task8_expiry_fixture_keeps_dji2_and_costmap_disabled():
+    output = _dry_run(
+        [
+            "validate_support_hazards",
+            "scenario:=task7_expiry",
+            "record:=false",
+            "dry_run:=true",
+        ]
+    )
+
+    assert "dji2 opt-in: false" in output
+    assert "Aerial costmap: false" in output
+    assert "dji2:" not in output
+    assert "--require-expiry" in output
+
+
+def test_support_hazard_record_profile_remains_image_free_and_timestamped():
+    output = _dry_run(
+        [
+            "record_experiment",
+            "baylands",
+            "profile:=support_hazard",
+            "tag:=task8_dry_run",
+            "dry_run:=true",
+        ]
+    )
+
+    assert "/coord/support/dji1/aerial_hazards" in output
+    assert "/coord/support/dji2/aerial_hazards" in output
+    assert "/coord/dji0/aerial_hazards" in output
+    assert "/coord/ugv/aerial_hazards" in output
+    assert "/a201_0000/global_costmap/costmap_raw" in output
+    assert "/a201_0000/plan" in output
+    assert "/image_raw" not in output
+    assert "/depth_image" not in output

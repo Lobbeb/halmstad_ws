@@ -79,6 +79,8 @@ Closed-loop synthetic hazard validation is also opt-in. `hazard_chain_enable:=tr
 
 Task 5 real RGB-D projection is separately opt-in with `hazard_projector_enable:=true`. The tmux wrapper then enables the dji1 simulation-localization contract, its Gazebo gimbal-command bridge, and typed forwarding, while the aerial costmap layer remains off unless explicitly requested. This path uses only dji1 RGB, aligned `32FC1` depth, CameraInfo, detector acquisition stamps, and timestamped TF; it has no operational dependency on UGV pose or odometry. The current verified model class is `ugv`, so this validates geometry and integration only—not hazard-detector accuracy or suitability.
 
+Task 8 packages bounded future-work evidence without changing those defaults. `./run.sh validate_support_hazards scenario:=...` runs deterministic non-simulation Task 6/7 fixtures, and `support_hazard_evidence` validates live or recorded typed flow into timestamped JSON/CSV/timeline outputs under ignored `bags/validation/`. The harness does not add perception, motion planning, or thesis-result claims; dji2 and the aerial costmap remain explicit opt-ins. See `src/lrs_halmstad/README.md` for exact commands and evidence limits.
+
 The rest of this README contains older reference material and may be stale compared with the two files above.
 
 Running experiments (current runbook)

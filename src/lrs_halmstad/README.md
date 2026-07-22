@@ -244,6 +244,147 @@ ros2 topic echo /coord/dji0/aerial_hazards --once
 
 Repeat after swapping the two configured communication-quality values to verify that the representative center/covariance changes source without averaging. Source timestamps can be aged deterministically with the synthetic publisher's `stamp_offset_s` parameter to verify rejection and fallback. This test uses replayable typed inputs and does not require live dji2. An optional/heavy Baylands run remains explicitly opt-in with `dji2_enable:=true hazard_fusion_dji2_enable:=true`; it is not a Task 7 pass requirement.
 
+## Task 8: bounded validation and evidence packaging
+
+Task 8 is a post-thesis/future-work prototype harness around the completed Task 5–7 implementation. It supports future closed-loop experiments, but synthetic or typed-flow evidence is not part of the original thesis results and does not establish navigation benefit.
+
+The harness has two entry points:
+
+- `./run.sh validate_support_hazards scenario:=...` starts bounded non-simulation fusion fixtures, applies a timeout, and terminates every node it starts.
+- `ros2 run lrs_halmstad support_hazard_evidence live|bag ...` validates live topics or an existing `support_hazard` bag and emits `summary.json`, `summary.csv`, `timeline.csv`, and `timeline.svg`.
+
+Each synthetic run creates a new `bags/validation/support_hazards/<timestamp>_<scenario>/` directory containing the verifier products, process logs, and `manifest.json`. The manifest records every command, scenario parameter, full Git commit SHA, branch, dirty state, dji2 opt-in state, and costmap state. Add `record:=true` to create `recording/bag/`, `recording/topics.txt`, and `recording/metadata.json` through the existing image-free `support_hazard` profile. Existing evidence is never overwritten. `bags/`, logs, rosbag databases, datasets, and Python caches are ignored by Git.
+
+### 1. Task 5 single-UAV RGB-D typed flow — optional live Baylands
+
+This is user-operated and requires the existing Baylands simulation. It keeps dji2 and the aerial costmap off:
+
+```bash
+# Terminal 1
+./run.sh tmux_support_chain baylands mode:=follow \
+  hazard_projector_enable:=true \
+  record:=true record_profile:=support_hazard record_tag:=task8_task5_rgbd \
+  gui:=false tmux_attach:=true
+
+# Terminal 2, after sourcing ROS and install/setup.bash
+EVIDENCE="bags/validation/$(date +%Y%m%dT%H%M%S)_task5_live"
+ros2 run lrs_halmstad support_hazard_evidence live \
+  --timeout-s 30 --max-age-s 1.0 \
+  --expected-sources dji1 --expected-selected-source dji1 \
+  --output "$EVIDENCE"
+```
+
+Expected evidence: non-empty dji1, dji0, and UGV typed topics; exact dji0→UGV forwarding; a source-matched covariance; acquisition age; selected source; state history; JSON/CSV/timeline files; and the separate `support_hazard` bag. This validates typed transport and the already implemented geometry contract only. Runtime success must be judged from the actual terminal output and bag.
+
+### 2. Task 6 multi-source association, confirmation, and conflict — deterministic non-simulation
+
+```bash
+./run.sh validate_support_hazards \
+  scenario:=task6_confirmation record:=true
+
+./run.sh validate_support_hazards \
+  scenario:=task6_conflict record:=true
+```
+
+Expected confirmation evidence: initial TENTATIVE followed by CONFIRMED, both `source_uavs`, one conservative selected geometry/covariance, and unchanged dji0→UGV forwarding. Expected conflict evidence: two overlapping incompatible tracks in CONFLICT without a crash. These commands use synthetic typed inputs; they do not start Gazebo or require a live dji2 vehicle.
+
+Analyze an existing confirmation bag without replaying or modifying it:
+
+```bash
+ros2 run lrs_halmstad support_hazard_evidence bag \
+  --bag <confirmation_evidence_dir>/recording/bag \
+  --require-dji2 --expected-state CONFIRMED \
+  --expected-sources dji1,dji2 --require-confirmation-promotion \
+  --output "bags/validation/$(date +%Y%m%dT%H%M%S)_task6_replay"
+```
+
+### 3. Task 7 freshness and configured source quality — deterministic non-simulation
+
+```bash
+./run.sh validate_support_hazards scenario:=task7_quality record:=true
+./run.sh validate_support_hazards scenario:=task7_stale record:=true
+./run.sh validate_support_hazards scenario:=task7_expiry record:=true
+```
+
+`task7_quality` gives dji1 configured quality `1.0`, dji2 quality `0.0`, and communication weight `0.6`; the expected representative is dji1 while both contributors remain recorded. `task7_stale` supplies dji2 with a two-second-old acquisition stamp and expects dji1-only accepted evidence. `task7_expiry` requires a non-empty UGV hazard followed by an empty array. These values are explicit simulation/configuration inputs, not measured live network metrics.
+
+Offline analysis for an existing quality-selection bag is:
+
+```bash
+ros2 run lrs_halmstad support_hazard_evidence bag \
+  --bag <quality_evidence_dir>/recording/bag \
+  --require-dji2 --expected-state CONFIRMED \
+  --expected-sources dji1,dji2 --expected-selected-source dji1 \
+  --output "bags/validation/$(date +%Y%m%dT%H%M%S)_task7_replay"
+```
+
+### 4. Optional/heavy dji2 Baylands integration
+
+There is no real dji2 RGB-D projector in the completed Task 5 scope. The following is therefore only an opt-in two-vehicle transport/integration run; provide typed dji1/dji2 fixtures separately and do not describe it as two-UAV perception validation:
+
+```bash
+./run.sh tmux_support_chain baylands mode:=follow \
+  dji2_enable:=true hazard_chain_enable:=true \
+  hazard_fusion_dji2_enable:=true \
+  record:=true record_profile:=support_hazard record_tag:=task8_dji2_optional \
+  gui:=false tmux_attach:=true
+
+# Terminal 2: deterministic dji1 typed fixture
+ros2 run lrs_halmstad synthetic_hazard_publisher --ros-args \
+  -p use_sim_time:=true -p topic:=/coord/support/dji1/aerial_hazards \
+  -p source_uav:=dji1 -p stable_track_id:=task8_live_dji1 \
+  -p class_name:=hazard -p center_x:=4.0 -p center_y:=5.0
+
+# Terminal 3: deterministic dji2 typed fixture
+ros2 run lrs_halmstad synthetic_hazard_publisher --ros-args \
+  -p use_sim_time:=true -p topic:=/coord/support/dji2/aerial_hazards \
+  -p source_uav:=dji2 -p stable_track_id:=task8_live_dji2 \
+  -p class_name:=hazard -p center_x:=4.2 -p center_y:=5.1
+
+# Terminal 4
+ros2 run lrs_halmstad support_hazard_evidence live \
+  --timeout-s 30 --require-dji2 --expected-state CONFIRMED \
+  --expected-sources dji1,dji2 \
+  --output "bags/validation/$(date +%Y%m%dT%H%M%S)_dji2_optional"
+```
+
+Expected evidence: dji2 is present only because both opt-in arguments were supplied, typed source arrays reach dji0 and the UGV, and the bag contains the four hazard topics. This command is optional/heavy and is not run by the Task 8 harness.
+
+### 5. Optional aerial-costmap validation
+
+Use the existing synthetic route workflow; the layer must be explicitly enabled:
+
+```bash
+# Terminal 1: start the layer and recorder without a hazard source
+./run.sh tmux_support_chain baylands nav2_goals:=parkinglot_west \
+  hazard_chain_enable:=true \
+  aerial_support_layer_enable:=true \
+  record:=true record_profile:=support_hazard record_tag:=task8_costmap_optional
+
+# Terminal 2: capture the no-hazard baseline first
+./run.sh verify_aerial_support_chain phase:=baseline
+
+# Terminal 3: then inject one bounded on-route source
+ros2 run lrs_halmstad synthetic_hazard_publisher --ros-args \
+  -p use_sim_time:=true -p topic:=/coord/support/dji1/aerial_hazards \
+  -p source_uav:=dji1 -p stable_track_id:=task8_costmap_hazard \
+  -p class_name:=hazard -p center_x:=-72.0 -p center_y:=195.5 \
+  -p dimension_x:=2.0 -p dimension_y:=2.0 \
+  -p active_duration_s:=15.0 -p ttl_s:=4.0
+
+# Terminal 2: capture while active, then after the empty array/TTL clearing
+./run.sh verify_aerial_support_chain phase:=hazard
+./run.sh verify_aerial_support_chain phase:=expiry timeout_s:=20
+```
+
+Expected evidence: layer/plugin parameters, typed receipt, baseline/hazard/expiry costmap hashes, optional plan-change hash, clearing evidence, reports under `/tmp/halmstad_ws/aerial_support_validation/`, and the timestamped bag directory. Topic presence or a changed hash alone is not a closed-loop navigation-success result; inspect the actual run, path, costmap, action status, and UGV outcome.
+
+### Validation boundaries and non-claims
+
+Validated implementation behavior consists of message validation, bounded storage, deterministic association/source selection, state transitions, expiry, source retention, covariance copying, typed forwarding, and optional layer unit tests. Synthetic/replayed validation checks those contracts reproducibly. Optional live validation may provide runtime evidence, but only after its logs and bags are reviewed.
+
+This harness does not claim detector accuracy, general environmental-hazard perception, full SLAM, communication-aware UAV motion planning, closed-loop navigation success, or quantitative safety improvement. It does not create a statistical conclusion before repeated experimental data exists. The existing C1–C4 campaign runner remains unchanged so future-work evidence cannot silently become an original thesis result.
+
 OMNeT++ network metrics topics (published by `omnet_metrics_bridge` when OMNeT is running,
 requires `start_omnet_bridge:=true` in `run_follow.launch.py`; all `std_msgs/Float64`, ~10 Hz):
 

@@ -12,6 +12,7 @@ PROFILE="default"
 TAG=""
 RUN_DIR=""
 DRY_RUN=false
+ORIGINAL_ARGS=("$@")
 
 if [ -f "$SIM_WORLD_FILE" ]; then
   sim_world="$(cat "$SIM_WORLD_FILE" 2>/dev/null || true)"
@@ -201,14 +202,14 @@ json_escape() {
 }
 
 git_branch="$(git -C "$WS_ROOT" branch --show-current 2>/dev/null || true)"
-git_head="$(git -C "$WS_ROOT" rev-parse --short HEAD 2>/dev/null || true)"
+git_head="$(git -C "$WS_ROOT" rev-parse HEAD 2>/dev/null || true)"
 if [ -n "$(git -C "$WS_ROOT" status --porcelain=v1 2>/dev/null || true)" ]; then
   git_dirty=true
 else
   git_dirty=false
 fi
 
-invocation="$(shell_join "$0" "$WORLD" "mode:=$MODE" "uav_name:=$UAV_NAME" "profile:=$PROFILE" "$@")"
+invocation="$(shell_join "$0" "${ORIGINAL_ARGS[@]}")"
 bag_command="$(shell_join ros2 bag record -o "$BAG_DIR" "${TOPICS[@]}")"
 hostname_value="$(hostname 2>/dev/null || true)"
 started_at="$(date -Is)"
@@ -222,6 +223,10 @@ if [ "$DRY_RUN" = true ]; then
   exit 0
 fi
 
+if [ -e "$BAG_DIR" ] || [ -e "$TOPICS_FILE" ] || [ -e "$METADATA_FILE" ]; then
+  echo "Refusing to overwrite existing recording evidence in: $RUN_DIR_ABS" >&2
+  exit 1
+fi
 mkdir -p "$RUN_DIR_ABS"
 printf '%s\n' "${TOPICS[@]}" > "$TOPICS_FILE"
 
@@ -243,6 +248,15 @@ printf '%s\n' "${TOPICS[@]}" > "$TOPICS_FILE"
   printf '  "git_head": "%s",\n' "$(json_escape "$git_head")"
   printf '  "git_dirty": %s,\n' "$git_dirty"
   printf '  "invocation": "%s",\n' "$(json_escape "$invocation")"
+  printf '  "arguments": [\n'
+  for i in "${!ORIGINAL_ARGS[@]}"; do
+    suffix=","
+    if [ "$i" -eq "$(( ${#ORIGINAL_ARGS[@]} - 1 ))" ]; then
+      suffix=""
+    fi
+    printf '    "%s"%s\n' "$(json_escape "${ORIGINAL_ARGS[$i]}")" "$suffix"
+  done
+  printf '  ],\n'
   printf '  "bag_command": "%s",\n' "$(json_escape "$bag_command")"
   printf '  "topic_count": %s,\n' "${#TOPICS[@]}"
   printf '  "topics": [\n'

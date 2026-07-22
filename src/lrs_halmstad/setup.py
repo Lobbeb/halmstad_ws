@@ -119,6 +119,7 @@ setup(
             "run_dataset_sync_check = lrs_halmstad.dataset.sync_check:main",
             "run_perception_benchmark_summary = lrs_halmstad.tools.perception_benchmark_summary:main",
             "synthetic_hazard_publisher = lrs_halmstad.tools.synthetic_hazard_publisher:main",
+            "support_hazard_evidence = lrs_halmstad.tools.support_hazard_evidence:main",
             "ugv_nav2_driver = lrs_halmstad.nav.ugv_nav2_driver:main",
             "ugv_nav2_goal_tester = lrs_halmstad.nav.ugv_nav2_goal_tester:main",
               # optional later:
