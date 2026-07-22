@@ -133,6 +133,60 @@ def test_task5_tmux_disables_dji2_without_changing_legacy_default():
     assert "support_bridge_gimbal:=true" not in legacy_output
 
 
+def test_live_typed_flow_profile_fixes_validated_camera_and_safe_defaults():
+    output = _dry_run(
+        [
+            "support_chain_live_typed_flow",
+            "dry_run:=true",
+        ]
+    )
+
+    assert "Mode: follow" in output
+    assert "hazard_projector_enable:=true" in output
+    assert "support_camera_scan_enable:=true" in output
+    assert "support_camera_scan_uavs:=dji1" in output
+    assert "support_camera_scan_yaw_center_deg:=0.0" in output
+    assert "support_camera_scan_yaw_amplitude_deg:=0.0" in output
+    assert "support_camera_scan_pitch_deg:=-60.0" in output
+    assert "support_camera_scan_pitch_amplitude_deg:=0.0" in output
+    assert "dji2_enable:=false" in output
+    assert "aerial_support_layer_enable:=true" not in output
+    assert "GUI: false" in output
+    assert "warehouse" not in output.lower()
+
+
+def test_live_typed_flow_profile_requires_explicit_optional_components():
+    output = _dry_run(
+        [
+            "support_chain_live_typed_flow",
+            "dji2_enable:=true",
+            "aerial_support_layer_enable:=true",
+            "dry_run:=true",
+        ]
+    )
+
+    assert "dji2_enable:=true" in output
+    assert "aerial_support_layer_enable:=true" in output
+
+
+def test_live_typed_flow_profile_rejects_world_and_camera_overrides():
+    for forbidden_argument in ("warehouse", "support_camera_scan_pitch_deg:=-20.0"):
+        result = subprocess.run(
+            [
+                "bash",
+                str(REPO_ROOT / "run.sh"),
+                "support_chain_live_typed_flow",
+                forbidden_argument,
+                "dry_run:=true",
+            ],
+            cwd=REPO_ROOT,
+            capture_output=True,
+            text=True,
+        )
+
+        assert result.returncode == 2
+
+
 def test_task6_typed_dji2_fusion_is_separately_opt_in():
     default_output = _dry_run(
         [

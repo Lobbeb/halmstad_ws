@@ -9,6 +9,8 @@ log/*
 # --- Runtime output / experiment artifacts ---
 runs/
 bags/
+/logs/
+/evidence/
 *.mcap
 *.db3
 *.sqlite3
@@ -34,6 +36,7 @@ venv/
 # --- OS / misc ---
 .DS_Store
 Thumbs.db
+/NUL/
 
 # --- OMNeT++ / INET (do NOT store full installs in repo) ---
 omnet-workspace/

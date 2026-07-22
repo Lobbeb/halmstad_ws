@@ -257,20 +257,12 @@ Each synthetic run creates a new `bags/validation/support_hazards/<timestamp>_<s
 
 ### 1. Task 5 single-UAV RGB-D typed flow — optional live Baylands
 
-This is user-operated and requires the existing Baylands simulation. It keeps dji2 and the aerial costmap off:
+This is user-operated and requires the existing Baylands simulation. Use the named profile so the validated dji1 camera orientation is not omitted. It is headless and keeps recording, dji2, and the aerial costmap off unless explicitly requested:
 
 ```bash
 # Terminal 1
-./run.sh tmux_support_chain baylands mode:=follow \
-  hazard_projector_enable:=true \
-  record:=true record_profile:=support_hazard record_tag:=task5_live_retry_down60 \
-  gui:=false tmux_attach:=false \
-  support_camera_scan_enable:=true \
-  support_camera_scan_uavs:=dji1 \
-  support_camera_scan_yaw_center_deg:=0.0 \
-  support_camera_scan_yaw_amplitude_deg:=0.0 \
-  support_camera_scan_pitch_deg:=-60.0 \
-  support_camera_scan_pitch_amplitude_deg:=0.0
+./run.sh support_chain_live_typed_flow \
+  record:=true record_profile:=support_hazard record_tag:=task5_live_retry_down60
 
 # Terminal 2, after sourcing ROS and install/setup.bash
 EVIDENCE="bags/validation/$(date +%Y%m%dT%H%M%S)_task5_live"
@@ -282,9 +274,9 @@ ros2 run lrs_halmstad support_hazard_evidence live \
 
 Expected evidence: non-empty dji1, dji0, and UGV typed topics; exact dji0→UGV forwarding; a source-matched covariance; acquisition age; selected source; state history; JSON/CSV/timeline files; and the separate `support_hazard` bag. This validates typed transport and the already implemented geometry contract only. Runtime success must be judged from the actual terminal output and bag.
 
-A bounded headless Baylands run on 2026-07-22 recorded detector output, but its records remained `valid:false` because the dji1 camera had no explicit downward pitch and the target was outside its view. The model, projector, fusion, and source-selection paths were not the cause. A single bounded retry using the command above fixed the dji1-only camera scanner at `-60.0` degrees. It produced non-empty `AerialHazardArray` messages at `/coord/support/dji1/aerial_hazards`, `/coord/dji0/aerial_hazards`, and `/coord/ugv/aerial_hazards`; the verifier selected dji1, matched the selected-source covariance without reduction, and confirmed exact dji0-to-UGV forwarding. This validates the live typed contract under the corrected camera orientation only.
+A bounded headless Baylands run on 2026-07-22 recorded detector output, but its records remained `valid:false` because the dji1 camera had no explicit downward pitch and the UGV was outside the image. The model, projector, fusion, and source-selection paths were not the cause. The named profile expands to the validated Baylands `mode:=follow` workflow with the projector enabled, dji1-only scan, fixed yaw, and `support_camera_scan_pitch_deg:=-60.0`; it explicitly passes `dji2_enable:=false` and `aerial_support_layer_enable:=false`. A single bounded retry with that orientation produced non-empty `AerialHazardArray` messages at `/coord/support/dji1/aerial_hazards`, `/coord/dji0/aerial_hazards`, and `/coord/ugv/aerial_hazards`; the verifier selected dji1, matched the selected-source covariance without reduction, and confirmed exact dji0-to-UGV forwarding. This validates the live typed contract under the corrected camera orientation only.
 
-The generated report and bag remain under ignored `bags/validation/` and `bags/experiments/` paths. This result does not establish detector accuracy, environmental hazard perception, closed-loop navigation success, or quantitative safety improvement, and it does not justify changing projector geometry.
+The generated report and bag remain under ignored `bags/validation/` and `bags/experiments/` paths. This result does not establish detector accuracy, general environmental hazard perception, closed-loop navigation success, full SLAM, quantitative safety improvement, or UAV repositioning, and it does not justify changing projector geometry.
 
 Task 8 completion is based on the deterministic synthetic/replayed typed-message checks below for Task 6 association/confirmation/conflict and Task 7 freshness/source selection/expiry. Optional live Task 5, dji2, and costmap runs provide additional runtime evidence only when their own verifier reports pass.
 
