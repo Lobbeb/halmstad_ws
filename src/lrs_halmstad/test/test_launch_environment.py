@@ -165,3 +165,31 @@ def test_task6_typed_dji2_fusion_is_separately_opt_in():
     assert "wait_for_topic_message /dji2/pose" not in default_output
     assert "dji2_enable:=true" in output
     assert "hazard_fusion_dji2_enable:=true" in output
+
+
+def test_task7_configured_source_quality_routes_without_enabling_dji2():
+    output = _dry_run(
+        [
+            "tmux_support_chain",
+            "baylands",
+            "mode:=follow",
+            "dry_run:=true",
+            "tmux_attach:=false",
+            "gui:=false",
+            "record:=false",
+            "hazard_chain_enable:=true",
+            "hazard_fusion_quality_weight_confidence:=0.25",
+            "hazard_fusion_quality_weight_freshness:=0.25",
+            "hazard_fusion_quality_weight_uncertainty:=0.20",
+            "hazard_fusion_quality_weight_view:=0.15",
+            "hazard_fusion_quality_weight_communication:=0.15",
+            "hazard_fusion_dji1_communication_quality:=0.9",
+            "hazard_fusion_dji1_communication_penalty:=0.1",
+        ]
+    )
+
+    assert "hazard_fusion_quality_weight_communication:=0.15" in output
+    assert "hazard_fusion_dji1_communication_quality:=0.9" in output
+    assert "hazard_fusion_dji1_communication_penalty:=0.1" in output
+    assert "dji2_enable:=false" in output
+    assert "hazard_fusion_dji2_enable:=true" not in output

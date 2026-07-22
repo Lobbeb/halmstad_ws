@@ -30,6 +30,7 @@ def _hazard(
     class_id: str = "person",
     state: int = AerialHazard.TENTATIVE,
     last_seen_ns: int = 10 * SECOND,
+    acquisition_ns: int | None = None,
     ttl_s: float = 5.0,
     confidence: float = 0.8,
     support_quality: float = 0.5,
@@ -40,8 +41,10 @@ def _hazard(
     size_y: float = 1.0,
     size_z: float = 1.0,
 ) -> AerialHazard:
+    if acquisition_ns is None:
+        acquisition_ns = last_seen_ns
     detection = Detection3D()
-    detection.header = Header(stamp=_time(last_seen_ns), frame_id="map")
+    detection.header = Header(stamp=_time(acquisition_ns), frame_id="map")
     detection.id = track_id
     detection.bbox.center.position = Point(x=x, y=y, z=0.5)
     detection.bbox.center.orientation.w = 1.0
@@ -90,6 +93,8 @@ def _stamp(stamp: Time) -> int:
 def _core(**kwargs) -> HazardFusionCore:
     defaults = {
         "stale_timeout_s": 2.0,
+        "max_source_age_s": 2.0,
+        "source_timeout_s": 2.0,
         "max_covariance": 4.0,
         "track_timeout_s": 3.0,
     }
@@ -211,7 +216,7 @@ def test_stale_source_is_rejected():
     assert core.build_output(now_ns=12 * SECOND + 1).hazards == []
 
 
-def test_one_source_dropout_retains_confirmed_track_and_complete_sources():
+def test_one_source_dropout_retains_track_and_complete_sources():
     core = _core()
     core.replace_source("dji1", _array(_hazard(source="dji1")), now_ns=10_200_000_000)
     core.replace_source(
@@ -224,7 +229,7 @@ def test_one_source_dropout_retains_confirmed_track_and_complete_sources():
     output = core.build_output(now_ns=10_400_000_000)
 
     assert len(output.hazards) == 1
-    assert output.hazards[0].state == AerialHazard.CONFIRMED
+    assert output.hazards[0].state == AerialHazard.TENTATIVE
     assert output.hazards[0].source_uavs == ["dji1", "dji2"]
 
 
@@ -342,6 +347,305 @@ def test_covariance_is_selected_verbatim_and_never_shrunk():
 
     assert list(fused.detection.results[0].pose.covariance) == expected_covariance
     assert fused.detection.results[0].pose.covariance[0] == pytest.approx(0.8)
+
+
+def test_freshest_equivalent_source_is_selected_by_acquisition_age():
+    core = _core()
+    core.replace_source(
+        "dji1",
+        _array(_hazard(source="dji1", last_seen_ns=10_000_000_000, x=1.0)),
+        now_ns=10_500_000_000,
+    )
+    core.replace_source(
+        "dji2",
+        _array(
+            _hazard(
+                track_id="dji2-id",
+                source="dji2",
+                last_seen_ns=10_400_000_000,
+                x=1.1,
+            )
+        ),
+        now_ns=10_500_000_000,
+    )
+
+    fused = core.build_output(now_ns=10_500_000_000).hazards[0]
+
+    assert fused.detection.bbox.center.position.x == pytest.approx(1.1)
+
+
+def test_source_older_than_explicit_age_gate_is_rejected_and_counted():
+    core = _core(max_source_age_s=0.5)
+
+    accepted = core.replace_source(
+        "dji1",
+        _array(
+            _hazard(
+                last_seen_ns=10_500_000_000,
+                acquisition_ns=10_000_000_000,
+            )
+        ),
+        now_ns=10_600_000_000,
+    )
+
+    assert accepted == 0
+    assert core.build_output(now_ns=10_600_000_000).hazards == []
+    assert core.diagnostics.stale_source_rejections == 1
+
+
+def test_high_quality_slightly_older_source_beats_fresher_uncertain_source():
+    core = _core(
+        quality_weight_confidence=0.25,
+        quality_weight_freshness=0.25,
+        quality_weight_uncertainty=0.40,
+        quality_weight_view=0.10,
+    )
+    core.replace_source(
+        "dji1",
+        _array(
+            _hazard(
+                source="dji1",
+                last_seen_ns=10_300_000_000,
+                confidence=0.95,
+                support_quality=1.0,
+                xy_variance=0.05,
+                x=1.0,
+            )
+        ),
+        now_ns=10_600_000_000,
+    )
+    core.replace_source(
+        "dji2",
+        _array(
+            _hazard(
+                track_id="dji2-id",
+                source="dji2",
+                last_seen_ns=10_500_000_000,
+                confidence=0.5,
+                support_quality=0.3,
+                xy_variance=3.0,
+                x=1.1,
+            )
+        ),
+        now_ns=10_600_000_000,
+    )
+
+    fused = core.build_output(now_ns=10_600_000_000).hazards[0]
+
+    assert fused.detection.bbox.center.position.x == pytest.approx(1.0)
+    assert fused.detection.results[0].pose.covariance[0] == pytest.approx(0.05)
+
+
+def test_configured_communication_penalty_changes_source_choice():
+    core = _core(
+        quality_weight_confidence=0.2,
+        quality_weight_freshness=0.1,
+        quality_weight_uncertainty=0.1,
+        quality_weight_view=0.1,
+        quality_weight_communication=0.5,
+        source_communication_penalty={"dji1": 0.8, "dji2": 0.0},
+    )
+    core.replace_source(
+        "dji1",
+        _array(_hazard(source="dji1", x=1.0)),
+        now_ns=10_200_000_000,
+    )
+    core.replace_source(
+        "dji2",
+        _array(_hazard(track_id="dji2-id", source="dji2", x=1.1)),
+        now_ns=10_200_000_000,
+    )
+
+    fused = core.build_output(now_ns=10_200_000_000).hazards[0]
+
+    assert fused.detection.bbox.center.position.x == pytest.approx(1.1)
+    assert core.diagnostics.communication_adjusted_selections == 1
+
+
+def test_no_live_metric_mode_uses_only_configured_source_quality():
+    core = _core(
+        quality_weight_confidence=0.2,
+        quality_weight_freshness=0.1,
+        quality_weight_uncertainty=0.1,
+        quality_weight_view=0.1,
+        quality_weight_communication=0.5,
+        source_communication_quality={"dji1": 0.2, "dji2": 1.0},
+    )
+    core.replace_source(
+        "dji1",
+        _array(_hazard(source="dji1", x=1.0)),
+        now_ns=10_200_000_000,
+    )
+    core.replace_source(
+        "dji2",
+        _array(_hazard(track_id="dji2-id", source="dji2", x=1.1)),
+        now_ns=10_200_000_000,
+    )
+
+    fused = core.build_output(now_ns=10_200_000_000).hazards[0]
+
+    assert fused.detection.bbox.center.position.x == pytest.approx(1.1)
+    assert not hasattr(core, "communication_subscription")
+
+
+def test_source_timeout_drops_one_uav_while_other_remains_fresh():
+    core = _core(source_timeout_s=0.5, single_source_confirm_hits=3)
+    core.replace_source(
+        "dji1",
+        _array(_hazard(source="dji1")),
+        now_ns=10_100_000_000,
+    )
+    core.replace_source(
+        "dji2",
+        _array(_hazard(track_id="dji2-id", source="dji2", x=1.1)),
+        now_ns=10_100_000_000,
+    )
+    core.replace_source(
+        "dji1",
+        _array(_hazard(source="dji1", last_seen_ns=10_500_000_000, x=1.05)),
+        now_ns=10_500_000_000,
+    )
+
+    output = core.build_output(now_ns=10_700_000_000)
+
+    assert len(output.hazards) == 1
+    assert output.hazards[0].source_uavs == ["dji1", "dji2"]
+    assert core.diagnostics.source_timeouts == 1
+
+
+def test_stale_second_source_does_not_keep_confirmation_alive():
+    core = _core(max_source_age_s=0.5, single_source_confirm_hits=3)
+    core.replace_source(
+        "dji1",
+        _array(_hazard(source="dji1", last_seen_ns=10_400_000_000)),
+        now_ns=10_500_000_000,
+    )
+    core.replace_source(
+        "dji2",
+        _array(
+            _hazard(
+                track_id="dji2-id",
+                source="dji2",
+                last_seen_ns=10_400_000_000,
+                x=1.1,
+            )
+        ),
+        now_ns=10_500_000_000,
+    )
+    assert core.build_output(now_ns=10_500_000_000).hazards[0].state == AerialHazard.CONFIRMED
+
+    core.replace_source(
+        "dji1",
+        _array(_hazard(source="dji1", last_seen_ns=10_900_000_000, x=1.05)),
+        now_ns=11_000_000_000,
+    )
+    fused = core.build_output(now_ns=11_000_000_000).hazards[0]
+
+    assert fused.state == AerialHazard.TENTATIVE
+    assert fused.source_uavs == ["dji1", "dji2"]
+
+
+def test_conflict_clears_when_incompatible_source_becomes_stale():
+    core = _core(max_source_age_s=0.5, single_source_confirm_hits=3)
+    core.replace_source(
+        "dji1",
+        _array(
+            _hazard(
+                source="dji1",
+                class_id="person",
+                last_seen_ns=10_400_000_000,
+                x=3.0,
+                y=4.0,
+            )
+        ),
+        now_ns=10_500_000_000,
+    )
+    core.replace_source(
+        "dji2",
+        _array(
+            _hazard(
+                track_id="vehicle-id",
+                source="dji2",
+                class_id="vehicle",
+                last_seen_ns=10_400_000_000,
+                x=3.2,
+                y=4.0,
+            )
+        ),
+        now_ns=10_500_000_000,
+    )
+    assert all(
+        hazard.state == AerialHazard.CONFLICT
+        for hazard in core.build_output(now_ns=10_500_000_000).hazards
+    )
+
+    core.replace_source(
+        "dji1",
+        _array(
+            _hazard(
+                source="dji1",
+                class_id="person",
+                last_seen_ns=10_900_000_000,
+                x=3.0,
+                y=4.0,
+            )
+        ),
+        now_ns=11_000_000_000,
+    )
+    output = core.build_output(now_ns=11_000_000_000)
+
+    assert len(output.hazards) == 1
+    assert output.hazards[0].state == AerialHazard.TENTATIVE
+
+
+def test_score_epsilon_uses_deterministic_source_order_for_near_tie():
+    parameters = {
+        "quality_weight_confidence": 0.0,
+        "quality_weight_freshness": 1.0,
+        "quality_weight_uncertainty": 0.0,
+        "quality_weight_view": 0.0,
+        "selection_score_epsilon": 0.1,
+    }
+    outputs = []
+    for source_order in (("dji1", "dji2"), ("dji2", "dji1")):
+        core = _core(**parameters)
+        hazards = {
+            "dji1": _hazard(
+                source="dji1", last_seen_ns=10_300_000_000, x=1.0
+            ),
+            "dji2": _hazard(
+                track_id="dji2-id",
+                source="dji2",
+                last_seen_ns=10_400_000_000,
+                x=1.1,
+            ),
+        }
+        for source_id in source_order:
+            core.replace_source(
+                source_id,
+                _array(hazards[source_id]),
+                now_ns=10_500_000_000,
+            )
+        outputs.append(
+            core.build_output(now_ns=10_500_000_000)
+            .hazards[0]
+            .detection.bbox.center.position.x
+        )
+
+    assert outputs == pytest.approx([1.0, 1.0])
+
+
+def test_no_fresh_source_diagnostic_is_bounded_per_transition():
+    core = _core(max_source_age_s=0.5)
+    core.replace_source(
+        "dji1",
+        _array(_hazard(last_seen_ns=10_000_000_000)),
+        now_ns=10_100_000_000,
+    )
+
+    assert core.build_output(now_ns=10_600_000_000).hazards == []
+    assert core.build_output(now_ns=10_700_000_000).hazards == []
+    assert core.diagnostics.no_fresh_source_available == 1
 
 
 def test_euclidean_fallback_associates_when_xy_covariance_is_singular():

@@ -200,6 +200,50 @@ ros2 topic echo /coord/dji0/aerial_hazards --once
 
 An optional/heavy live two-UAV Baylands run must explicitly opt in to both the legacy support slot and typed fusion with `dji2_enable:=true hazard_fusion_dji2_enable:=true`. Task 6 does not require that run and does not add a real dji2 RGB-D projector. No detector-accuracy, environmental-hazard perception, or closed-loop navigation-success claim follows from the synthetic association check.
 
+## Task 7: communication-aware freshness and source selection
+
+Task 7 preserves Task 6 association, stable dji0 IDs, confirmation/conflict handling, bounded track storage, complete historical `source_uavs`, and conservative selection of one source estimate. It scores each fresh candidate as:
+
+`w_confidence * confidence + w_freshness * freshness + w_uncertainty * uncertainty + w_view * support_quality + w_communication * configured_communication_quality`
+
+Freshness is based on the source acquisition stamp in `Detection3D.header.stamp`, not dji0 receipt or publication time. Evidence older than `hazard_fusion_max_source_age_s` is rejected. Cached evidence is also removed when its source has not delivered a callback within `hazard_fusion_source_timeout_s`; another fresh source can keep the track alive, while stale evidence cannot retain CONFIRMED or CONFLICT state. Tracks still expire using the Task 6 track timeout.
+
+The existing `/omnet/*` bridge describes one aggregate dji0-to-UGV link and does not identify or timestamp dji1/dji2 source links. Fusion therefore does not subscribe to it or invent live network awareness. The communication term is the explicit simulation/configuration input `clamp(source_quality - source_penalty, 0, 1)`. Its default weight is zero, so the default behavior is Task 6's ideal/no-metrics mode.
+
+New parameters and defaults are:
+
+- `hazard_fusion_max_source_age_s:=0.75`
+- `hazard_fusion_source_timeout_s:=0.75`
+- `hazard_fusion_quality_weight_communication:=0.0`
+- `hazard_fusion_selection_score_epsilon:=0.01`
+- `hazard_fusion_dji1_communication_quality:=1.0`
+- `hazard_fusion_dji2_communication_quality:=1.0`
+- `hazard_fusion_dji1_communication_penalty:=0.0`
+- `hazard_fusion_dji2_communication_penalty:=0.0`
+- `hazard_fusion_diagnostic_period_s:=5.0`
+
+All five quality weights must sum to one. Scores within `hazard_fusion_selection_score_epsilon` use stable source order (`dji1`, then `dji2`) and output tracks remain sorted by deterministic dji0 ID. The selected source covariance is deep-copied verbatim; neither multi-source agreement nor communication quality shrinks it. Compact periodic logs report selected-source counts, stale rejection, dropped/expired evidence, source timeout, no-fresh-source transitions, expired tracks, and configured communication values.
+
+For a bounded non-simulation source-selection check, use the Task 6 four-terminal fixture but start fusion with typed dji2 explicitly enabled and nonzero configured communication weight:
+
+```bash
+# Terminal 1: weights sum to 1.0; dji2 is intentionally penalized
+ros2 run lrs_halmstad support_hazard_fusion --ros-args \
+  -p use_sim_time:=false -p dji2_enable:=true \
+  -p quality_weight_confidence:=0.25 -p quality_weight_freshness:=0.25 \
+  -p quality_weight_uncertainty:=0.20 -p quality_weight_view:=0.15 \
+  -p quality_weight_communication:=0.15 \
+  -p dji1_communication_quality:=1.0 -p dji2_communication_quality:=0.2
+
+# Terminals 2 and 3: use the Task 6 dji1/dji2 synthetic publishers.
+# Give dji1 center_x:=4.0 and dji2 center_x:=4.2, then inspect the representative.
+
+# Terminal 4
+ros2 topic echo /coord/dji0/aerial_hazards --once
+```
+
+Repeat after swapping the two configured communication-quality values to verify that the representative center/covariance changes source without averaging. Source timestamps can be aged deterministically with the synthetic publisher's `stamp_offset_s` parameter to verify rejection and fallback. This test uses replayable typed inputs and does not require live dji2. An optional/heavy Baylands run remains explicitly opt-in with `dji2_enable:=true hazard_fusion_dji2_enable:=true`; it is not a Task 7 pass requirement.
+
 OMNeT++ network metrics topics (published by `omnet_metrics_bridge` when OMNeT is running,
 requires `start_omnet_bridge:=true` in `run_follow.launch.py`; all `std_msgs/Float64`, ~10 Hz):
 

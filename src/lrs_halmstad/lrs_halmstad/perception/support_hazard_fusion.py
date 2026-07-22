@@ -23,8 +23,11 @@ DEFAULT_DJI2_TOPIC = "/coord/support/dji2/aerial_hazards"
 DEFAULT_OUTPUT_TOPIC = "/coord/dji0/aerial_hazards"
 DEFAULT_DJI2_ENABLE = False
 DEFAULT_STALE_TIMEOUT_S = 0.75
+DEFAULT_MAX_SOURCE_AGE_S = 0.75
+DEFAULT_SOURCE_TIMEOUT_S = 0.75
 DEFAULT_MAX_COVARIANCE = 4.0
 DEFAULT_PUBLISH_RATE_HZ = 10.0
+DEFAULT_DIAGNOSTIC_PERIOD_S = 5.0
 DEFAULT_ASSOCIATION_TIME_WINDOW_S = 0.75
 DEFAULT_ASSOCIATION_CHI2_XY = 5.991
 DEFAULT_ASSOCIATION_MAX_DISTANCE_M = 1.5
@@ -38,6 +41,10 @@ DEFAULT_QUALITY_WEIGHT_CONFIDENCE = 0.35
 DEFAULT_QUALITY_WEIGHT_FRESHNESS = 0.25
 DEFAULT_QUALITY_WEIGHT_UNCERTAINTY = 0.25
 DEFAULT_QUALITY_WEIGHT_VIEW = 0.15
+DEFAULT_QUALITY_WEIGHT_COMMUNICATION = 0.0
+DEFAULT_SELECTION_SCORE_EPSILON = 0.01
+DEFAULT_SOURCE_COMMUNICATION_QUALITY = 1.0
+DEFAULT_SOURCE_COMMUNICATION_PENALTY = 0.0
 QUALITY_WEIGHT_TOLERANCE = 1.0e-6
 _NANOSECONDS_PER_SECOND = 1_000_000_000
 
@@ -154,6 +161,7 @@ def validate_hazard(
     now_ns: int,
     stale_timeout_s: float,
     max_covariance: float,
+    max_source_age_s: Optional[float] = None,
 ) -> Optional[str]:
     """Return a rejection reason, or None when a hazard is safe to fuse."""
     if array_header.frame_id != MAP_FRAME:
@@ -170,6 +178,17 @@ def validate_hazard(
         return "detection_not_in_map"
     if first_seen_ns > last_seen_ns:
         return "invalid_track_time_order"
+
+    source_age_limit_s = (
+        float(stale_timeout_s)
+        if max_source_age_s is None
+        else float(max_source_age_s)
+    )
+    source_age_ns = now_ns - detection_stamp_ns
+    if source_age_ns < 0:
+        return "future_stamp"
+    if source_age_ns > int(round(source_age_limit_s * _NANOSECONDS_PER_SECOND)):
+        return "source_age_exceeded"
 
     stale_timeout_ns = int(round(float(stale_timeout_s) * _NANOSECONDS_PER_SECOND))
     for stamp_ns in (array_stamp_ns, detection_stamp_ns, last_seen_ns):
@@ -251,6 +270,33 @@ class StoredHazard:
     def last_seen_ns(self) -> int:
         return _stamp_ns(self.hazard.last_seen)
 
+    @property
+    def acquisition_stamp_ns(self) -> int:
+        return _stamp_ns(self.hazard.detection.header.stamp)
+
+
+@dataclass(frozen=True)
+class QualityTerms:
+    confidence: float
+    freshness: float
+    uncertainty: float
+    view: float
+    communication: float
+    score: float
+
+
+@dataclass
+class FusionDiagnostics:
+    stale_source_rejections: int = 0
+    dropped_source_evidence: int = 0
+    expired_source_evidence: int = 0
+    source_timeouts: int = 0
+    no_fresh_source_available: int = 0
+    communication_adjusted_selections: int = 0
+    expired_tracks: int = 0
+    selected_sources: dict[str, int] = field(default_factory=dict)
+    last_selection_terms: dict[str, QualityTerms] = field(default_factory=dict)
+
 
 @dataclass
 class FusionTrack:
@@ -263,7 +309,6 @@ class FusionTrack:
     source_hit_counts: dict[str, int] = field(default_factory=dict)
     source_last_hit_ns: dict[str, int] = field(default_factory=dict)
     contributing_sources: set[str] = field(default_factory=set)
-    confirmed: bool = False
 
 
 class HazardFusionCore:
@@ -273,6 +318,8 @@ class HazardFusionCore:
         self,
         *,
         stale_timeout_s: float = DEFAULT_STALE_TIMEOUT_S,
+        max_source_age_s: float = DEFAULT_MAX_SOURCE_AGE_S,
+        source_timeout_s: float = DEFAULT_SOURCE_TIMEOUT_S,
         max_covariance: float = DEFAULT_MAX_COVARIANCE,
         association_time_window_s: float = DEFAULT_ASSOCIATION_TIME_WINDOW_S,
         association_chi2_xy: float = DEFAULT_ASSOCIATION_CHI2_XY,
@@ -289,9 +336,15 @@ class HazardFusionCore:
         quality_weight_freshness: float = DEFAULT_QUALITY_WEIGHT_FRESHNESS,
         quality_weight_uncertainty: float = DEFAULT_QUALITY_WEIGHT_UNCERTAINTY,
         quality_weight_view: float = DEFAULT_QUALITY_WEIGHT_VIEW,
+        quality_weight_communication: float = DEFAULT_QUALITY_WEIGHT_COMMUNICATION,
+        selection_score_epsilon: float = DEFAULT_SELECTION_SCORE_EPSILON,
+        source_communication_quality: Optional[dict[str, float]] = None,
+        source_communication_penalty: Optional[dict[str, float]] = None,
         source_order: tuple[str, ...] = ("dji1", "dji2"),
     ) -> None:
         self.stale_timeout_s = float(stale_timeout_s)
+        self.max_source_age_s = float(max_source_age_s)
+        self.source_timeout_s = float(source_timeout_s)
         self.max_covariance = float(max_covariance)
         self.association_time_window_s = float(association_time_window_s)
         self.association_chi2_xy = float(association_chi2_xy)
@@ -309,11 +362,35 @@ class HazardFusionCore:
             float(quality_weight_freshness),
             float(quality_weight_uncertainty),
             float(quality_weight_view),
+            float(quality_weight_communication),
         )
+        self.selection_score_epsilon = float(selection_score_epsilon)
         self.source_order = tuple(source_order)
+        quality_overrides = source_communication_quality or {}
+        penalty_overrides = source_communication_penalty or {}
+        self.source_communication_quality = {
+            source_id: float(
+                quality_overrides.get(source_id, DEFAULT_SOURCE_COMMUNICATION_QUALITY)
+            )
+            for source_id in self.source_order
+        }
+        self.source_communication_penalty = {
+            source_id: float(
+                penalty_overrides.get(source_id, DEFAULT_SOURCE_COMMUNICATION_PENALTY)
+            )
+            for source_id in self.source_order
+        }
         self._validate_configuration()
         self._tracks: dict[str, FusionTrack] = {}
         self._next_track_index = 1
+        self._last_source_message_ns: dict[str, Optional[int]] = {
+            source_id: None for source_id in self.source_order
+        }
+        self._timed_out_sources: set[str] = set()
+        self._tracks_without_fresh_evidence: set[str] = set()
+        self.diagnostics = FusionDiagnostics(
+            selected_sources={source_id: 0 for source_id in self.source_order}
+        )
 
     @property
     def track_count(self) -> int:
@@ -322,6 +399,8 @@ class HazardFusionCore:
     def _validate_configuration(self) -> None:
         positive_values = {
             "stale_timeout_s": self.stale_timeout_s,
+            "max_source_age_s": self.max_source_age_s,
+            "source_timeout_s": self.source_timeout_s,
             "max_covariance": self.max_covariance,
             "association_time_window_s": self.association_time_window_s,
             "association_chi2_xy": self.association_chi2_xy,
@@ -347,6 +426,20 @@ class HazardFusionCore:
             raise ValueError("quality weights must be finite and non-negative")
         if abs(sum(self.quality_weights) - 1.0) > QUALITY_WEIGHT_TOLERANCE:
             raise ValueError("quality weights must sum to one")
+        if (
+            not math.isfinite(self.selection_score_epsilon)
+            or self.selection_score_epsilon < 0.0
+        ):
+            raise ValueError("selection_score_epsilon must be finite and non-negative")
+        for label, values in (
+            ("source communication quality", self.source_communication_quality),
+            ("source communication penalty", self.source_communication_penalty),
+        ):
+            if not all(
+                math.isfinite(value) and 0.0 <= value <= 1.0
+                for value in values.values()
+            ):
+                raise ValueError(f"{label} values must be in [0,1]")
 
     def replace_source(
         self,
@@ -358,7 +451,10 @@ class HazardFusionCore:
         """Atomically replace one source snapshot and associate its observations."""
         if source_id not in self.source_order:
             raise ValueError(f"unknown source_id: {source_id}")
+        self._prune_inactive_evidence(now_ns=now_ns)
         self._cleanup_tracks(now_ns=now_ns)
+        self._last_source_message_ns[source_id] = now_ns
+        self._timed_out_sources.discard(source_id)
         source_order = self.source_order.index(source_id)
         accepted_by_id: dict[str, StoredHazard] = {}
         if message.header.frame_id == MAP_FRAME and _stamp_ns(message.header.stamp) > 0:
@@ -369,8 +465,10 @@ class HazardFusionCore:
                     now_ns=now_ns,
                     stale_timeout_s=self.stale_timeout_s,
                     max_covariance=self.max_covariance,
+                    max_source_age_s=self.max_source_age_s,
                 )
                 if reason is not None:
+                    self._record_rejection(reason)
                     continue
                 candidate = StoredHazard(
                     hazard=hazard,
@@ -379,9 +477,11 @@ class HazardFusionCore:
                     source_order=source_order,
                 )
                 current = accepted_by_id.get(candidate.detection_id)
-                if current is None or self._evidence_selection_key(
-                    candidate, now_ns
-                ) > self._evidence_selection_key(current, now_ns):
+                if current is None or self._prefer_candidate(
+                    candidate,
+                    current,
+                    now_ns=now_ns,
+                ):
                     accepted_by_id[candidate.detection_id] = candidate
 
         old_evidence = {
@@ -410,8 +510,10 @@ class HazardFusionCore:
             assignments[track.stable_id] = candidate
             assigned_tracks.add(track.stable_id)
 
-        for track in self._tracks.values():
-            track.evidence.pop(source_id, None)
+        for track_id, track in self._tracks.items():
+            removed = track.evidence.pop(source_id, None)
+            if removed is not None and track_id not in assignments:
+                self.diagnostics.dropped_source_evidence += 1
         for track_id, candidate in assignments.items():
             track = self._tracks[track_id]
             previous = old_evidence.get(track_id)
@@ -424,31 +526,37 @@ class HazardFusionCore:
             track.last_update_ns = max(track.last_update_ns, candidate.last_seen_ns)
             track.contributing_sources.update(candidate.hazard.source_uavs)
             track.contributing_sources.add(source_id)
-            if track.source_hit_counts[source_id] >= self.single_source_confirm_hits:
-                track.confirmed = True
             self._remove_duplicate_source_mapping(track, candidate)
 
-        self._promote_multi_source_tracks(now_ns=now_ns)
         self._cleanup_tracks(now_ns=now_ns)
         return len(assignments)
 
     def selected_hazards(self, *, now_ns: int) -> list[AerialHazard]:
+        self._prune_inactive_evidence(now_ns=now_ns)
         self._cleanup_tracks(now_ns=now_ns)
         active = {
             track_id: self._active_evidence(track, now_ns=now_ns)
             for track_id, track in self._tracks.items()
         }
+        for track_id, evidence in active.items():
+            if evidence:
+                self._tracks_without_fresh_evidence.discard(track_id)
+            elif track_id not in self._tracks_without_fresh_evidence:
+                self.diagnostics.no_fresh_source_available += 1
+                self._tracks_without_fresh_evidence.add(track_id)
         active = {track_id: evidence for track_id, evidence in active.items() if evidence}
         conflicts = self._conflicting_track_ids(active)
         output: list[AerialHazard] = []
         for track_id in sorted(active):
             track = self._tracks[track_id]
             evidence = active[track_id]
-            selected = max(
-                evidence,
-                key=lambda candidate: self._evidence_selection_key(candidate, now_ns),
+            selected = self._select_representative(evidence, now_ns=now_ns)
+            terms = self._quality_terms(selected, now_ns)
+            state = (
+                AerialHazard.CONFIRMED
+                if self._track_is_confirmed(track, evidence, now_ns=now_ns)
+                else AerialHazard.TENTATIVE
             )
-            state = AerialHazard.CONFIRMED if track.confirmed else AerialHazard.TENTATIVE
             if track_id in conflicts or any(
                 candidate.hazard.state == AerialHazard.CONFLICT for candidate in evidence
             ):
@@ -458,7 +566,7 @@ class HazardFusionCore:
             fused.source_uavs = sorted(track.contributing_sources, key=self._source_sort_key)
             fused.state = state
             fused.first_seen = _time_from_ns(track.first_seen_ns)
-            fused.support_quality = float(self._quality_score(selected, now_ns))
+            fused.support_quality = float(terms.score)
             if state == AerialHazard.CONFLICT:
                 fused.provenance = "dji0_multi_conflict"
             elif state == AerialHazard.CONFIRMED and len(track.contributing_sources) > 1:
@@ -468,6 +576,17 @@ class HazardFusionCore:
             else:
                 fused.provenance = "dji0_tentative"
             output.append(fused)
+            self.diagnostics.selected_sources[selected.source_id] += 1
+            self.diagnostics.last_selection_terms[selected.source_id] = terms
+            if (
+                self.quality_weights[4] > 0.0
+                and any(
+                    self._communication_score(candidate.source_id)
+                    < DEFAULT_SOURCE_COMMUNICATION_QUALITY
+                    for candidate in evidence
+                )
+            ):
+                self.diagnostics.communication_adjusted_selections += 1
         return output
 
     def build_output(self, *, now_ns: int) -> AerialHazardArray:
@@ -498,6 +617,11 @@ class HazardFusionCore:
             score = self._best_association_score(track, candidate)
             if score is None and old_same_source is not None:
                 score = self._pair_association_score(old_same_source, candidate)
+            if score is None and known_detection_id == candidate.detection_id:
+                direct_matches.append(
+                    ((2.0, math.inf, math.inf, track.stable_id), track)
+                )
+                continue
             if score is None:
                 continue
             entry = (score + (track.stable_id,), track)
@@ -618,6 +742,7 @@ class HazardFusionCore:
             ),
         )
         del self._tracks[victim.stable_id]
+        self._tracks_without_fresh_evidence.discard(victim.stable_id)
         return True
 
     def _update_source_hit_count(
@@ -654,33 +779,75 @@ class HazardFusionCore:
             if track.source_track_ids.get(candidate.source_id) == candidate.detection_id:
                 track.source_track_ids.pop(candidate.source_id, None)
 
-    def _promote_multi_source_tracks(self, *, now_ns: int) -> None:
-        for track in self._tracks.values():
-            active_sources = {
-                evidence.source_id
-                for evidence in self._active_evidence(track, now_ns=now_ns)
-            }
-            if len(active_sources) >= 2:
-                track.confirmed = True
-
     def _active_evidence(
         self, track: FusionTrack, *, now_ns: int
     ) -> list[StoredHazard]:
-        active = []
-        for evidence in track.evidence.values():
-            header = Header(
-                stamp=_time_from_ns(evidence.array_stamp_ns),
-                frame_id=MAP_FRAME,
-            )
-            if validate_hazard(
-                evidence.hazard,
-                array_header=header,
-                now_ns=now_ns,
-                stale_timeout_s=self.stale_timeout_s,
-                max_covariance=self.max_covariance,
-            ) is None:
-                active.append(evidence)
-        return active
+        del now_ns
+        return sorted(
+            track.evidence.values(),
+            key=lambda evidence: (evidence.source_order, evidence.detection_id),
+        )
+
+    def _prune_inactive_evidence(self, *, now_ns: int) -> None:
+        source_timeout_ns = int(round(self.source_timeout_s * _NANOSECONDS_PER_SECOND))
+        timed_out_sources = {
+            source_id
+            for source_id, received_ns in self._last_source_message_ns.items()
+            if received_ns is not None and now_ns - received_ns > source_timeout_ns
+        }
+        for source_id in timed_out_sources - self._timed_out_sources:
+            self.diagnostics.source_timeouts += 1
+        self._timed_out_sources.update(timed_out_sources)
+
+        for track in self._tracks.values():
+            for source_id, evidence in list(track.evidence.items()):
+                if source_id in timed_out_sources:
+                    del track.evidence[source_id]
+                    self.diagnostics.dropped_source_evidence += 1
+                    continue
+                reason = validate_hazard(
+                    evidence.hazard,
+                    array_header=Header(
+                        stamp=_time_from_ns(evidence.array_stamp_ns),
+                        frame_id=MAP_FRAME,
+                    ),
+                    now_ns=now_ns,
+                    stale_timeout_s=self.stale_timeout_s,
+                    max_covariance=self.max_covariance,
+                    max_source_age_s=self.max_source_age_s,
+                )
+                if reason is None:
+                    continue
+                del track.evidence[source_id]
+                self.diagnostics.dropped_source_evidence += 1
+                if reason == "expired":
+                    self.diagnostics.expired_source_evidence += 1
+                self._record_rejection(reason)
+
+    def _record_rejection(self, reason: str) -> None:
+        if reason in ("stale", "source_age_exceeded"):
+            self.diagnostics.stale_source_rejections += 1
+
+    def _track_is_confirmed(
+        self,
+        track: FusionTrack,
+        evidence: list[StoredHazard],
+        *,
+        now_ns: int,
+    ) -> bool:
+        active_sources = {candidate.source_id for candidate in evidence}
+        if len(active_sources) >= 2:
+            return True
+        confirmation_window_ns = int(
+            round(self.confirmation_window_s * _NANOSECONDS_PER_SECOND)
+        )
+        return any(
+            track.source_hit_counts.get(source_id, 0)
+            >= self.single_source_confirm_hits
+            and now_ns - track.source_last_hit_ns.get(source_id, 0)
+            <= confirmation_window_ns
+            for source_id in active_sources
+        )
 
     def _cleanup_tracks(self, *, now_ns: int) -> None:
         timeout_ns = int(round(self.track_timeout_s * _NANOSECONDS_PER_SECOND))
@@ -691,6 +858,8 @@ class HazardFusionCore:
         ]
         for track_id in expired:
             del self._tracks[track_id]
+            self._tracks_without_fresh_evidence.discard(track_id)
+            self.diagnostics.expired_tracks += 1
 
     def _conflicting_track_ids(
         self, active: dict[str, list[StoredHazard]]
@@ -728,26 +897,107 @@ class HazardFusionCore:
                     return True
         return False
 
-    def _quality_score(self, candidate: StoredHazard, now_ns: int) -> float:
+    def _communication_score(self, source_id: str) -> float:
+        quality = self.source_communication_quality[source_id]
+        penalty = self.source_communication_penalty[source_id]
+        return min(1.0, max(0.0, quality - penalty))
+
+    def _quality_terms(self, candidate: StoredHazard, now_ns: int) -> QualityTerms:
         confidence = float(candidate.hazard.detection.results[0].hypothesis.score)
-        age_s = max(0.0, (now_ns - candidate.last_seen_ns) / _NANOSECONDS_PER_SECOND)
-        freshness = max(0.0, 1.0 - age_s / self.stale_timeout_s)
+        age_s = max(
+            0.0,
+            (now_ns - candidate.acquisition_stamp_ns) / _NANOSECONDS_PER_SECOND,
+        )
+        freshness = max(0.0, 1.0 - age_s / self.max_source_age_s)
         covariance = candidate.hazard.detection.results[0].pose.covariance
         max_xy_variance = max(float(covariance[0]), float(covariance[7]))
         uncertainty = max(0.0, 1.0 - max_xy_variance / self.max_covariance)
         view = float(candidate.hazard.support_quality)
-        terms = (confidence, freshness, uncertainty, view)
-        return min(1.0, max(0.0, sum(w * term for w, term in zip(self.quality_weights, terms))))
+        communication = self._communication_score(candidate.source_id)
+        values = (confidence, freshness, uncertainty, view, communication)
+        score = min(
+            1.0,
+            max(
+                0.0,
+                sum(weight * value for weight, value in zip(self.quality_weights, values)),
+            ),
+        )
+        return QualityTerms(
+            confidence=confidence,
+            freshness=freshness,
+            uncertainty=uncertainty,
+            view=view,
+            communication=communication,
+            score=score,
+        )
 
-    def _evidence_selection_key(
-        self, candidate: StoredHazard, now_ns: int
-    ) -> tuple[float, int, float, int, str]:
-        return (
-            self._quality_score(candidate, now_ns),
+    def _quality_score(self, candidate: StoredHazard, now_ns: int) -> float:
+        return self._quality_terms(candidate, now_ns).score
+
+    def _prefer_candidate(
+        self,
+        candidate: StoredHazard,
+        current: StoredHazard,
+        *,
+        now_ns: int,
+    ) -> bool:
+        candidate_score = self._quality_score(candidate, now_ns)
+        current_score = self._quality_score(current, now_ns)
+        if candidate_score > current_score + self.selection_score_epsilon:
+            return True
+        if current_score > candidate_score + self.selection_score_epsilon:
+            return False
+        candidate_key = (
+            candidate.acquisition_stamp_ns,
             candidate.last_seen_ns,
-            float(candidate.hazard.detection.results[0].hypothesis.score),
-            -candidate.source_order,
-            candidate.detection_id,
+            _class_key(candidate.hazard),
+            _xy(candidate.hazard),
+        )
+        current_key = (
+            current.acquisition_stamp_ns,
+            current.last_seen_ns,
+            _class_key(current.hazard),
+            _xy(current.hazard),
+        )
+        return candidate_key > current_key
+
+    def _select_representative(
+        self,
+        evidence: list[StoredHazard],
+        *,
+        now_ns: int,
+    ) -> StoredHazard:
+        ordered = sorted(
+            evidence,
+            key=lambda candidate: (candidate.source_order, candidate.detection_id),
+        )
+        selected = ordered[0]
+        selected_score = self._quality_score(selected, now_ns)
+        for candidate in ordered[1:]:
+            candidate_score = self._quality_score(candidate, now_ns)
+            if candidate_score > selected_score + self.selection_score_epsilon:
+                selected = candidate
+                selected_score = candidate_score
+        return selected
+
+    def diagnostic_summary(self) -> str:
+        selected = ",".join(
+            f"{source_id}:{self.diagnostics.selected_sources[source_id]}"
+            for source_id in self.source_order
+        )
+        communication = ",".join(
+            f"{source_id}:{self._communication_score(source_id):.2f}"
+            for source_id in self.source_order
+        )
+        return (
+            f"tracks={self.track_count} selected=[{selected}] "
+            f"stale_rejected={self.diagnostics.stale_source_rejections} "
+            f"dropped={self.diagnostics.dropped_source_evidence} "
+            f"expired_evidence={self.diagnostics.expired_source_evidence} "
+            f"source_timeouts={self.diagnostics.source_timeouts} "
+            f"no_fresh={self.diagnostics.no_fresh_source_available} "
+            f"expired_tracks={self.diagnostics.expired_tracks} "
+            f"configured_comm=[{communication}]"
         )
 
     def _source_sort_key(self, source_id: str) -> tuple[int, str]:
@@ -778,7 +1028,14 @@ class SupportHazardFusion(Node):
         self.publish_rate_hz = float(
             self.declare_parameter("publish_rate_hz", DEFAULT_PUBLISH_RATE_HZ).value
         )
+        self.diagnostic_period_s = float(
+            self.declare_parameter(
+                "diagnostic_period_s", DEFAULT_DIAGNOSTIC_PERIOD_S
+            ).value
+        )
         core_parameters = {
+            "max_source_age_s": DEFAULT_MAX_SOURCE_AGE_S,
+            "source_timeout_s": DEFAULT_SOURCE_TIMEOUT_S,
             "association_time_window_s": DEFAULT_ASSOCIATION_TIME_WINDOW_S,
             "association_chi2_xy": DEFAULT_ASSOCIATION_CHI2_XY,
             "association_max_distance_m": DEFAULT_ASSOCIATION_MAX_DISTANCE_M,
@@ -792,6 +1049,8 @@ class SupportHazardFusion(Node):
             "quality_weight_freshness": DEFAULT_QUALITY_WEIGHT_FRESHNESS,
             "quality_weight_uncertainty": DEFAULT_QUALITY_WEIGHT_UNCERTAINTY,
             "quality_weight_view": DEFAULT_QUALITY_WEIGHT_VIEW,
+            "quality_weight_communication": DEFAULT_QUALITY_WEIGHT_COMMUNICATION,
+            "selection_score_epsilon": DEFAULT_SELECTION_SCORE_EPSILON,
         }
         configured = {
             name: self.declare_parameter(name, default).value
@@ -799,10 +1058,36 @@ class SupportHazardFusion(Node):
         }
         if not math.isfinite(self.publish_rate_hz) or self.publish_rate_hz <= 0.0:
             raise ValueError("publish_rate_hz must be finite and greater than zero")
+        if (
+            not math.isfinite(self.diagnostic_period_s)
+            or self.diagnostic_period_s <= 0.0
+        ):
+            raise ValueError("diagnostic_period_s must be finite and greater than zero")
+
+        source_communication_quality = {
+            source_id: float(
+                self.declare_parameter(
+                    f"{source_id}_communication_quality",
+                    DEFAULT_SOURCE_COMMUNICATION_QUALITY,
+                ).value
+            )
+            for source_id in ("dji1", "dji2")
+        }
+        source_communication_penalty = {
+            source_id: float(
+                self.declare_parameter(
+                    f"{source_id}_communication_penalty",
+                    DEFAULT_SOURCE_COMMUNICATION_PENALTY,
+                ).value
+            )
+            for source_id in ("dji1", "dji2")
+        }
 
         self._core = HazardFusionCore(
             stale_timeout_s=self.stale_timeout_s,
             max_covariance=self.max_covariance,
+            source_communication_quality=source_communication_quality,
+            source_communication_penalty=source_communication_penalty,
             **configured,
         )
         qos = QoSProfile(
@@ -826,12 +1111,16 @@ class SupportHazardFusion(Node):
                 qos,
             )
         self.create_timer(1.0 / self.publish_rate_hz, self._on_timer)
+        self.create_timer(self.diagnostic_period_s, self._on_diagnostics)
         self.get_logger().info(
             "[support_hazard_fusion] Started: "
             f"dji1={self.dji1_topic}, dji2={'on' if self.dji2_enable else 'off'}, "
             f"output={self.output_topic}, tracks<={self._core.max_track_count}, "
             f"association=({self._core.association_time_window_s:.2f}s,"
             f"chi2={self._core.association_chi2_xy:.3f}), "
+            f"source_age<={self._core.max_source_age_s:.2f}s, "
+            f"source_timeout={self._core.source_timeout_s:.2f}s, "
+            f"communication=configured-only(weight={self._core.quality_weights[4]:.2f}), "
             f"publish_rate_hz={self.publish_rate_hz:.1f}"
         )
 
@@ -849,6 +1138,11 @@ class SupportHazardFusion(Node):
     def _on_timer(self) -> None:
         self._publisher.publish(
             self._core.build_output(now_ns=int(self.get_clock().now().nanoseconds))
+        )
+
+    def _on_diagnostics(self) -> None:
+        self.get_logger().info(
+            f"[support_hazard_fusion] {self._core.diagnostic_summary()}"
         )
 
 

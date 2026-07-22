@@ -250,6 +250,16 @@ def generate_launch_description():
         'hazard_fusion_stale_timeout_s',
         default_value='0.75',
     )
+    hazard_fusion_max_source_age_s_arg = DeclareLaunchArgument(
+        'hazard_fusion_max_source_age_s',
+        default_value='0.75',
+        description='Maximum acquisition timestamp age accepted from a source.',
+    )
+    hazard_fusion_source_timeout_s_arg = DeclareLaunchArgument(
+        'hazard_fusion_source_timeout_s',
+        default_value='0.75',
+        description='Remove cached evidence after this source callback timeout.',
+    )
     hazard_fusion_max_covariance_arg = DeclareLaunchArgument(
         'hazard_fusion_max_covariance',
         default_value='4.0',
@@ -309,6 +319,36 @@ def generate_launch_description():
     hazard_fusion_quality_weight_view_arg = DeclareLaunchArgument(
         'hazard_fusion_quality_weight_view',
         default_value='0.15',
+    )
+    hazard_fusion_quality_weight_communication_arg = DeclareLaunchArgument(
+        'hazard_fusion_quality_weight_communication',
+        default_value='0.0',
+        description='Configured communication-quality score weight; no live metric is inferred.',
+    )
+    hazard_fusion_selection_score_epsilon_arg = DeclareLaunchArgument(
+        'hazard_fusion_selection_score_epsilon',
+        default_value='0.01',
+        description='Score differences within this threshold use deterministic source order.',
+    )
+    hazard_fusion_dji1_communication_quality_arg = DeclareLaunchArgument(
+        'hazard_fusion_dji1_communication_quality',
+        default_value='1.0',
+    )
+    hazard_fusion_dji2_communication_quality_arg = DeclareLaunchArgument(
+        'hazard_fusion_dji2_communication_quality',
+        default_value='1.0',
+    )
+    hazard_fusion_dji1_communication_penalty_arg = DeclareLaunchArgument(
+        'hazard_fusion_dji1_communication_penalty',
+        default_value='0.0',
+    )
+    hazard_fusion_dji2_communication_penalty_arg = DeclareLaunchArgument(
+        'hazard_fusion_dji2_communication_penalty',
+        default_value='0.0',
+    )
+    hazard_fusion_diagnostic_period_s_arg = DeclareLaunchArgument(
+        'hazard_fusion_diagnostic_period_s',
+        default_value='5.0',
     )
     ugv_forward_enable_arg = DeclareLaunchArgument('ugv_forward_enable', default_value='true')
     ugv_forward_owner_arg = DeclareLaunchArgument('ugv_forward_owner', default_value='dji0')
@@ -762,8 +802,17 @@ def generate_launch_description():
                 'dji2_enable': LaunchConfiguration('hazard_fusion_dji2_enable'),
                 'output_topic': LaunchConfiguration('hazard_fusion_out_topic'),
                 'stale_timeout_s': LaunchConfiguration('hazard_fusion_stale_timeout_s'),
+                'max_source_age_s': LaunchConfiguration(
+                    'hazard_fusion_max_source_age_s'
+                ),
+                'source_timeout_s': LaunchConfiguration(
+                    'hazard_fusion_source_timeout_s'
+                ),
                 'max_covariance': LaunchConfiguration('hazard_fusion_max_covariance'),
                 'publish_rate_hz': LaunchConfiguration('hazard_fusion_publish_rate_hz'),
+                'diagnostic_period_s': LaunchConfiguration(
+                    'hazard_fusion_diagnostic_period_s'
+                ),
                 'association_time_window_s': LaunchConfiguration(
                     'hazard_fusion_association_time_window_s'
                 ),
@@ -798,6 +847,24 @@ def generate_launch_description():
                 ),
                 'quality_weight_view': LaunchConfiguration(
                     'hazard_fusion_quality_weight_view'
+                ),
+                'quality_weight_communication': LaunchConfiguration(
+                    'hazard_fusion_quality_weight_communication'
+                ),
+                'selection_score_epsilon': LaunchConfiguration(
+                    'hazard_fusion_selection_score_epsilon'
+                ),
+                'dji1_communication_quality': LaunchConfiguration(
+                    'hazard_fusion_dji1_communication_quality'
+                ),
+                'dji2_communication_quality': LaunchConfiguration(
+                    'hazard_fusion_dji2_communication_quality'
+                ),
+                'dji1_communication_penalty': LaunchConfiguration(
+                    'hazard_fusion_dji1_communication_penalty'
+                ),
+                'dji2_communication_penalty': LaunchConfiguration(
+                    'hazard_fusion_dji2_communication_penalty'
                 ),
             }
         ],
@@ -897,8 +964,11 @@ def generate_launch_description():
         hazard_fusion_dji2_enable_arg,
         hazard_fusion_out_topic_arg,
         hazard_fusion_stale_timeout_s_arg,
+        hazard_fusion_max_source_age_s_arg,
+        hazard_fusion_source_timeout_s_arg,
         hazard_fusion_max_covariance_arg,
         hazard_fusion_publish_rate_hz_arg,
+        hazard_fusion_diagnostic_period_s_arg,
         hazard_fusion_association_time_window_s_arg,
         hazard_fusion_association_chi2_xy_arg,
         hazard_fusion_association_max_distance_m_arg,
@@ -912,6 +982,12 @@ def generate_launch_description():
         hazard_fusion_quality_weight_freshness_arg,
         hazard_fusion_quality_weight_uncertainty_arg,
         hazard_fusion_quality_weight_view_arg,
+        hazard_fusion_quality_weight_communication_arg,
+        hazard_fusion_selection_score_epsilon_arg,
+        hazard_fusion_dji1_communication_quality_arg,
+        hazard_fusion_dji2_communication_quality_arg,
+        hazard_fusion_dji1_communication_penalty_arg,
+        hazard_fusion_dji2_communication_penalty_arg,
         ugv_forward_enable_arg,
         ugv_forward_owner_arg,
         ugv_forward_stage_arg,
