@@ -276,6 +276,10 @@ ros2 run lrs_halmstad support_hazard_evidence live \
 
 Expected evidence: non-empty dji1, dji0, and UGV typed topics; exact dji0→UGV forwarding; a source-matched covariance; acquisition age; selected source; state history; JSON/CSV/timeline files; and the separate `support_hazard` bag. This validates typed transport and the already implemented geometry contract only. Runtime success must be judged from the actual terminal output and bag.
 
+A bounded headless Baylands run on 2026-07-22 recorded detector output, but the sampled records remained `valid:false`. The projector received detector messages but produced zero successful projections and therefore published no dji1 typed hazards; dji0 and the UGV published only empty arrays. This is retained as an optional live-validation limitation, not a Task 8 implementation failure and not evidence of end-to-end runtime success. The generated report and bag remain under ignored `bags/validation/` and `bags/experiments/` paths. Do not infer detector accuracy from this run, and do not change projector geometry solely to force a positive result.
+
+Task 8 completion is based on the deterministic synthetic/replayed typed-message checks below for Task 6 association/confirmation/conflict and Task 7 freshness/source selection/expiry. Optional live Task 5, dji2, and costmap runs provide additional runtime evidence only when their own verifier reports pass.
+
 ### 2. Task 6 multi-source association, confirmation, and conflict — deterministic non-simulation
 
 ```bash

@@ -81,6 +81,8 @@ Task 5 real RGB-D projection is separately opt-in with `hazard_projector_enable:
 
 Task 8 packages bounded future-work evidence without changing those defaults. `./run.sh validate_support_hazards scenario:=...` runs deterministic non-simulation Task 6/7 fixtures, and `support_hazard_evidence` validates live or recorded typed flow into timestamped JSON/CSV/timeline outputs under ignored `bags/validation/`. The harness does not add perception, motion planning, or thesis-result claims; dji2 and the aerial costmap remain explicit opt-ins. See `src/lrs_halmstad/README.md` for exact commands and evidence limits.
 
+The first bounded headless Task 5 live run produced detector records with `valid:false` and no dji1 typed hazard. It is documented as optional live-runtime limitation evidence, while deterministic synthetic/replayed Task 6/7 checks remain the Task 8 pass basis; it is not an end-to-end success or detector-accuracy result.
+
 The rest of this README contains older reference material and may be stale compared with the two files above.
 
 Running experiments (current runbook)
