@@ -237,6 +237,11 @@ def generate_launch_description():
         'hazard_fusion_dji2_topic',
         default_value='/coord/support/dji2/aerial_hazards',
     )
+    hazard_fusion_dji2_enable_arg = DeclareLaunchArgument(
+        'hazard_fusion_dji2_enable',
+        default_value='false',
+        description='Opt in to dji2 typed fusion evidence; legacy dji2 C4 behavior is separate.',
+    )
     hazard_fusion_out_topic_arg = DeclareLaunchArgument(
         'hazard_fusion_out_topic',
         default_value='/coord/dji0/aerial_hazards',
@@ -252,6 +257,58 @@ def generate_launch_description():
     hazard_fusion_publish_rate_hz_arg = DeclareLaunchArgument(
         'hazard_fusion_publish_rate_hz',
         default_value='10.0',
+    )
+    hazard_fusion_association_time_window_s_arg = DeclareLaunchArgument(
+        'hazard_fusion_association_time_window_s',
+        default_value='0.75',
+    )
+    hazard_fusion_association_chi2_xy_arg = DeclareLaunchArgument(
+        'hazard_fusion_association_chi2_xy',
+        default_value='5.991',
+    )
+    hazard_fusion_association_max_distance_m_arg = DeclareLaunchArgument(
+        'hazard_fusion_association_max_distance_m',
+        default_value='1.5',
+    )
+    hazard_fusion_association_require_footprint_overlap_arg = DeclareLaunchArgument(
+        'hazard_fusion_association_require_footprint_overlap',
+        default_value='false',
+    )
+    hazard_fusion_confirmation_window_s_arg = DeclareLaunchArgument(
+        'hazard_fusion_confirmation_window_s',
+        default_value='2.0',
+    )
+    hazard_fusion_single_source_confirm_hits_arg = DeclareLaunchArgument(
+        'hazard_fusion_single_source_confirm_hits',
+        default_value='2',
+    )
+    hazard_fusion_track_timeout_s_arg = DeclareLaunchArgument(
+        'hazard_fusion_track_timeout_s',
+        default_value='2.0',
+    )
+    hazard_fusion_max_track_count_arg = DeclareLaunchArgument(
+        'hazard_fusion_max_track_count',
+        default_value='256',
+    )
+    hazard_fusion_conflict_max_dimension_ratio_arg = DeclareLaunchArgument(
+        'hazard_fusion_conflict_max_dimension_ratio',
+        default_value='3.0',
+    )
+    hazard_fusion_quality_weight_confidence_arg = DeclareLaunchArgument(
+        'hazard_fusion_quality_weight_confidence',
+        default_value='0.35',
+    )
+    hazard_fusion_quality_weight_freshness_arg = DeclareLaunchArgument(
+        'hazard_fusion_quality_weight_freshness',
+        default_value='0.25',
+    )
+    hazard_fusion_quality_weight_uncertainty_arg = DeclareLaunchArgument(
+        'hazard_fusion_quality_weight_uncertainty',
+        default_value='0.25',
+    )
+    hazard_fusion_quality_weight_view_arg = DeclareLaunchArgument(
+        'hazard_fusion_quality_weight_view',
+        default_value='0.15',
     )
     ugv_forward_enable_arg = DeclareLaunchArgument('ugv_forward_enable', default_value='true')
     ugv_forward_owner_arg = DeclareLaunchArgument('ugv_forward_owner', default_value='dji0')
@@ -702,10 +759,46 @@ def generate_launch_description():
                 'use_sim_time': True,
                 'dji1_topic': LaunchConfiguration('hazard_fusion_dji1_topic'),
                 'dji2_topic': LaunchConfiguration('hazard_fusion_dji2_topic'),
+                'dji2_enable': LaunchConfiguration('hazard_fusion_dji2_enable'),
                 'output_topic': LaunchConfiguration('hazard_fusion_out_topic'),
                 'stale_timeout_s': LaunchConfiguration('hazard_fusion_stale_timeout_s'),
                 'max_covariance': LaunchConfiguration('hazard_fusion_max_covariance'),
                 'publish_rate_hz': LaunchConfiguration('hazard_fusion_publish_rate_hz'),
+                'association_time_window_s': LaunchConfiguration(
+                    'hazard_fusion_association_time_window_s'
+                ),
+                'association_chi2_xy': LaunchConfiguration(
+                    'hazard_fusion_association_chi2_xy'
+                ),
+                'association_max_distance_m': LaunchConfiguration(
+                    'hazard_fusion_association_max_distance_m'
+                ),
+                'association_require_footprint_overlap': LaunchConfiguration(
+                    'hazard_fusion_association_require_footprint_overlap'
+                ),
+                'confirmation_window_s': LaunchConfiguration(
+                    'hazard_fusion_confirmation_window_s'
+                ),
+                'single_source_confirm_hits': LaunchConfiguration(
+                    'hazard_fusion_single_source_confirm_hits'
+                ),
+                'track_timeout_s': LaunchConfiguration('hazard_fusion_track_timeout_s'),
+                'max_track_count': LaunchConfiguration('hazard_fusion_max_track_count'),
+                'conflict_max_dimension_ratio': LaunchConfiguration(
+                    'hazard_fusion_conflict_max_dimension_ratio'
+                ),
+                'quality_weight_confidence': LaunchConfiguration(
+                    'hazard_fusion_quality_weight_confidence'
+                ),
+                'quality_weight_freshness': LaunchConfiguration(
+                    'hazard_fusion_quality_weight_freshness'
+                ),
+                'quality_weight_uncertainty': LaunchConfiguration(
+                    'hazard_fusion_quality_weight_uncertainty'
+                ),
+                'quality_weight_view': LaunchConfiguration(
+                    'hazard_fusion_quality_weight_view'
+                ),
             }
         ],
     )
@@ -801,10 +894,24 @@ def generate_launch_description():
         hazard_fusion_enable_arg,
         hazard_fusion_dji1_topic_arg,
         hazard_fusion_dji2_topic_arg,
+        hazard_fusion_dji2_enable_arg,
         hazard_fusion_out_topic_arg,
         hazard_fusion_stale_timeout_s_arg,
         hazard_fusion_max_covariance_arg,
         hazard_fusion_publish_rate_hz_arg,
+        hazard_fusion_association_time_window_s_arg,
+        hazard_fusion_association_chi2_xy_arg,
+        hazard_fusion_association_max_distance_m_arg,
+        hazard_fusion_association_require_footprint_overlap_arg,
+        hazard_fusion_confirmation_window_s_arg,
+        hazard_fusion_single_source_confirm_hits_arg,
+        hazard_fusion_track_timeout_s_arg,
+        hazard_fusion_max_track_count_arg,
+        hazard_fusion_conflict_max_dimension_ratio_arg,
+        hazard_fusion_quality_weight_confidence_arg,
+        hazard_fusion_quality_weight_freshness_arg,
+        hazard_fusion_quality_weight_uncertainty_arg,
+        hazard_fusion_quality_weight_view_arg,
         ugv_forward_enable_arg,
         ugv_forward_owner_arg,
         ugv_forward_stage_arg,

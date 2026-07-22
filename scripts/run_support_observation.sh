@@ -17,6 +17,8 @@ DETECTOR_ONNX_MODEL="$DEFAULT_ONNX_MODEL"
 YOLO_WEIGHTS="$DEFAULT_YOLO_WEIGHTS"
 YOLO_DEVICE="auto"
 DJI2_ENABLE=true
+DJI2_ENABLE_EXPLICIT=false
+HAZARD_FUSION_ENABLE=false
 EXTRA_ARGS=()
 
 sim_helper_running() {
@@ -128,6 +130,11 @@ for arg in "$@"; do
       ;;
     dji2_enable:=*)
       DJI2_ENABLE="${arg#dji2_enable:=}"
+      DJI2_ENABLE_EXPLICIT=true
+      EXTRA_ARGS+=("$arg")
+      ;;
+    hazard_fusion_enable:=*)
+      HAZARD_FUSION_ENABLE="${arg#hazard_fusion_enable:=}"
       EXTRA_ARGS+=("$arg")
       ;;
     *)
@@ -135,6 +142,11 @@ for arg in "$@"; do
       ;;
   esac
 done
+
+if [ "$HAZARD_FUSION_ENABLE" = true ] && [ "$DJI2_ENABLE_EXPLICIT" = false ]; then
+  DJI2_ENABLE=false
+  EXTRA_ARGS+=("dji2_enable:=false")
+fi
 
 set +u
 source /opt/ros/jazzy/setup.bash

@@ -64,7 +64,7 @@ Current important notes:
 
 Optional typed support-hazard chain
 -----------------------------------
-The typed hazard path is opt-in and does not change the legacy C4 support topics by default. When enabled, it selects validated map-frame hazards from dji1/dji2, publishes them at dji0, and can forward them to the UGV:
+The typed hazard path is opt-in and does not change the legacy C4 support topics by default. When enabled, dji0 associates validated map-frame evidence, assigns stable fused track IDs, promotes repeated or consistent two-source evidence, publishes it at dji0, and can forward it to the UGV:
 
 ```bash
 ./run.sh support_observation baylands \
@@ -72,6 +72,8 @@ The typed hazard path is opt-in and does not change the legacy C4 support topics
 ```
 
 The typed topics are `/coord/support/dji1/aerial_hazards`, `/coord/support/dji2/aerial_hazards`, `/coord/dji0/aerial_hazards`, and `/coord/ugv/aerial_hazards`. The same opt-in arguments are accepted by `./run.sh tmux_support_chain baylands`.
+
+Typed dji2 fusion evidence is separately opt-in with `hazard_fusion_dji2_enable:=true`; the default typed workflow consumes dji1 only. This does not remove the legacy C4 dji2 path. Task 6 uses conservative source selection and never averages estimates or reduces the selected covariance.
 
 Closed-loop synthetic hazard validation is also opt-in. `hazard_chain_enable:=true` enables fusion and forwarding, `hazard_synthetic_enable:=true` starts one deterministic dji1 source, and `aerial_support_layer_enable:=true` enables the Baylands global-costmap layer only. The layer remains disabled by default, and no raw images are included in the `support_hazard` rosbag profile. See `src/lrs_halmstad/README.md` for the interactive runbook and bounded evidence commands.
 

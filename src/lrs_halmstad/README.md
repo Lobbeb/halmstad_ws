@@ -47,13 +47,13 @@ Optional typed support-hazard topics:
 - `/coord/dji0/aerial_hazards`
 - `/coord/ugv/aerial_hazards`
 
-The typed path is disabled by default. Enable its conservative map-frame selector and UGV forwarding explicitly when running the support overlay:
+The typed path is disabled by default. Enable its map-frame association/fusion and UGV forwarding explicitly when running the support overlay:
 
 ```bash
 ./run.sh support_observation baylands hazard_fusion_enable:=true hazard_forward_enable:=true
 ```
 
-The path validates age, TTL, dimensions, confidence, and covariance, then selects a pass-through source by state, freshness, quality, and deterministic source order. RGB/depth perception remains out of scope. The Baylands global costmap can consume the typed UGV output only when explicitly enabled below.
+The path validates age, TTL, dimensions, confidence, and covariance, associates class-compatible observations in time and XY, and assigns deterministic dji0 track IDs. First evidence is tentative; repeated single-UAV evidence or consistent two-UAV evidence confirms a track; incompatible overlapping cross-UAV evidence is marked conflict. Estimate selection remains conservative: one fresh acceptable source is forwarded without averaging or covariance reduction. Typed dji2 evidence is disabled unless `hazard_fusion_dji2_enable:=true` is supplied. The Baylands global costmap can consume the typed UGV output only when explicitly enabled below.
 
 ## Task 4: interactive synthetic hazard validation
 
@@ -152,6 +152,53 @@ ros2 run tf2_ros tf2_echo map dji1/camera0/image_optical_frame -t <acquisition_s
 ```
 
 The `support_hazard` bag remains image-free but now also records dji1 hazard detector metadata, dji1 simulation pose contracts, and `/tf`. Use a separate, short diagnostic bag for RGB/depth/CameraInfo only when timestamp or depth debugging is required.
+
+## Task 6: multi-source association and confirmation
+
+Task 6 upgrades only the typed dji0 fusion stage. It keeps at most one latest observation per source and a bounded number of fused tracks; it does not retain unbounded observation history. Association requires a compatible class and timestamp window, then uses an XY Mahalanobis gate when the covariance is usable or a Euclidean fallback when it is singular. `hazard_fusion_association_require_footprint_overlap:=true` adds an oriented XY-footprint overlap requirement.
+
+The initial parameters are:
+
+- `hazard_fusion_dji2_enable:=false`
+- `hazard_fusion_association_time_window_s:=0.75`
+- `hazard_fusion_association_chi2_xy:=5.991`
+- `hazard_fusion_association_max_distance_m:=1.5`
+- `hazard_fusion_association_require_footprint_overlap:=false`
+- `hazard_fusion_confirmation_window_s:=2.0`
+- `hazard_fusion_single_source_confirm_hits:=2`
+- `hazard_fusion_track_timeout_s:=2.0`
+- `hazard_fusion_max_track_count:=256`
+- `hazard_fusion_conflict_max_dimension_ratio:=3.0`
+- quality weights: confidence `0.35`, freshness `0.25`, uncertainty `0.25`, view quality `0.15`; the four weights must sum to one.
+
+There is no communication-quality term in Task 6. The selected source covariance is copied unchanged; agreement affects confirmation state and source attribution, not numerical precision.
+
+For a bounded, non-simulation two-source typed check, use four sourced terminals. This uses deterministic publishers and does not require a live dji2 vehicle:
+
+```bash
+# Terminal 1: fusion, with typed dji2 evidence explicitly enabled
+ros2 run lrs_halmstad support_hazard_fusion --ros-args \
+  -p use_sim_time:=false -p dji2_enable:=true
+
+# Terminal 2: dji1 evidence
+ros2 run lrs_halmstad synthetic_hazard_publisher --ros-args \
+  -p use_sim_time:=false \
+  -p topic:=/coord/support/dji1/aerial_hazards -p source_uav:=dji1 \
+  -p stable_track_id:=dji1_fixture -p class_name:=hazard \
+  -p center_x:=4.0 -p center_y:=5.0
+
+# Terminal 3: consistent dji2 evidence for the same object
+ros2 run lrs_halmstad synthetic_hazard_publisher --ros-args \
+  -p use_sim_time:=false \
+  -p topic:=/coord/support/dji2/aerial_hazards -p source_uav:=dji2 \
+  -p stable_track_id:=dji2_fixture -p class_name:=hazard \
+  -p center_x:=4.2 -p center_y:=5.1
+
+# Terminal 4: expect one stable CONFIRMED dji0 track with both source_uavs
+ros2 topic echo /coord/dji0/aerial_hazards --once
+```
+
+An optional/heavy live two-UAV Baylands run must explicitly opt in to both the legacy support slot and typed fusion with `dji2_enable:=true hazard_fusion_dji2_enable:=true`. Task 6 does not require that run and does not add a real dji2 RGB-D projector. No detector-accuracy, environmental-hazard perception, or closed-loop navigation-success claim follows from the synthetic association check.
 
 OMNeT++ network metrics topics (published by `omnet_metrics_bridge` when OMNeT is running,
 requires `start_omnet_bridge:=true` in `run_follow.launch.py`; all `std_msgs/Float64`, ~10 Hz):

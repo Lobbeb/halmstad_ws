@@ -131,3 +131,37 @@ def test_task5_tmux_disables_dji2_without_changing_legacy_default():
     assert "wait_for_topic_message /dji2/pose" in legacy_output
     assert "dji2_enable:=true" in legacy_output
     assert "support_bridge_gimbal:=true" not in legacy_output
+
+
+def test_task6_typed_dji2_fusion_is_separately_opt_in():
+    default_output = _dry_run(
+        [
+            "tmux_support_chain",
+            "baylands",
+            "mode:=follow",
+            "dry_run:=true",
+            "tmux_attach:=false",
+            "gui:=false",
+            "record:=false",
+            "hazard_chain_enable:=true",
+        ]
+    )
+    output = _dry_run(
+        [
+            "tmux_support_chain",
+            "baylands",
+            "mode:=follow",
+            "dry_run:=true",
+            "tmux_attach:=false",
+            "gui:=false",
+            "record:=false",
+            "hazard_chain_enable:=true",
+            "dji2_enable:=true",
+            "hazard_fusion_dji2_enable:=true",
+        ]
+    )
+
+    assert "dji2_enable:=false" in default_output
+    assert "wait_for_topic_message /dji2/pose" not in default_output
+    assert "dji2_enable:=true" in output
+    assert "hazard_fusion_dji2_enable:=true" in output
