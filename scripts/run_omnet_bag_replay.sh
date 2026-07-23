@@ -73,6 +73,33 @@ print(f"{duration + 1.0:.3f}")
 PY
 }
 
+wait_for_tcp_server() {
+  local host="$1"
+  local port="$2"
+  local timeout_s="$3"
+  python3 - "$host" "$port" "$timeout_s" <<'PY'
+import socket
+import sys
+import time
+
+host = sys.argv[1]
+port = int(sys.argv[2])
+deadline = time.monotonic() + float(sys.argv[3])
+last_error = None
+
+while time.monotonic() < deadline:
+    try:
+        with socket.create_connection((host, port), timeout=0.5):
+            raise SystemExit(0)
+    except OSError as exc:
+        last_error = exc
+        time.sleep(0.1)
+
+print(f"Timed out waiting for TCP server at {host}:{port}: {last_error}", file=sys.stderr)
+raise SystemExit(1)
+PY
+}
+
 for arg in "$@"; do
   case "$arg" in
     help|-h|--help)
@@ -270,9 +297,12 @@ trap cleanup EXIT INT TERM
 
 "${POSE_CMD[@]}" >"$POSE_LOG" 2>&1 &
 pose_pid="$!"
-sleep 1
 if ! kill -0 "$pose_pid" 2>/dev/null; then
   echo "Pose replay server failed. See $POSE_LOG" >&2
+  exit 1
+fi
+if ! wait_for_tcp_server "127.0.0.1" "$POSE_PORT" 30; then
+  echo "Pose replay server did not become ready. See $POSE_LOG" >&2
   exit 1
 fi
 

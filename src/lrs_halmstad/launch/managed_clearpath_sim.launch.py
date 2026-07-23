@@ -207,11 +207,22 @@ def _resolve_world_sdf_path(pkg_lrs_halmstad: str, world_name: str) -> Path:
             raise RuntimeError(f"World file not found: {candidate}")
         return candidate.resolve()
 
-    world_file = world_name if world_name.endswith('.sdf') else f"{world_name}.sdf"
-    candidate = (Path(pkg_lrs_halmstad) / 'worlds' / world_file).resolve()
-    if not candidate.is_file():
-        raise RuntimeError(f"World file not found: {candidate}")
-    return candidate
+    worlds_dir = Path(pkg_lrs_halmstad) / 'worlds'
+    if world_name.endswith(('.sdf', '.world')):
+        candidates = [worlds_dir / world_name]
+    else:
+        candidates = [
+            worlds_dir / f"{world_name}.sdf",
+            worlds_dir / f"{world_name}.world",
+        ]
+
+    for candidate in candidates:
+        candidate = candidate.resolve()
+        if candidate.is_file():
+            return candidate
+
+    searched = ", ".join(str(path.resolve()) for path in candidates)
+    raise RuntimeError(f"World file not found. Searched: {searched}")
 
 
 def _prepare_world_launch_path(context, world_sdf_path: Path, world_name: str, real_time_factor: float) -> str:

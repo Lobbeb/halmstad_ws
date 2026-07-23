@@ -1043,6 +1043,17 @@ starts, you can increase the built-in warmup:
 - extra forwarded launch arguments
   - anything else is passed through to `spawn_uav_1to1.launch.py`
 
+Optional UAV 2D lidar for SLAM testing:
+
+```bash
+./run.sh spawn_uav baylands name:=dji0 next_to_ugv:=true height:=7 laser:=true laser_update_rate:=10 laser_max_range:=25
+./run.sh uav_slam uav:=dji0 scan_topic:=/dji0/laser0/scan
+```
+
+The laser is off by default. `laser:=true` enables both the model sensor and
+the single `/dji0/laser0/scan` bridge. `uav_slam` is experimental and does not
+feed follow control.
+
 ### `./run.sh localization`
 
 - positional `WORLD`

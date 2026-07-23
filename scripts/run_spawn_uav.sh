@@ -38,6 +38,14 @@ Common options:
   camera_update_rate:=20        Camera update rate.
   bridge_depth:=true|false      Bridge depth image. Default: false.
   bridge_gimbal:=true|false     Bridge Gazebo gimbal joint cmd topics. Default: false.
+  laser:=true|false             Alias for with_laser and bridge_laser. Default: false.
+  with_laser:=true|false        Attach optional 2D lidar to the UAV.
+  bridge_laser:=true|false      Bridge /<name>/<laser_name>/scan to ROS.
+  laser_name:=laser0            Laser namespace/name.
+  laser_update_rate:=10         Laser update rate.
+  laser_min_range:=0.2          Laser minimum range.
+  laser_max_range:=25.0         Laser maximum range.
+  laser_angle_deg:=180          Half angle in degrees; 180 gives a 360 degree scan.
   height:=7                     Alias for z.
   x:=... y:=... z:=... yaw:=... Spawn pose.
   next_to_ugv:=true|false       Compute spawn behind current UGV. Default: false.
@@ -60,6 +68,7 @@ Examples:
   ./run.sh spawn_uav baylands x:=0 y:=0 z:=7 yaw:=0
   ./run.sh spawn_uav baylands next_to_ugv:=true height:=7
   ./run.sh spawn_uav baylands camera_update_rate:=10 mount_pitch_deg:=45
+  ./run.sh spawn_uav baylands next_to_ugv:=true height:=7 laser:=true
 EOF
 }
 
@@ -225,6 +234,10 @@ for arg in "$@"; do
       ;;
     mount_pitch_deg:=*)
       ARGS+=("camera_pitch_offset_deg:=${arg#mount_pitch_deg:=}")
+      ;;
+    laser:=*)
+      laser_enabled="${arg#laser:=}"
+      ARGS+=("with_laser:=$laser_enabled" "bridge_laser:=$laser_enabled")
       ;;
     *)
       ARGS+=("$arg")

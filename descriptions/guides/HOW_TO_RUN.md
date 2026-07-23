@@ -354,6 +354,18 @@ cd ~/halmstad_ws
 are absolute. Default wait for `/follow_uav` is 3 seconds; use `wait_s:=1` or
 `no_wait:=true` if you know it is already active.
 
+### UAV SLAM laser test
+
+Spawn `dji0` with the optional 2D lidar and then start SLAM separately:
+
+```bash
+cd ~/halmstad_ws
+./run.sh spawn_uav baylands name:=dji0 next_to_ugv:=true height:=7 laser:=true laser_update_rate:=10 laser_max_range:=25
+./run.sh uav_slam uav:=dji0 scan_topic:=/dji0/laser0/scan
+```
+
+Normal UAV runs should omit `laser:=true`.
+
 ### Support UAVs (`dji1` och `dji2`) - capture båda samtidigt
 
 Starta först vanlig follow:

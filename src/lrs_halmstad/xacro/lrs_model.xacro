@@ -43,14 +43,14 @@
         <xacro:arg name="laser_rpy" default="0 0 0"/>
     </xacro:unless>
 
-    <xacro:arg name="laser_angle_deg" default="1"/>
+    <xacro:arg name="laser_angle_deg" default="180"/>
     <xacro:arg name="laser_min_range" default="0.2"/>
     <xacro:arg name="laser_max_range" default="40.0"/>
-    <xacro:arg name="laser_range_resolution" default="0."/>
+    <xacro:arg name="laser_range_resolution" default="0.01"/>
     <xacro:arg name="laser_update_rate" default="10"/>
     <xacro:arg name="laser_visualize" default="false"/>
     <xacro:arg name="laser_resolution" default="1"/>
-    <xacro:arg name="laser_frame_id" default="laser_frame"/>
+    <xacro:arg name="laser_frame_id" default="laser0_laser"/>
     <xacro:arg name="laser_topic" default="scan"/>
 
     <xacro:arg name="with_camera" default="false"/>

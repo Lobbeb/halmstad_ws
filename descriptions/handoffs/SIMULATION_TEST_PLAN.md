@@ -147,9 +147,9 @@ Main network metrics to keep in CSV/summary:
 Preferred thesis figures:
 
 - Campaign signal/loss summary: RSSI against true UAV-UGV distance, with PER on the right axis.
-- Link distance and radio-derived distance remain in the CSV summary, but are not default thesis figures.
-- C2 repetition averages: one combined time-series figure each for `simplex`, `duplex`, and `distance sweep`, averaged across routes with `--rep-average-plots`; the network panel shows RSSI with PER on the right axis.
-- Per-run combined figures only for debugging: distance plus RSSI/PER; link distance is not plotted.
+- Link distance and radio-derived distance remain as separate raw CSV/summary columns.
+- C2 repetition averages: one combined time-series figure each for `simplex`, `duplex`, and `distance sweep`, averaged across routes with `--rep-average-plots`; the distance panel shows true distance, the displayed radio-derived distance, and absolute distance error, while the network panel shows RSSI with PER on the right axis.
+- Per-run combined figures only for debugging: distance plus RSSI/PER; duplex figures use `link_distance_m` as the displayed `$d_r$` source.
 - Figures are generated without in-plot titles; use LaTeX captions instead.
 - Latency, SNIR, PDR, and jitter stay in `network_metrics_summary.csv`, but are usually not plotted because they add little separation in the current runs.
 
@@ -296,7 +296,7 @@ Plot one averaged C2 network time-series figure per repetition/condition:
   --rep-average-plots
 ```
 
-This writes only the three averaged C2 LoRa-network figures plus `network_metrics_summary.csv`. The distance panel also includes `leader_estimate` error when `/coord/leader_estimate` and UGV reference odom exist in the bag.
+This writes only the three averaged C2 LoRa-network figures plus `network_metrics_summary.csv`. The averaged network distance panel uses compact thesis notation: true 3D distance $d$, displayed radio-derived distance $d_r$, and absolute radio error $\Delta d = |d_r-d|$. For simplex and distance-sweep plots, `$d_r$` comes from `radio_distance_m`; for duplex plots, `$d_r$` comes from `link_distance_m`. The distance-sweep (`rep03`) figure also shows height delta $\Delta z$; horizontal distance and leader-localization error are omitted from these network figures to keep the thesis plots focused. Distance series use solid coloured lines and delta series dotted lines. Figures default to the thesis text width (312 pt, about 4.32 in), can use LaTeX text rendering with the thesis `newtx` font packages via `--usetex`, and place the distance legend to the right of the top panel; `--width` remains available as an override. Generated artifact paths are printed without prefixes for direct copy/paste.
 
 ```bash
 d=15 z=10 xy=10
@@ -332,8 +332,8 @@ It is not yet a full three-UAV ad hoc replay. A true C4 ad hoc analysis needs OM
 - Use `omnet_network:=lora-duplex` only for the allowed feedback comparison where UGV-to-UAV communication is part of the scenario.
 - Keep the current Baylands follow height/defaults unless the run notes say otherwise.
 - Exclude the first 30 seconds from plots and summary statistics.
-- In simplex runs, `/omnet/radio_distance` is RSSI/path-loss derived.
-- In duplex runs, `/omnet/radio_distance` is the decoded UGV-to-UAV LoRa payload.
+- In simplex and distance-sweep plots, `$d_r$` is read from `radio_distance_m`, which is RSSI/path-loss derived.
+- In duplex plots, `$d_r$` is read from `link_distance_m`; keep the raw CSV column distinction clear in thesis text.
 - Live collection still uses normal tmux scripts. Offline OMNeT replay from saved bags uses `./run.sh omnet_bag_replay`.
 - Offline replay batch collection uses `./run.sh omnet_bag_replay_batch`.
 - Offline replay plotting uses `./run.sh plot_network_metrics --offline-omnet`; default output is one campaign-level thesis figure, `network_metrics_summary.csv`, and `network_metrics_extremes.md`.

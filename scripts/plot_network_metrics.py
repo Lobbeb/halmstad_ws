@@ -48,6 +48,7 @@ ROS_METRIC_TOPICS = {
     "radio_distance_m": "/omnet/radio_distance",
 }
 METRIC_NAMES = ["link_distance_m", *ROS_METRIC_TOPICS.keys()]
+RADIO_DERIVED_DISTANCE_METRIC = "radio_derived_distance_m"
 CSV_TO_METRIC = {
     "link_distance_m": "link_distance_m",
     "rssi_dbm": "rssi_dbm",
@@ -83,7 +84,8 @@ C2_REP_LABELS = {
     "rep03": "Distance Sweep",
 }
 
-SINGLE_FIGURE_WIDTH_IN = 3.3
+# MasterThesis/classicthesis-config.tex sets the one-column text block to 312 pt.
+SINGLE_FIGURE_WIDTH_IN = 312.0 / 72.27
 SINGLE_FIGURE_HEIGHT_IN = 3.3
 TALL_FIGURE_HEIGHT_IN = 6.6
 
@@ -170,6 +172,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--z-max", type=float)
     parser.add_argument("--z-min", type=float)
     parser.add_argument("--font-size", type=float, default=11.0)
+    parser.add_argument("--usetex", action="store_true", help="Render plot text with LaTeX/newtx fonts. Requires latex on PATH.")
     parser.add_argument("--labelpad", type=float, default=2.0)
     parser.add_argument("--z-labelpad", type=float, default=0.0)
     parser.add_argument("--legend-x", type=float, default=0.5)
@@ -336,6 +339,8 @@ def configure_plot_style(args: argparse.Namespace) -> None:
         {
             "font.family": "serif",
             "font.serif": ["Nimbus Roman", "Liberation Serif", "Times New Roman", "Times", "DejaVu Serif"],
+            "text.usetex": args.usetex,
+            "text.latex.preamble": r"\usepackage[T1]{fontenc}\usepackage{newtxtext}\usepackage{newtxmath}" if args.usetex else "",
             "font.size": args.font_size,
             "axes.labelsize": args.font_size,
             "axes.titlesize": args.font_size,
@@ -360,6 +365,10 @@ def tall_figsize(args: argparse.Namespace, rows: int) -> tuple[float, float]:
     if rows <= 1:
         return single_figsize(args)
     return (args.width, max(args.height * rows, TALL_FIGURE_HEIGHT_IN))
+
+
+def per_axis_label(args: argparse.Namespace) -> str:
+    return r"PER (\%)" if args.usetex else "PER (%)"
 
 
 def route_label_from_run_dir(run_dir: Path) -> str:
@@ -641,8 +650,43 @@ def compute_estimate_errors(
     return errors
 
 
+def compute_radio_distance_errors(data: RunData, max_gap_s: float) -> list[tuple[float, float]]:
+    distance_times = [row[0] for row in data.distances]
+    errors: list[tuple[float, float]] = []
+    for metric_t, radio_distance in radio_derived_distance_series(data):
+        nearest_idx = bisect.bisect_left(distance_times, metric_t)
+        candidates = []
+        if nearest_idx < len(distance_times):
+            candidates.append(nearest_idx)
+        if nearest_idx > 0:
+            candidates.append(nearest_idx - 1)
+        if not candidates:
+            continue
+        best = min(candidates, key=lambda i: abs(distance_times[i] - metric_t))
+        if abs(distance_times[best] - metric_t) <= max_gap_s:
+            errors.append((metric_t, abs(radio_distance - data.distances[best][1])))
+    return errors
+
+
+def radio_derived_distance_metric(data: RunData) -> str:
+    """Choose the plotted d_r source for the active communication mode."""
+    if "duplex" in data.lora_mode.lower():
+        return "link_distance_m"
+    return "radio_distance_m"
+
+
+def radio_derived_distance_series(data: RunData) -> list[tuple[float, float]]:
+    return data.metrics.get(radio_derived_distance_metric(data), [])
+
+
+def metric_series(data: RunData, name: str) -> list[tuple[float, float]]:
+    if name == RADIO_DERIVED_DISTANCE_METRIC:
+        return radio_derived_distance_series(data)
+    return data.metrics.get(name, [])
+
+
 def metric_values(data: RunData, name: str) -> list[float]:
-    return [value for _t, value in data.metrics.get(name, []) if math.isfinite(value)]
+    return [value for _t, value in metric_series(data, name) if math.isfinite(value)]
 
 
 def mean_or_nan(values: list[float]) -> float:
@@ -692,11 +736,11 @@ def save_fig(fig: Any, stem: Path, args: argparse.Namespace) -> None:
     if adjust_kwargs:
         fig.subplots_adjust(**adjust_kwargs)
     fig.savefig(png, dpi=args.dpi)
-    print(f"png=", png, flush=True)
+    print(png, flush=True)
     if args.pdf:
         pdf = stem.with_suffix(".pdf")
         fig.savefig(pdf)
-        print(f"pdf={pdf}", flush=True)
+        print(pdf, flush=True)
 
 
 def save_metric_fig(fig: Any, stem: Path, suffix: str, args: argparse.Namespace) -> None:
@@ -708,6 +752,12 @@ def legend_outside(ax: Any, handles: list[Any] | None = None, labels: list[str] 
         handles, labels = ax.get_legend_handles_labels()
     if handles:
         ax.legend(handles, labels, frameon=False, loc="upper center", bbox_to_anchor=(0.5, 1.25), ncol=ncol)
+
+
+def legend_right(ax: Any) -> None:
+    handles, labels = ax.get_legend_handles_labels()
+    if handles:
+        ax.legend(handles, labels, frameon=False, loc="center left", bbox_to_anchor=(1.02, 0.5), ncol=1)
 
 
 def legend_ncol(args: argparse.Namespace, handles: list[Any]) -> int:
@@ -738,7 +788,17 @@ def expand_flat_ylim(ax: Any, values: list[float], *, floor_zero: bool = False) 
         pad = max(1.0, abs(v_max) * 0.05)
     else:
         pad = (v_max - v_min) * 0.08
-    ax.set_ylim(v_min - pad, v_max + pad)
+    lower = max(0.0, v_min - pad) if floor_zero else v_min - pad
+    ax.set_ylim(lower, v_max + pad)
+
+
+def expand_per_ylim(ax: Any, values: list[float]) -> None:
+    """Leave visual clearance below zero while retaining nonnegative PER ticks."""
+    expand_flat_ylim(ax, values, floor_zero=True)
+    upper = ax.get_ylim()[1]
+    nonnegative_ticks = [tick for tick in ax.get_yticks() if 0.0 <= tick <= upper]
+    ax.set_ylim(-0.5, upper)
+    ax.set_yticks(nonnegative_ticks)
 
 
 def title_prefix(data: RunData) -> str:
@@ -1057,9 +1117,9 @@ def plot_path_run(data: RunData, stem: Path, args: argparse.Namespace) -> None:
                 bottom=args.figure_bottom if args.figure_bottom is not None else 0.02,
             )
         ax = fig.add_subplot(111, projection="3d")
-        ax.set_xlabel("x (m)", labelpad=args.labelpad)
-        ax.set_ylabel("y (m)", labelpad=args.labelpad)
-        ax.set_zlabel("z (m)", labelpad=args.z_labelpad)
+        ax.set_xlabel("X (m)", labelpad=args.labelpad)
+        ax.set_ylabel("Y (m)", labelpad=args.labelpad)
+        ax.set_zlabel("Z (m)", labelpad=args.z_labelpad)
         ax.view_init(elev=args.view_elev, azim=args.view_azim)
         apply_3d_path_limits(ax, [data.ugv, data.uav, data.estimate], args)
         plot_timestamp_links_3d(ax, data, args)
@@ -1085,9 +1145,9 @@ def plot_path_run(data: RunData, stem: Path, args: argparse.Namespace) -> None:
         plot_pose_series_2d(ax, data.uav, args, series_name="uav", label="UAV", color="#4C78A8", linestyle=args.uav_linestyle, linewidth=path_linewidth(args, args.uav_linewidth), marker=args.uav_marker, alpha=0.8, zorder=3.0)
         plot_pose_series_2d(ax, data.estimate, args, series_name="estimate", label="Estimate", color="#F58518", linestyle=args.estimate_linestyle, linewidth=path_linewidth(args, args.estimate_linewidth), marker=args.estimate_marker, alpha=0.8, zorder=4.0)
         labels = {
-            "xy": ("x (m)", "y (m)"),
-            "xz": ("x (m)", "z (m)"),
-            "yz": ("y (m)", "z (m)"),
+            "xy": ("X (m)", "Y (m)"),
+            "xz": ("X (m)", "Z (m)"),
+            "yz": ("Y (m)", "Z (m)"),
         }
         ax.set_xlabel(labels[args.trajectory_plane][0], labelpad=args.labelpad)
         ax.set_ylabel(labels[args.trajectory_plane][1], labelpad=args.labelpad)
@@ -1295,9 +1355,9 @@ def plot_stacked_routes_3d(data_runs: list[RunData], out_root: Path, scope: str,
         route_handles.append(ax.plot([], [], [], color=color, linestyle="-", linewidth=1.4)[0])
         route_labels.append(label)
 
-    ax.set_xlabel("x (m)", labelpad=args.labelpad)
-    ax.set_ylabel("y (m)", labelpad=args.labelpad)
-    ax.set_zlabel("z (m)", labelpad=args.z_labelpad)
+    ax.set_xlabel("X (m)", labelpad=args.labelpad)
+    ax.set_ylabel("Y (m)", labelpad=args.labelpad)
+    ax.set_zlabel("Z (m)", labelpad=args.z_labelpad)
     ax.view_init(elev=args.view_elev, azim=args.view_azim)
     apply_3d_path_limits(ax, all_series, args)
     ax.grid(True, alpha=0.28)
@@ -1384,9 +1444,9 @@ def plot_stacked_routes(data_runs: list[RunData], out_root: Path, scope: str, ar
         return
 
     axis_labels = {
-        "xy": ("x (m)", "y (m)"),
-        "xz": ("x (m)", "z (m)"),
-        "yz": ("y (m)", "z (m)"),
+        "xy": ("X (m)", "Y (m)"),
+        "xz": ("X (m)", "Z (m)"),
+        "yz": ("Y (m)", "Z (m)"),
     }
     xlabel, ylabel = axis_labels[args.trajectory_plane]
     for ax, panel_label in zip(axes, ("UGV", "UAV")):
@@ -1448,7 +1508,7 @@ def plot_time_series(
     except Exception as exc:
         raise SystemExit(f"matplotlib is required: {exc}")
 
-    series = data.metrics.get(metric_name, [])
+    series = metric_series(data, metric_name)
     if not series:
         print(f"skip={stem.with_name(f'{stem.name}_{suffix}.png')} reason=no_{metric_name}_samples")
         return False
@@ -1457,7 +1517,7 @@ def plot_time_series(
     x = [t for t, _v in series]
     y = [v * scale for _t, v in series]
     ax.plot(x, y, color=color, marker="o", markersize=2.6, markeredgewidth=0.0, label=title)
-    ax.set_xlabel("time (s)")
+    ax.set_xlabel("Time (s)")
     ax.set_ylabel(ylabel)
     ax.grid(True, alpha=0.28)
     expand_flat_ylim(ax, y, floor_zero=floor_zero)
@@ -1475,7 +1535,7 @@ def plot_distance(data: RunData, stem: Path, args: argparse.Namespace) -> bool:
     except Exception as exc:
         raise SystemExit(f"matplotlib is required: {exc}")
 
-    if not data.distances and not data.metrics.get("radio_distance_m"):
+    if not data.distances and not radio_derived_distance_series(data):
         print(f"skip={stem.with_name(f'{stem.name}_distance.png')} reason=no_distance_samples")
         return False
 
@@ -1492,13 +1552,13 @@ def plot_distance(data: RunData, stem: Path, args: argparse.Namespace) -> bool:
         y_values.extend(d3)
         y_values.extend(xy)
         y_values.extend(dz)
-    radio = data.metrics.get("radio_distance_m", [])
+    radio = radio_derived_distance_series(data)
     if radio:
         y = [v for _t, v in radio]
         ax.plot([t for t, _v in radio], y, color="#F58518", marker="o", markersize=2.4, alpha=0.9, label="Radio Distance")
         y_values.extend(y)
-    ax.set_xlabel("time (s)")
-    ax.set_ylabel("distance (m)")
+    ax.set_xlabel("Time (s)")
+    ax.set_ylabel("Distance (m)")
     ax.grid(True, alpha=0.28)
     expand_flat_ylim(ax, y_values, floor_zero=True)
     legend_outside(ax)
@@ -1512,7 +1572,7 @@ def metric_vs_distance_points(data: RunData, metric_name: str, args: argparse.Na
     dist_d = [row[1] for row in data.distances]
     xs: list[float] = []
     ys: list[float] = []
-    for metric_t, value in data.metrics.get(metric_name, []):
+    for metric_t, value in metric_series(data, metric_name):
         nearest_idx = bisect.bisect_left(dist_t, metric_t)
         candidates = []
         if nearest_idx < len(dist_t):
@@ -1547,7 +1607,7 @@ def plot_metric_vs_distance(
     except Exception as exc:
         raise SystemExit(f"matplotlib is required: {exc}")
 
-    if not data.distances or not data.metrics.get(metric_name):
+    if not data.distances or not metric_series(data, metric_name):
         print(f"skip={stem.with_name(f'{stem.name}_{suffix}.png')} reason=no_distance_or_{metric_name}_samples")
         return False
     x, y_raw = metric_vs_distance_points(data, metric_name, args)
@@ -1558,7 +1618,7 @@ def plot_metric_vs_distance(
 
     fig, ax = plt.subplots(figsize=single_figsize(args))
     ax.scatter(x, y, s=22, alpha=0.72, color=color, edgecolors="none", label=title)
-    ax.set_xlabel("true UAV-UGV distance (m)")
+    ax.set_xlabel("True UAV-UGV Distance (m)")
     ax.set_ylabel(ylabel)
     ax.grid(True, alpha=0.28)
     expand_flat_ylim(ax, y, floor_zero=floor_zero)
@@ -1581,7 +1641,7 @@ def add_metric_line(
     marker: str | None = None,
     alpha: float = 0.95,
 ) -> list[float]:
-    series = data.metrics.get(metric_name, [])
+    series = metric_series(data, metric_name)
     if not series:
         return []
     x = [t for t, _v in series]
@@ -1620,40 +1680,40 @@ def plot_combined_run(data: RunData, stem: Path, args: argparse.Namespace) -> No
     if data.distances:
         t = [row[0] for row in data.distances]
         d3 = [row[1] for row in data.distances]
-        xy = [row[2] for row in data.distances]
-        dz = [row[3] for row in data.distances]
-        ax.plot(t, d3, color="#4C78A8", label="True 3D")
-        ax.plot(t, xy, color="#72B7B2", linestyle="--", label="Horizontal")
-        ax.plot(t, dz, color="#E45756", linestyle=":", label="Height Delta")
-        y_values.extend(d3 + xy + dz)
-    y_values.extend(add_metric_line(ax, data, "radio_distance_m", "Radio Estimate", "#F58518", marker="o", alpha=0.75))
-    estimate_errors = compute_estimate_errors(data.ugv, data.estimate, args.nearest_max_gap_s)
-    if estimate_errors:
-        y = [value for _t, value in estimate_errors]
-        ax.plot([t for t, _value in estimate_errors], y, color="#333333", linestyle="-.", alpha=0.85, label="Estimate Error")
+        ax.plot(t, d3, color="#4C78A8", label=r"$d$")
+        y_values.extend(d3)
+        if normalize_rep_label(data.rep) == "rep03":
+            dz = [row[3] for row in data.distances]
+            ax.plot(t, dz, color="#E45756", linestyle=":", label=r"$\Delta z$")
+            y_values.extend(dz)
+    y_values.extend(add_metric_line(ax, data, RADIO_DERIVED_DISTANCE_METRIC, r"$d_r$", "#F58518", alpha=0.9))
+    radio_errors = compute_radio_distance_errors(data, args.nearest_max_gap_s)
+    if radio_errors:
+        y = [value for _t, value in radio_errors]
+        ax.plot([t for t, _value in radio_errors], y, color="#333333", linestyle=":", alpha=0.85, label=r"$\Delta d$")
         y_values.extend(y)
-    ax.set_ylabel("distance (m)")
+    ax.set_ylabel("Distance (m)")
     if y_values:
         expand_flat_ylim(ax, y_values, floor_zero=True)
-        legend_outside(ax, ncol=1)
+        legend_right(ax)
     else:
         set_panel_empty(ax, "distance")
 
     # RSSI and PER panel. SNIR, latency, PDR, and jitter stay in CSV only.
     ax = axes[1]
     y_values = []
-    y_values.extend(add_metric_line(ax, data, "rssi_dbm", "RSSI", "#4C78A8", marker="o", alpha=0.8))
+    y_values.extend(add_metric_line(ax, data, "rssi_dbm", "RSSI", "#4C78A8", alpha=0.8))
     ax.set_ylabel("RSSI (dBm)")
     if y_values:
         expand_flat_ylim(ax, y_values)
     else:
         set_panel_empty(ax, "RSSI")
-    ax.set_xlabel("simulation time (s)")
+    ax.set_xlabel("Simulation Time (s)")
     ax2 = ax.twinx()
     per_values = add_metric_line(ax2, data, "per", "PER", "#E45756", scale=100.0, marker="o", alpha=0.8)
-    ax2.set_ylabel("PER (%)")
+    ax2.set_ylabel(per_axis_label(args), labelpad=args.labelpad + 6.0)
     if per_values:
-        expand_flat_ylim(ax2, per_values, floor_zero=True)
+        expand_per_ylim(ax2, per_values)
 
     for ax in axes:
         ax.grid(True, alpha=0.28)
@@ -1664,12 +1724,12 @@ def plot_combined_run(data: RunData, stem: Path, args: argparse.Namespace) -> No
 
 def plot_separate_run(data: RunData, stem: Path, args: argparse.Namespace) -> None:
     plot_distance(data, stem, args)
-    plot_time_series(data, stem, args, "radio_distance_m", "radio_distance", "radio distance", "distance (m)", "#F58518", floor_zero=True)
+    plot_time_series(data, stem, args, RADIO_DERIVED_DISTANCE_METRIC, "radio_distance", "Radio Distance", "Distance (m)", "#F58518", floor_zero=True)
     plot_time_series(data, stem, args, "rssi_dbm", "rssi", "RSSI", "RSSI (dBm)", "#4C78A8")
-    plot_time_series(data, stem, args, "per", "per", "PER", "PER (%)", "#E45756", scale=100.0, floor_zero=True)
+    plot_time_series(data, stem, args, "per", "per", "PER", per_axis_label(args), "#E45756", scale=100.0, floor_zero=True)
     plot_metric_vs_distance(data, stem, args, "rssi_dbm", "rssi_vs_distance", "RSSI", "RSSI (dBm)", "#4C78A8")
-    plot_metric_vs_distance(data, stem, args, "per", "per_vs_distance", "PER", "PER (%)", "#E45756", scale=100.0, floor_zero=True)
-    plot_metric_vs_distance(data, stem, args, "radio_distance_m", "radio_vs_true_distance", "radio distance", "radio distance (m)", "#F58518", floor_zero=True)
+    plot_metric_vs_distance(data, stem, args, "per", "per_vs_distance", "PER", per_axis_label(args), "#E45756", scale=100.0, floor_zero=True)
+    plot_metric_vs_distance(data, stem, args, RADIO_DERIVED_DISTANCE_METRIC, "radio_vs_true_distance", "Radio Distance", "Radio Distance (m)", "#F58518", floor_zero=True)
 
 
 def plot_run(data: RunData, stem: Path, args: argparse.Namespace) -> None:
@@ -1721,52 +1781,53 @@ def plot_rep_average_combined(rep: str, data_runs: list[RunData], stem: Path, ar
         return lambda data: [(row[0], row[col]) for row in data.distances]
 
     def metric(name: str, scale: float = 1.0) -> Any:
-        return lambda data: [(t, value * scale) for t, value in data.metrics.get(name, [])]
-
-    def estimate_error(data: RunData) -> list[tuple[float, float]]:
-        return compute_estimate_errors(data.ugv, data.estimate, args.nearest_max_gap_s)
+        return lambda data: [(t, value * scale) for t, value in metric_series(data, name)]
 
     ax = axes[0]
     y_values: list[float] = []
-    for col, label, color, linestyle in [
-        (1, "True 3D", "#4C78A8", "-"),
-        (2, "Horizontal", "#72B7B2", "--"),
-        (3, "Height Delta", "#E45756", ":"),
-    ]:
-        x, y = binned_mean_from_runs(data_runs, dist_col(col), bin_s)
+    x, y = binned_mean_from_runs(data_runs, dist_col(1), bin_s)
+    if y:
+        ax.plot(x, y, color="#4C78A8", label=r"$d$")
+        y_values.extend(y)
+    if normalize_rep_label(rep) == "rep03":
+        x, y = binned_mean_from_runs(data_runs, dist_col(3), bin_s)
         if y:
-            ax.plot(x, y, color=color, linestyle=linestyle, label=label)
+            ax.plot(x, y, color="#E45756", linestyle=":", label=r"$\Delta z$")
             y_values.extend(y)
-    x, y = binned_mean_from_runs(data_runs, metric("radio_distance_m"), bin_s)
+    x, y = binned_mean_from_runs(data_runs, metric(RADIO_DERIVED_DISTANCE_METRIC), bin_s)
     if y:
-        ax.plot(x, y, color="#F58518", marker="o", markersize=2.6, markeredgewidth=0.0, alpha=0.75, label="Radio Estimate")
+        ax.plot(x, y, color="#F58518", alpha=0.9, label=r"$d_r$")
         y_values.extend(y)
-    x, y = binned_mean_from_runs(data_runs, estimate_error, bin_s)
+    x, y = binned_mean_from_runs(
+        data_runs,
+        lambda data: compute_radio_distance_errors(data, args.nearest_max_gap_s),
+        bin_s,
+    )
     if y:
-        ax.plot(x, y, color="#333333", linestyle="-.", alpha=0.85, label="Estimate Error")
+        ax.plot(x, y, color="#333333", linestyle=":", alpha=0.85, label=r"$\Delta d$")
         y_values.extend(y)
-    ax.set_ylabel("distance (m)")
+    ax.set_ylabel("Distance (m)")
     if y_values:
         expand_flat_ylim(ax, y_values, floor_zero=True)
-        legend_outside(ax, ncol=1)
+        legend_right(ax)
     else:
         set_panel_empty(ax, "distance")
 
     ax = axes[1]
     x, y = binned_mean_from_runs(data_runs, metric("rssi_dbm"), bin_s)
     if y:
-        ax.plot(x, y, color="#4C78A8", marker="o", markersize=2.6, markeredgewidth=0.0, alpha=0.85, label="RSSI")
+        ax.plot(x, y, color="#4C78A8", alpha=0.85, label="RSSI")
         expand_flat_ylim(ax, y)
     else:
         set_panel_empty(ax, "RSSI")
     ax.set_ylabel("RSSI (dBm)")
-    ax.set_xlabel("simulation time (s)")
+    ax.set_xlabel("Simulation Time (s)")
     ax2 = ax.twinx()
     x2, y2 = binned_mean_from_runs(data_runs, metric("per", 100.0), bin_s)
     if y2:
         ax2.plot(x2, y2, color="#E45756", marker="o", markersize=2.6, markeredgewidth=0.0, alpha=0.85, label="PER")
-        expand_flat_ylim(ax2, y2, floor_zero=True)
-    ax2.set_ylabel("PER (%)")
+        expand_per_ylim(ax2, y2)
+    ax2.set_ylabel(per_axis_label(args), labelpad=args.labelpad + 6.0)
 
     for ax in axes:
         ax.grid(True, alpha=0.28)
@@ -1828,7 +1889,7 @@ def write_summary_csv(data_runs: list[RunData], csv_path: Path, args: argparse.N
                     mean_or_nan(metric_values(data, "pdr")),
                 ]
             )
-    print(f"csv={csv_path}")
+    print(csv_path)
 
 
 def summary_row(data: RunData, args: argparse.Namespace) -> dict[str, float | str | int]:
@@ -1916,7 +1977,7 @@ def write_extremes_markdown(data_runs: list[RunData], md_path: Path, args: argpa
             write_metric_table(handle, "PER", campaign_rows, "per", high_is_best=False, limit=limit)
             write_metric_table(handle, "Latency", campaign_rows, "latency_ms", high_is_best=False, limit=limit)
             write_metric_table(handle, "PDR", campaign_rows, "pdr", high_is_best=True, limit=limit)
-    print(f"md={md_path}")
+    print(md_path)
 
 
 def plot_overview_metric_vs_distance(
@@ -1972,7 +2033,7 @@ def plot_overview_metric_vs_distance(
             )
             plotted_label = True
 
-    ax.set_xlabel("true UAV-UGV distance (m)")
+    ax.set_xlabel("True UAV-UGV Distance (m)")
     ax.set_ylabel(ylabel)
     ax.grid(True, alpha=0.28)
     expand_flat_ylim(ax, y_all, floor_zero=floor_zero)
@@ -2043,10 +2104,22 @@ def plot_thesis_overviews(data_runs: list[RunData], stem: Path, args: argparse.N
     fig, ax = plt.subplots(1, 1, figsize=single_figsize(args))
     ax_per = ax.twinx()
     scatter_overview_metric(ax, data_runs, args, "rssi_dbm", label_groups=False)
-    scatter_overview_metric(ax_per, data_runs, args, "per", scale=100.0, floor_zero=True, label_groups=False, marker_override="o", alpha=0.75)
-    ax.set_xlabel("true UAV-UGV distance (m)")
+    per_values = scatter_overview_metric(
+        ax_per,
+        data_runs,
+        args,
+        "per",
+        scale=100.0,
+        floor_zero=True,
+        label_groups=False,
+        marker_override="o",
+        alpha=0.75,
+    )
+    if per_values:
+        expand_per_ylim(ax_per, per_values)
+    ax.set_xlabel("True UAV-UGV Distance (m)")
     ax.set_ylabel("RSSI (dBm)")
-    ax_per.set_ylabel("PER (%)")
+    ax_per.set_ylabel(per_axis_label(args), labelpad=args.labelpad + 6.0)
     ax.grid(True, alpha=0.28)
     save_metric_fig(fig, stem, "signal_loss_summary", args)
     plt.close(fig)
@@ -2057,8 +2130,8 @@ def plot_overviews(data_runs: list[RunData], stem: Path, args: argparse.Namespac
         plot_thesis_overviews(data_runs, stem, args)
     if args.overview_set in {"all", "both"}:
         plot_overview_metric_vs_distance(data_runs, stem, args, "rssi_dbm", "rssi_vs_distance", "RSSI", "RSSI (dBm)")
-        plot_overview_metric_vs_distance(data_runs, stem, args, "per", "per_vs_distance", "PER", "PER (%)", scale=100.0, floor_zero=True)
-        plot_overview_metric_vs_distance(data_runs, stem, args, "radio_distance_m", "radio_vs_true_distance", "radio distance", "radio distance (m)", floor_zero=True)
+        plot_overview_metric_vs_distance(data_runs, stem, args, "per", "per_vs_distance", "PER", per_axis_label(args), scale=100.0, floor_zero=True)
+        plot_overview_metric_vs_distance(data_runs, stem, args, RADIO_DERIVED_DISTANCE_METRIC, "radio_vs_true_distance", "Radio Distance", "Radio Distance (m)", floor_zero=True)
 
 
 def main() -> None:
