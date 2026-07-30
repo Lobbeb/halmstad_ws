@@ -364,6 +364,14 @@ cd ~/halmstad_ws
 ./run.sh uav_slam uav:=dji0 scan_topic:=/dji0/laser0/scan
 ```
 
+For a full headless stack with map/localization/follow panes, pass the lidar spawn args through `tmux_1to1`:
+
+```bash
+./run.sh tmux_1to1 baylands gui:=false mode:=follow laser:=true laser_update_rate:=10 laser_max_range:=20
+```
+
+In RViz, `map` exists only after localization/Nav2 are running. To inspect only the UAV scan, set the fixed frame to `laser0_laser` and add a LaserScan display for `/dji0/laser0/scan`.
+
 Normal UAV runs should omit `laser:=true`.
 
 ### Support UAVs (`dji1` och `dji2`) - capture båda samtidigt

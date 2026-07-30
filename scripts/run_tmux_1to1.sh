@@ -131,6 +131,9 @@ Gazebo spawn / scene:
   state:=checkpoint ( x:=... y:=... z:=... yaw:=...)
   camera:=attached
   camera_update_rate:=20
+  laser:=true|false
+  laser_update_rate:=10
+  laser_max_range:=25
   height:=7
   mount_pitch_deg:=45
   uav_name:=dji0
@@ -476,7 +479,7 @@ for arg in "$@"; do
       echo "Use camera:=attached with $0." >&2
       exit 2
       ;;
-    camera:=*|height:=*|mount_pitch_deg:=*|camera_update_rate:=*|uav_name:=*|bridge_depth:=*)
+    camera:=*|height:=*|mount_pitch_deg:=*|camera_update_rate:=*|uav_name:=*|bridge_depth:=*|laser:=*|with_laser:=*|bridge_laser:=*|laser_name:=*|laser_update_rate:=*|laser_min_range:=*|laser_max_range:=*|laser_angle_deg:=*|laser_x:=*|laser_y:=*|laser_z:=*|laser_sensor_x:=*|laser_sensor_y:=*|laser_sensor_z:=*|laser_rpy:=*|laser_frame_id:=*)
 
       if [[ "$arg" == uav_name:=* ]]; then
         UAV_NAME="${arg#uav_name:=}"
@@ -484,6 +487,9 @@ for arg in "$@"; do
         UAV_HEIGHT_OVERRIDE="${arg#height:=}"
       elif [[ "$arg" == bridge_depth:=* ]]; then
         HAVE_BRIDGE_DEPTH="true"
+        SPAWN_ARGS+=("$arg")
+        continue
+      elif [[ "$arg" == laser:=* || "$arg" == with_laser:=* || "$arg" == bridge_laser:=* || "$arg" == laser_*:=* ]]; then
         SPAWN_ARGS+=("$arg")
         continue
       fi

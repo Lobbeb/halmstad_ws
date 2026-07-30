@@ -169,7 +169,7 @@ def generate_launch_description():
                     " -p laser_sensor_x:=", LaunchConfiguration('laser_sensor_x'),
                     " -p laser_sensor_y:=", LaunchConfiguration('laser_sensor_y'),
                     " -p laser_sensor_z:=", LaunchConfiguration('laser_sensor_z'),
-                    " -p laser_rpy:=", LaunchConfiguration('laser_rpy'),
+                    " -p laser_rpy:='", LaunchConfiguration('laser_rpy'), "'",
                     " -p laser_frame_id:=", LaunchConfiguration('laser_frame_id')
                 ]),
                 '-x', LaunchConfiguration('x'),
