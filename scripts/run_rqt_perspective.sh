@@ -4,8 +4,27 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 WS_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 PERSPECTIVE_DIR="$WS_ROOT/perspectives"
-DEFAULT_PERSPECTIVE="NAV2"
+DEFAULT_PERSPECTIVE="YOLO"
 PERSPECTIVE="${1:-$DEFAULT_PERSPECTIVE}"
+
+usage() {
+  cat <<EOF
+Usage:
+  ./run.sh rqt_perspective [perspective|list] [rqt args...]
+
+Open rqt_gui with a saved perspective from:
+  $PERSPECTIVE_DIR
+
+Arguments:
+  perspective   Name, filename, or path. Default: $DEFAULT_PERSPECTIVE
+  list          Print available perspectives and exit.
+
+Examples:
+  ./run.sh rqt_perspective YOLO
+  ./run.sh rqt_perspective NAV2
+  ./run.sh rqt_perspective list
+EOF
+}
 
 resolve_perspective() {
   local candidate="$1"
@@ -53,6 +72,13 @@ print_available() {
   echo "Available perspectives in $PERSPECTIVE_DIR:" >&2
   find "$PERSPECTIVE_DIR" -maxdepth 1 -type f -printf '  %f\n' | sort >&2
 }
+
+case "${1:-}" in
+  help|-h|--help)
+    usage
+    exit 0
+    ;;
+esac
 
 if [ "$#" -gt 0 ]; then
   shift

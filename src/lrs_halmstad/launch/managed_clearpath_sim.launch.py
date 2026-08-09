@@ -10,7 +10,6 @@ from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription
 from launch.actions import OpaqueFunction, SetEnvironmentVariable
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import EnvironmentVariable, LaunchConfiguration, PathJoinSubstitution, PythonExpression
-from launch_ros.actions import Node
 from ros_gz_bridge.actions import RosGzBridge
 
 
@@ -72,9 +71,9 @@ ARGUMENTS = [
     ),
     DeclareLaunchArgument(
         'clock_mode',
-        default_value='guarded',
+        default_value='direct',
         choices=['direct', 'guarded'],
-        description='direct bridges Gazebo /clock directly; guarded uses /clock_raw through clock_guard.',
+        description='Deprecated compatibility argument. Gazebo /clock is always bridged directly.',
     ),
 ]
 
@@ -166,16 +165,13 @@ def _gz_launch(context, *args, **kwargs):
 
 
 def _clock_launch(context, *args, **kwargs):
-    clock_mode = LaunchConfiguration('clock_mode').perform(context)
-    ros_clock_topic = '/clock_raw' if clock_mode == 'guarded' else '/clock'
-
     clock_bridge = RosGzBridge(
         bridge_name='clock_bridge',
         use_composition=False,
         extra_bridge_params={
             'bridges': {
                 'bridge_0': {
-                    'ros_topic_name': ros_clock_topic,
+                    'ros_topic_name': '/clock',
                     'ros_type_name': 'rosgraph_msgs/msg/Clock',
                     'gz_topic_name': '/clock',
                     'gz_type_name': 'gz.msgs.Clock',
@@ -187,22 +183,7 @@ def _clock_launch(context, *args, **kwargs):
         },
     )
 
-    actions = [clock_bridge]
-    if clock_mode == 'guarded':
-        actions.append(
-            Node(
-                package='lrs_halmstad',
-                executable='clock_guard',
-                name='clock_guard',
-                output='screen',
-                parameters=[{
-                    'input_topic': '/clock_raw',
-                    'output_topic': '/clock',
-                }],
-            )
-        )
-
-    return actions
+    return [clock_bridge]
 
 
 def _resolve_real_time_factor(context) -> float:
@@ -226,11 +207,22 @@ def _resolve_world_sdf_path(pkg_lrs_halmstad: str, world_name: str) -> Path:
             raise RuntimeError(f"World file not found: {candidate}")
         return candidate.resolve()
 
-    world_file = world_name if world_name.endswith('.sdf') else f"{world_name}.sdf"
-    candidate = (Path(pkg_lrs_halmstad) / 'worlds' / world_file).resolve()
-    if not candidate.is_file():
-        raise RuntimeError(f"World file not found: {candidate}")
-    return candidate
+    worlds_dir = Path(pkg_lrs_halmstad) / 'worlds'
+    if world_name.endswith(('.sdf', '.world')):
+        candidates = [worlds_dir / world_name]
+    else:
+        candidates = [
+            worlds_dir / f"{world_name}.sdf",
+            worlds_dir / f"{world_name}.world",
+        ]
+
+    for candidate in candidates:
+        candidate = candidate.resolve()
+        if candidate.is_file():
+            return candidate
+
+    searched = ", ".join(str(path.resolve()) for path in candidates)
+    raise RuntimeError(f"World file not found. Searched: {searched}")
 
 
 def _prepare_world_launch_path(context, world_sdf_path: Path, world_name: str, real_time_factor: float) -> str:

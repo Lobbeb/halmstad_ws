@@ -6,9 +6,10 @@ WS_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 STATE_DIR="/tmp/halmstad_ws"
 SIM_WORLD_FILE="$STATE_DIR/gazebo_sim.world"
 SIM_SPAWN_WAYPOINT_FILE="$STATE_DIR/gazebo_sim.spawn_waypoint"
-BAYLANDS_DEFAULT_NAV2_GOALS="parkinglot_west"
+BAYLANDS_DEFAULT_NAV2_GOALS="baylands_waypoints"
 WORLD="baylands"
 EXTRA_ARGS=()
+CONTROL_ARGS=()
 USE_ESTIMATE="true"
 USE_OBB="true"
 USE_TRACKER="false"
@@ -30,26 +31,70 @@ HAVE_RANGE_MODE="false"
 HAVE_UGV_INITIAL_POSE_X="false"
 HAVE_UGV_INITIAL_POSE_Y="false"
 HAVE_UGV_INITIAL_POSE_YAW="false"
+HAVE_START_CAMERA_TRACKER="false"
 HAVE_START_VISUAL_ACTUATION_BRIDGE="false"
 HAVE_START_VISUAL_FOLLOW_CONTROLLER="false"
 HAVE_START_VISUAL_FOLLOW_POINT_GENERATOR="false"
 HAVE_START_VISUAL_FOLLOW_PLANNER="false"
 HAVE_UGV_GOAL_SEQUENCE="false"
+DETECTOR_BACKEND=""
+DETECTOR_ONNX_MODEL_ARG=""
 USE_CONDA="false"
 CONDA_ENV_NAME="${LRS_HALMSTAD_GPU_ENV_NAME:-}"
-DEFAULT_CUSTOM_WEIGHTS="obb/mymodels/baylands_leader_v1-obb.pt"
-DEFAULT_DETECTION_WEIGHTS="detection/mymodels/warehouse_v1-v2-yolo26n.pt"
-DEFAULT_OBB_WEIGHTS="obb/mymodels/baylands-leader-v1-obb.pt"
-DEFAULT_BAYLANDS_OBB_WEIGHTS="obb/mymodels/baylands-leader-v1-obb.pt"
+DEFAULT_CUSTOM_WEIGHTS="/home/ruben/halmstad_ws/models/obb/mymodels/v10-tuned-no-rotundan.pt"
+DEFAULT_DETECTION_WEIGHTS="warehouse_v1-v2-yolo26n.pt"
+DEFAULT_OBB_WEIGHTS="/home/ruben/halmstad_ws/models/obb/mymodels/v10-tuned-no-rotundan.pt"
+DEFAULT_BAYLANDS_OBB_WEIGHTS="/home/ruben/halmstad_ws/models/obb/mymodels/v10-tuned-no-rotundan.pt"
 MODELS_ROOT="${LRS_HALMSTAD_MODELS_ROOT:-$WS_ROOT/models}"
 DEFAULT_UAV_BODY_X_OFFSET="-7.0"
 DEFAULT_UAV_BODY_Y_OFFSET="0.0"
 DEFAULT_UAV_Z="7.0"
 UAV_NAME="dji0"
+LEADER_MODE="estimate"
 
 source "$SCRIPT_DIR/slam_state_common.sh"
 source "$SCRIPT_DIR/baylands_waypoint_common.sh"
 BAYLANDS_GROUP_WAYPOINT_CSV="$(baylands_group_waypoint_csv)"
+
+usage() {
+  cat <<'EOF'
+Usage:
+  ./run.sh 1to1_yolo [world] [options...]
+
+Start YOLO detection, leader estimation, UAV follow, and the Nav2-backed UGV
+route driver. YOLO mode intentionally refuses UGV odom/ground-truth inputs.
+
+Common options:
+  waypoint:=rotundan_0
+  nav2_goals:=rotundan|path.yaml
+  weights:=model.pt|models/obb/mymodels/model.pt|obb/mymodels/model.pt|/path/model.pt
+  obb:=true|false
+  tracker:=true|false
+  external_detection_node:=detector|tracker
+  use_estimate:=true
+  yolo_control_mode:=follow_uav_estimate|visual_bridge
+  detector_backend:=ultralytics|onnx_cpu|onnx_directml
+  detector_async_inference:=true|false
+  detector_latest_frame_only:=true|false
+  detector_stale_detection_threshold_ms:=3000
+  yolo_device:=auto|cpu|0
+  range_mode:=auto|depth|radio|const
+  omnet:=true|false
+
+Examples:
+  ./run.sh 1to1_yolo baylands waypoint:=rotundan_0 nav2_goals:=rotundan
+  ./run.sh 1to1_yolo baylands weights:=/home/ruben/halmstad_ws/models/obb/mymodels/baylands-leader-v9-tuned-full.pt obb:=true
+EOF
+}
+
+for arg in "$@"; do
+  case "$arg" in
+    help|-h|--help)
+      usage
+      exit 0
+      ;;
+  esac
+done
 
 resolve_baylands_amcl_waypoint_pose() {
   local waypoint_name="$1"
@@ -96,6 +141,19 @@ case "$MODELS_ROOT" in
     MODELS_ROOT="$HOME/${MODELS_ROOT#\~/}"
     ;;
 esac
+
+weight_exists_relative_to_roots() {
+  local rel_path="$1"
+  [[ -e "$WS_ROOT/$rel_path" || -e "$MODELS_ROOT/$rel_path" ]]
+}
+
+default_weights_rel_dir() {
+  if [ "$ARG_WEIGHTS_ROOT" = "obb" ]; then
+    echo "obb/mymodels"
+  else
+    echo "detection/mymodels"
+  fi
+}
 
 if [ -f "$SIM_WORLD_FILE" ]; then
   sim_world="$(cat "$SIM_WORLD_FILE" 2>/dev/null || true)"
@@ -241,6 +299,17 @@ for arg in "$@"; do
       ;;
     detector_backend:=*)
       HAVE_DETECTOR_BACKEND="true"
+      DETECTOR_BACKEND="${arg#detector_backend:=}"
+      EXTRA_ARGS+=("$arg")
+      ;;
+    detector_onnx_model:=*)
+      DETECTOR_ONNX_MODEL_ARG="$arg"
+      ;;
+    onnx_model:=*)
+      DETECTOR_ONNX_MODEL_ARG="detector_onnx_model:=${arg#onnx_model:=}"
+      ;;
+    start_camera_tracker:=*)
+      HAVE_START_CAMERA_TRACKER="true"
       EXTRA_ARGS+=("$arg")
       ;;
     start_visual_actuation_bridge:=*)
@@ -308,11 +377,26 @@ if [[ "$WORLD" == baylands* ]] && [ "$HAVE_UGV_GOAL_SEQUENCE" = "false" ]; then
 fi
 
 if [ "$HAVE_RANGE_MODE" = "false" ]; then
-  case "$START_OMNET_BRIDGE" in
-    true|yes|1)
-      RANGE_MODE="radio"
-      ;;
-  esac
+  RANGE_MODE="auto"
+fi
+
+if [ "$HAVE_START_CAMERA_TRACKER" = "false" ]; then
+  EXTRA_ARGS+=("start_camera_tracker:=false")
+fi
+
+if [ "$YOLO_CONTROL_MODE" != "visual_bridge" ]; then
+  if [ "$HAVE_START_VISUAL_ACTUATION_BRIDGE" = "false" ]; then
+    EXTRA_ARGS+=("start_visual_actuation_bridge:=false")
+  fi
+  if [ "$HAVE_START_VISUAL_FOLLOW_CONTROLLER" = "false" ]; then
+    EXTRA_ARGS+=("start_visual_follow_controller:=false")
+  fi
+  if [ "$HAVE_START_VISUAL_FOLLOW_POINT_GENERATOR" = "false" ]; then
+    EXTRA_ARGS+=("start_visual_follow_point_generator:=false")
+  fi
+  if [ "$HAVE_START_VISUAL_FOLLOW_PLANNER" = "false" ]; then
+    EXTRA_ARGS+=("start_visual_follow_planner:=false")
+  fi
 fi
 
 case "$USE_ESTIMATE" in
@@ -372,6 +456,19 @@ case "$RANGE_MODE" in
     ;;
 esac
 
+case "$DETECTOR_BACKEND" in
+  onnx|onnxruntime|onnx_cpu|onnx_directml)
+    if [ -n "$DETECTOR_ONNX_MODEL_ARG" ]; then
+      EXTRA_ARGS+=("$DETECTOR_ONNX_MODEL_ARG")
+    fi
+    ;;
+  *)
+    if [ -n "$DETECTOR_ONNX_MODEL_ARG" ]; then
+      echo "[run_1to1_yolo] Ignoring $DETECTOR_ONNX_MODEL_ARG because detector_backend is '${DETECTOR_BACKEND:-default ultralytics}'." >&2
+    fi
+    ;;
+esac
+
 if [ "$USE_OBB" = true ]; then
   ARG_WEIGHTS_ROOT="obb"
 else
@@ -406,7 +503,7 @@ if [ -z "$WEIGHTS_REL" ]; then
       WEIGHTS_REL="$DEFAULT_CUSTOM_WEIGHTS"
     fi
   fi
-elif [[ "$WEIGHTS_REL" != /* ]] && [ ! -e "$WS_ROOT/models/$WEIGHTS_REL" ]; then
+elif [[ "$WEIGHTS_REL" != /* ]] && ! weight_exists_relative_to_roots "$WEIGHTS_REL"; then
   if [[ "$WEIGHTS_REL" == */* ]]; then
     if [[ "$WEIGHTS_REL" != detection/* && "$WEIGHTS_REL" != obb/* ]]; then
       if [ "$ARG_WEIGHTS_ROOT" = "obb" ]; then
@@ -420,13 +517,13 @@ elif [[ "$WEIGHTS_REL" != /* ]] && [ ! -e "$WS_ROOT/models/$WEIGHTS_REL" ]; then
       if [ -n "$MODEL_SUBDIR" ]; then
         WEIGHTS_REL="obb/$MODEL_SUBDIR/$WEIGHTS_REL"
       else
-        WEIGHTS_REL="obb/mymodels/$WEIGHTS_REL"
+        WEIGHTS_REL="$(default_weights_rel_dir)/$WEIGHTS_REL"
       fi
     else
       if [ -n "$MODEL_SUBDIR" ]; then
         WEIGHTS_REL="detection/$MODEL_SUBDIR/$WEIGHTS_REL"
       else
-        WEIGHTS_REL="detection/mymodels/$WEIGHTS_REL"
+        WEIGHTS_REL="$(default_weights_rel_dir)/$WEIGHTS_REL"
       fi
     fi
   fi
@@ -434,6 +531,8 @@ fi
 
 if [[ "$WEIGHTS_REL" = /* ]]; then
   WEIGHTS_PATH="$WEIGHTS_REL"
+elif [ -e "$WS_ROOT/$WEIGHTS_REL" ]; then
+  WEIGHTS_PATH="$WS_ROOT/$WEIGHTS_REL"
 else
   WEIGHTS_PATH="$MODELS_ROOT/$WEIGHTS_REL"
 fi
@@ -441,18 +540,12 @@ fi
 if [ ! -f "$WEIGHTS_PATH" ]; then
   echo "YOLO weights file not found: $WEIGHTS_PATH" >&2
   echo "Resolved from weights:=${WEIGHTS_REL}" >&2
-  echo "Use an existing absolute path or a path relative to: $MODELS_ROOT" >&2
+  echo "Bare filenames are resolved under $(default_weights_rel_dir) for obb:=$USE_OBB." >&2
+  echo "Use an existing absolute path, workspace-relative path, or path relative to: $MODELS_ROOT" >&2
   exit 2
 fi
 
 echo "[run_1to1_yolo] Using YOLO weights: $WEIGHTS_PATH"
-
-if [ "$HAVE_DETECTOR_BACKEND" != true ] && [ "$USE_OBB" = true ]; then
-  ONNX_CANDIDATE="${WEIGHTS_PATH%.*}.onnx"
-  if [ -f "$ONNX_CANDIDATE" ]; then
-    EXTRA_ARGS+=("detector_backend:=onnx_cpu")
-  fi
-fi
 
 LIVE_UAV_POSE_TIMEOUT_S=5
 if [[ "$WORLD" == baylands* ]]; then
@@ -646,7 +739,7 @@ ros2 launch lrs_halmstad run_follow.launch.py \
   external_detection_enable:=true \
   external_detection_node:="$EXTERNAL_DETECTION_NODE" \
   range_mode:="$RANGE_MODE" \
-  yolo_weights:="$WEIGHTS_REL" \
+  yolo_weights:="$WEIGHTS_PATH" \
   "${EXTRA_ARGS[@]}" \
   "${CONTROL_ARGS[@]}" \
   world:="$WORLD"

@@ -50,10 +50,10 @@ controller_server:
       ax_min: -3.5
       ay_max: 2.0
       az_max: 2.0
-      vx_std: 1.5
+      vx_std: 1.8
       vy_std: 0.5
       wz_std: 0.8
-      vx_max: 3.0
+      vx_max: 2.5
       vx_min: -1.5
       vy_max: 2.0
       wz_max: 2.5
@@ -89,15 +89,15 @@ controller_server:
         cost_weight: 3.0
         threshold_to_consider: 0.2
       PreferForwardCritic:
-        enabled: true
+        enabled: false
         cost_power: 1
-        cost_weight: 8.0
+        cost_weight: 1.0
         threshold_to_consider: 5.0
       CostCritic:
         enabled: true
         cost_power: 1
-        cost_weight: 0.8
-        critical_cost: 700.0
+        cost_weight: 0.5
+        critical_cost: 900.0
         consider_footprint: true
         collision_cost: 1000000.0
         near_goal_distance: 0.2
@@ -131,7 +131,7 @@ local_costmap:
     ros__parameters:
       enable_stamped_cmd_vel: true
       update_frequency: 10.0
-      publish_frequency: 2.0
+      publish_frequency: 0.5
       global_frame: odom
       robot_base_frame: base_link
       rolling_window: true
@@ -168,14 +168,14 @@ local_costmap:
         plugin: "nav2_costmap_2d::InflationLayer"
         enabled: true
         cost_scaling_factor: 4.0
-        inflation_radius: 0.8
+        inflation_radius: 0.75 # Minimum is 0.724707
 
 global_costmap:
   global_costmap:
     ros__parameters:
       enable_stamped_cmd_vel: true
       update_frequency: 1.0
-      publish_frequency: 1.0
+      publish_frequency: 0.1
       global_frame: map
       robot_base_frame: base_link
       transform_tolerance: 1.0
@@ -192,7 +192,7 @@ global_costmap:
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
         cost_scaling_factor: 3.0
-        inflation_radius: 0.95
+        inflation_radius: 0.75
         
 planner_server:
   ros__parameters:
@@ -216,7 +216,7 @@ smoother_server:
       plugin: "nav2_smoother::SimpleSmoother"
       tolerance: 1.0e-6
       max_its: 100
-      do_refinement: true
+      do_refinement: false
 
 
 behavior_server:
@@ -227,7 +227,7 @@ behavior_server:
     local_footprint_topic: local_costmap/published_footprint
     global_footprint_topic: global_costmap/published_footprint
     cycle_frequency: 10.0
-    behavior_plugins: ["spin", "backup", "drive_on_heading", "assisted_teleop", "wait"]
+    behavior_plugins: ["spin", "backup", "drive_on_heading", "wait"]
     spin:
       plugin: "nav2_behaviors::Spin"
     backup:
@@ -236,8 +236,6 @@ behavior_server:
       plugin: "nav2_behaviors::DriveOnHeading"
     wait:
       plugin: "nav2_behaviors::Wait"
-    assisted_teleop:
-      plugin: "nav2_behaviors::AssistedTeleop"
     global_frame: map
     local_frame: odom
     robot_base_frame: base_link
@@ -255,7 +253,6 @@ behavior_server:
     drive_on_heading.acceleration_limit: 3.5
     drive_on_heading.deceleration_limit: -3.5
     drive_on_heading.minimum_speed: 0.0
-    # AssistedTeleop
 
 
 waypoint_follower:
@@ -267,7 +264,7 @@ waypoint_follower:
     waypoint_task_executor_plugin: "wait_at_waypoint"
     wait_at_waypoint:
       plugin: "nav2_waypoint_follower::WaitAtWaypoint"
-      enabled: true
+      enabled: false
       waypoint_pause_duration: 200
 
 velocity_smoother:
@@ -276,10 +273,10 @@ velocity_smoother:
     smoothing_frequency: 10.0
     scale_velocities: false
     feedback: "OPEN_LOOP"
-    max_velocity: [1.5, 0.0, 3.0]
-    min_velocity: [-1.0, 0.0, -1.5]
-    max_accel: [2.0, 0.0, 3.5]
-    max_decel: [-2.0, 0.0, -3.5]
+    max_velocity: [2.4, 0.0, 3.0]
+    min_velocity: [-1.2, 0.0, -1.5]
+    max_accel: [3.0, 0.0, 3.5]
+    max_decel: [-3.0, 0.0, -3.5]
     odom_topic: "platform/odom/filtered"
     odom_duration: 0.1
     deadband_velocity: [0.0, 0.0, 0.0]
@@ -288,7 +285,7 @@ velocity_smoother:
 
 collision_monitor:
   ros__parameters:
-    enabled: true
+    enabled: false
     base_frame_id: "base_link"
     odom_frame_id: "odom"
     cmd_vel_in_topic: "cmd_vel_smoothed"
@@ -298,30 +295,30 @@ collision_monitor:
     source_timeout: 2.0
     stop_pub_timeout: 2.0
     enable_stamped_cmd_vel: true
-    base_shift_correction: true
+    base_shift_correction: false
     polygons: ["PolygonStop", "PolygonSlow"]
     PolygonStop:
       type: "polygon"
       points: "[[0.55, 0.38], [0.55, -0.38], [0.05, -0.38], [0.05, 0.38]]"
       action_type: "stop"
-      min_points: 8
+      min_points: 64
       visualize: false
       polygon_pub_topic: "polygon_stop"
-      enabled: true
+      enabled: false
     PolygonSlow:
       type: "polygon"
-      points: "[[1.25, 0.55], [1.25, -0.55], [0.10, -0.55], [0.10, 0.55]]"
+      points: "[[1.00, 0.50], [1.00, -0.50], [0.10, -0.50], [0.10, 0.50]]"
       action_type: "slowdown"
-      min_points: 4
-      slowdown_ratio: 0.2
+      min_points: 12
+      slowdown_ratio: 0.5
       visualize: false
       polygon_pub_topic: "polygon_slowdown"
-      enabled: true
+      enabled: false
     observation_sources: ["scan"]
     scan:
       type: "scan"
       topic: "/a201_0000/sensors/lidar3d_0/scan_from_points"
-      enabled: true
+      enabled: false
 #    pointcloud:
 #      type: "pointcloud"
 #      topic: "/a201_0000/sensors/lidar3d_0/points"

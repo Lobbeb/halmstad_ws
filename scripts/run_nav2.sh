@@ -14,6 +14,36 @@ BAYLANDS_2D_SCAN_RELAY_TOPIC="/a201_0000/sensors/lidar2d_0/scan_relay"
 
 source "$SCRIPT_DIR/lidar_mode_common.sh"
 
+usage() {
+  cat <<'EOF'
+Usage:
+  ./run.sh nav2 [lidar:=2d|3d] [options...]
+
+Start the Nav2 stack for the active simulated UGV. Baylands is detected from
+/tmp/halmstad_ws/gazebo_sim.world and uses nav2_baylands_large_map.yaml.
+
+Common options:
+  lidar:=2d|3d
+  start_collision_monitor:=true|false
+  use_scan_relay:=true|false
+  scan_relay_stamp_offset_s:=-0.20
+  scan_topic:=/topic
+
+Examples:
+  ./run.sh nav2 lidar:=3d
+  ./run.sh nav2 lidar:=2d start_collision_monitor:=false
+EOF
+}
+
+for arg in "$@"; do
+  case "$arg" in
+    help|-h|--help)
+      usage
+      exit 0
+      ;;
+  esac
+done
+
 if [ -f "$SIM_WORLD_FILE" ]; then
   sim_world="$(cat "$SIM_WORLD_FILE" 2>/dev/null || true)"
   if [[ "$sim_world" == baylands* ]]; then

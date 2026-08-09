@@ -1,0 +1,14 @@
+{
+  "dataset": "/home/ruben/halmstad_ws/datasets/final/baylands_generalization_art",
+  "pred_dir": "/home/ruben/halmstad_ws/models/obb/experiments/sam3_hybrid_full/runs/predictions/baylands-leader-v7b-ft-mosaic010/baylands_generalization_art_test_all",
+  "split": "test",
+  "images": 246,
+  "status_counts": {
+    "matched": 211,
+    "correct_empty": 19,
+    "multi_prediction": 9,
+    "false_positive_empty": 4,
+    "no_prediction": 3
+  },
+  "mean_best_iou_non_empty": 0.74145395
+}

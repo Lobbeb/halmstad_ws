@@ -103,7 +103,6 @@ setup(
             "odom_to_tf = lrs_halmstad.sim.odom_to_tf:main",
             "controller = lrs_halmstad.sim.controller:main",
             "simulator = lrs_halmstad.sim.simulator:main",
-            "clock_guard = lrs_halmstad.sim.clock_guard:main",
             "latest_scan_relay = lrs_halmstad.sim.latest_scan_relay:main",
             "sim_dataset_capture = lrs_halmstad.dataset.sim_dataset_capture:main",
             "run_follow_control = lrs_halmstad.tools.follow_control:main",

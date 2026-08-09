@@ -45,11 +45,13 @@ OMNeT++ network metrics topics (published by `omnet_metrics_bridge` when OMNeT i
 requires `start_omnet_bridge:=true` in `run_follow.launch.py`; all `std_msgs/Float64`, ~10 Hz):
 
 - `/omnet/sim_time`          â€” OMNeT simulation time (s)
-- `/omnet/link_distance`     â€” geometric UAVâ€“UGV distance from Gazebo positions (m)
 - `/omnet/rssi_dbm`          â€” received signal strength (dBm, free-space path-loss model)
 - `/omnet/snir_db`           â€” signal-to-noise-plus-interference ratio (dB)
 - `/omnet/packet_error_rate` â€” sliding-window PER estimate (0â€“1)
 - `/omnet/radio_distance`    â€” range estimate from RSSI inversion only, no Gazebo positions (m)
+
+For `lora-duplex`, the bridge aliases the decoded UGV-to-UAV LoRa payload onto
+`/omnet/radio_distance` so the estimator topic stays unchanged.
 
 ## Recommended 1-to-1 bring-up
 
@@ -225,7 +227,7 @@ ros2 run lrs_halmstad controller --ros-args -p uav_name:=dji0
 - `camera_update_rate` spawn arg is now correctly wired through to the SDF (was declared but not passed to xacro). The spawn default is `10` Hz, which is the recommended value for WSL2 â€” Ogre2 rendering through WSLg is the primary RTF bottleneck. Increase only if your host can sustain RTF â‰¥ 1.0 at higher rates.
 - `leader_estimator` now defaults to the actual simulated UAV pose topic `/dji0/pose`, not `/dji0/pose_cmd`.
 - The active perception range mode is `auto` (depth â†’ radio â†’ const). Available explicit modes: `depth`, `radio`, `const`. Set via `range_mode` in `run_follow_defaults.yaml` under `leader_estimator`. The `ground` mode has been removed.
-- When running with OMNeT++, `leader_estimator` subscribes to `/omnet/radio_distance` and uses it as the middle tier in `auto` mode (between depth and constant-range fallback). The raw FSPL-inverted Euclidean range is projected to horizontal distance using the current UAV altitude. Configure via `radio_range_topic` and `radio_range_timeout_s`. Set `radio_range_topic: ''` to disable entirely.
+- When running with OMNeT++, `leader_estimator` subscribes to `/omnet/radio_distance` by default and uses it as the middle tier in `auto` mode (between depth and constant-range fallback). In simplex LoRa this is RSSI/path-loss derived; in duplex LoRa the bridge publishes the delivered UGV-to-UAV payload on the same topic. Configure via `radio_range_topic` and `radio_range_timeout_s`. Set `radio_range_topic: ''` to disable entirely.
 - Depth range sampling uses the **inner 50 % of the detection bounding box** (25 % margin on each edge) instead of a fixed 5 Ã— 5 pixel patch. This scales correctly at all distances and avoids edge pixels that land on background or drone body. Requires at least 10 valid pixels (`depth_patch_min_valid_px`).
 - YOLO `conf_threshold` is 0.15 for both `leader_detector` and `leader_tracker`. Lowered from 0.3 to improve detection recall with the newer OBB models; `min_confidence_threshold` (absolute floor in `leader_estimator`) is 0.08.
 - YOLO inference now defaults to `device: 'auto'`. On CUDA-capable hosts (for example HH GPU-LAB) the detector/tracker will use GPU 0 automatically; on non-CUDA hosts such as the current WSL2 AMD setup they fall back to CPU. Expected CPU detection rate is still roughly 3â€“10 Hz depending on image resolution and model size.

@@ -239,7 +239,7 @@ class UgvNav2Driver(Node):
             received_monotonic_s=time.monotonic(),
         )
 
-    def _maybe_set_initial_pose(self) -> None:
+    def _maybe_set_initial_pose(self, force_publish: bool = False) -> None:
         if not self.set_initial_pose_enable:
             return
         if self.pose_topic_type not in ("pose", "pose_with_covariance", "posewithcovariancestamped"):
@@ -251,9 +251,9 @@ class UgvNav2Driver(Node):
             self.get_logger().warn("Initial pose auto-set enabled but no initial_pose_topic configured; skipping")
             return
 
-        # If localization is already publishing, do not overwrite it unless the
-        # operator explicitly changes the parameters and restarts the node.
-        if self.initial_pose_skip_wait_s > 0.0:
+        # If localization is already publishing, do not overwrite it unless this
+        # call is explicitly synchronizing after Nav2 lifecycle activation.
+        if not force_publish and self.initial_pose_skip_wait_s > 0.0:
             deadline = time.monotonic() + self.initial_pose_skip_wait_s
             while rclpy.ok() and time.monotonic() < deadline:
                 rclpy.spin_once(self, timeout_sec=0.1)
@@ -412,7 +412,7 @@ class UgvNav2Driver(Node):
         return candidate
 
     def _load_lidar_settings(self) -> dict:
-        if self.lidar_settings_file.lower() in ("", "none", "false", "disabled"):
+        if self.lidar_settings_file.lower() in ("none", "false", "disabled"):
             return {}
 
         settings_file = self.lidar_settings_file or self._default_lidar_settings_file()
@@ -912,9 +912,17 @@ class UgvNav2Driver(Node):
                 return False
 
             if result.status != GoalStatus.STATUS_SUCCEEDED:
+                nav2_result = getattr(result, "result", None)
+                error_code = getattr(nav2_result, "error_code", None)
+                error_msg = getattr(nav2_result, "error_msg", "")
+                detail = ""
+                if error_code is not None:
+                    detail = f" error_code={error_code}"
+                if error_msg:
+                    detail = f"{detail} error_msg='{error_msg}'"
                 self.get_logger().error(
                     f"Nav2 goal failed with status={result.status} "
-                    f"for x={x:.2f} y={y:.2f} yaw={math.degrees(yaw):.1f}deg"
+                    f"for x={x:.2f} y={y:.2f} yaw={math.degrees(yaw):.1f}deg{detail}"
                 )
                 return False
 
@@ -934,10 +942,10 @@ class UgvNav2Driver(Node):
             self.get_logger().info(f"Start delay {self.start_delay_s:.1f}s before Nav2 UGV motion")
             time.sleep(self.start_delay_s)
 
-        self._maybe_set_initial_pose()
-        start_pose = self._ensure_pose_is_fresh()
         self._wait_for_goal_server()
         self._wait_for_nav2_active()
+        self._maybe_set_initial_pose(force_publish=True)
+        start_pose = self._ensure_pose_is_fresh()
         self._settle_before_goals()
 
         segments, waypoints = self._build_waypoints(start_pose)

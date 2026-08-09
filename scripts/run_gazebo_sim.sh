@@ -1,15 +1,28 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Prefer WSL GPU acceleration on the configured discrete adapter.
+export MESA_D3D12_DEFAULT_ADAPTER_NAME="${LRS_SIM_GPU_ADAPTER:-AMD Radeon RX 7600}"
+export GALLIUM_DRIVER=d3d12
+
+# Do not force software rendering
+unset LIBGL_ALWAYS_SOFTWARE
+unset MESA_LOADER_DRIVER_OVERRIDE
+unset GALLIUM_DRIVER_LLVM
+unset PYTHONNOUSERSITE
+
+# Optional: remove vsync override while debugging crashes
+unset vblank_mode
+unset MESA_VK_WSI_PRESENT_MODE
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 WS_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 WORLD=""
-GUI="${GUI:-true}"
+GUI="${GUI:-false}"
 GUI_SET="false"
 VIEW_FOLLOW_SPAWN_SET="false"
 VIEW_DISTANCE_SET="false"
 VIEW_HEIGHT_SET="false"
-ENABLE_WSL_SOFTWARE_RENDERING="${ENABLE_WSL_SOFTWARE_RENDERING:-auto}"
 REBUILD="${REBUILD:-false}"
 STATE_DIR="/tmp/halmstad_ws"
 SIM_PID_FILE="$STATE_DIR/gazebo_sim.pid"
@@ -27,11 +40,55 @@ BAYLANDS_DEFAULT_X="0.0"
 BAYLANDS_DEFAULT_Y="0.0"
 BAYLANDS_DEFAULT_Z="0.8"
 BAYLANDS_DEFAULT_YAW="0.0"
-BAYLANDS_DEFAULT_WAYPOINT="parkinglot_west_0"
+BAYLANDS_DEFAULT_WAYPOINT="parkinglot_east_0"
 
 source "$SCRIPT_DIR/slam_state_common.sh"
 source "$SCRIPT_DIR/baylands_waypoint_common.sh"
 BAYLANDS_GROUP_WAYPOINT_CSV="$(baylands_group_waypoint_csv)"
+
+usage() {
+  cat <<'EOF'
+Usage:
+  ./run.sh gazebo_sim [world] [gui:true|false] [options...]
+  ./run.sh gazebo_sim [world] gui:=true|false [options...]
+
+Launch Gazebo and spawn the Clearpath UGV.
+
+Common options:
+  gui:=true|false
+  rebuild:=true|false
+  waypoint:=rotundan_0          Baylands spawn waypoint
+  state:=checkpoint             Saved SLAM state
+  x:=... y:=... z:=... yaw:=... Explicit spawn pose
+  rtf:=1.0                      Forwarded to managed_clearpath_sim.launch.py
+  clock_mode:=direct|guarded    Deprecated; accepted but ignored, /clock is direct
+
+Examples:
+  ./run.sh gazebo_sim baylands waypoint:=rotundan_0
+  ./run.sh gazebo_sim baylands false waypoint:=rotundan_0
+  ./run.sh gazebo_sim baylands gui:=true waypoint:=rotundan_0
+
+EOF
+}
+
+coerce_bool() {
+  case "$1" in
+    true|false)
+      printf '%s\n' "$1"
+      ;;
+    *)
+      echo "Invalid boolean value: $1" >&2
+      exit 2
+      ;;
+  esac
+}
+
+case "${1:-}" in
+  help|-h|--help)
+    usage
+    exit 0
+    ;;
+esac
 
 resolve_baylands_waypoint() {
   local waypoint_name="$1"
@@ -144,6 +201,10 @@ while [ "$#" -gt 0 ]; do
     yaw:=*)
       YAW_SET="true"
       PASSTHROUGH_ARGS+=("$1")
+      ;;
+    help|-h|--help)
+      usage
+      exit 0
       ;;
     *)
       PASSTHROUGH_ARGS+=("$1")
@@ -344,7 +405,7 @@ prelaunch_safety_cleanup() {
   signal_processes_by_pattern 'ros2 launch lrs_halmstad managed_clearpath_sim\.launch\.py'
   signal_processes_by_pattern 'ros2 launch .*/managed_clearpath_sim\.launch\.py'
   signal_processes_by_pattern '/ros_gz_bridge/(bridge_node|parameter_bridge|image_bridge)(\\s|$)'
-  signal_named_nodes 'amcl|map_server|planner_server|controller_server|collision_monitor|behavior_server|bt_navigator|waypoint_follower|velocity_smoother|smoother_server|route_server|docking_server|lifecycle_manager_localization|lifecycle_manager_navigation|ugv_nav2_driver|ugv_amcl_to_odom|ugv_amcl_to_platform_odom|ugv_amcl_to_platform_filtered_odom|ugv_platform_odom_to_tf|uav_simulator|follow_uav|follow_uav_odom|leader_detector|leader_tracker|leader_estimator|selected_target_filter|visual_target_estimator|follow_point_generator|follow_point_planner|visual_actuation_bridge|camera_tracker|clock_bridge|clock_guard|omnet_uav_pose_to_odom|omnet_tcp_bridge|omnet_metrics_bridge'
+  signal_named_nodes 'amcl|map_server|planner_server|controller_server|behavior_server|bt_navigator|waypoint_follower|velocity_smoother|smoother_server|route_server|docking_server|lifecycle_manager_localization|lifecycle_manager_navigation|ugv_nav2_driver|ugv_amcl_to_odom|ugv_amcl_to_platform_odom|ugv_amcl_to_platform_filtered_odom|ugv_platform_odom_to_tf|uav_simulator|follow_uav|follow_uav_odom|leader_detector|leader_tracker|leader_estimator|selected_target_filter|visual_target_estimator|follow_point_generator|follow_point_planner|visual_actuation_bridge|camera_tracker|clock_bridge|omnet_uav_pose_to_odom|omnet_tcp_bridge|omnet_metrics_bridge'
   signal_processes_by_pattern '(^|/)gz sim($| )'
 }
 
@@ -396,7 +457,6 @@ if [ "$WORLD" = "baylands" ]; then
   "$SCRIPT_DIR/recover_sim_controllers.sh" a201_0000 &
   printf '%s\n' "$!" > "$CONTROLLER_RECOVERY_PID_FILE"
 fi
-
 
 ros2 launch lrs_halmstad managed_clearpath_sim.launch.py \
   world:="$WORLD" \

@@ -9,6 +9,38 @@ WORLD="baylands"
 OUTPUT_DIR=""
 EXTRA_ARGS=()
 
+usage() {
+  cat <<'EOF'
+Usage:
+  ./run.sh capture_dataset [world] [arg:=value ...]
+
+Start the simulation dataset capture node.
+
+Common arguments:
+  world                 Dataset/world name. Default: current gazebo world file, else baylands.
+  out:=PATH             Output directory. Default: datasets/<world>_auto
+  class:=NAME           Class name parameter.
+  id:=INT               Class id parameter.
+  hz:=FLOAT             Capture rate in Hz.
+  negatives:=true|false Save negative examples.
+
+Any other arg:=value is forwarded as a ROS parameter.
+
+Examples:
+  ./run.sh capture_dataset baylands out:=datasets/baylands_auto class:=leader id:=0 hz:=2
+  ./run.sh capture_dataset warehouse negatives:=true
+EOF
+}
+
+for arg in "$@"; do
+  case "$arg" in
+    help|-h|--help)
+      usage
+      exit 0
+      ;;
+  esac
+done
+
 if [ -f "$SIM_WORLD_FILE" ]; then
   sim_world="$(cat "$SIM_WORLD_FILE" 2>/dev/null || true)"
   if [ -n "$sim_world" ]; then

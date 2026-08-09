@@ -1,0 +1,393 @@
+# YOLO 1-to-1 debug run matrix.
+#
+# Copy a run_args line directly after:
+#   ./run.sh tmux_1to1 restart baylands
+#
+# Example:
+#   ./run.sh tmux_1to1 restart baylands <run_args>
+#
+# If changing location, add waypoint:=<name>. Restart will run realign_yaw
+# with_uav:=true before localization/nav2/follow restart.
+#
+# param_overrides are manual edits in:
+#   src/lrs_halmstad/config/run_follow_defaults.yaml
+
+copy_prefix: "./run.sh tmux_1to1 restart baylands"
+
+default_run_args: "session:=yolo_debug mode:=yolo gui:=false weights:=/home/ruben/halmstad_ws/models/obb/mymodels/baylands-leader-v9-tuned-full.pt obb:=true tracker:=true external_detection_node:=tracker tracker_config:=bytetrack.yaml use_estimate:=true yolo_control_mode:=follow_uav_estimate visual_follow_logic:=legacy detector_backend:=ultralytics detector_async_inference:=true yolo_device:=auto detector_onnx_model:=/home/ruben/halmstad_ws/models/obb/mymodels/onnx/baylands-leader-v9-tuned-full.onnx start_visual_actuation_bridge:=false start_visual_follow_controller:=false start_visual_follow_point_generator:=false start_visual_follow_planner:=false follow_yaw:=true pan_enable:=true use_tilt:=true omnet:=true range_mode:=radio"
+runs:
+  - id: "00_all_enabled"
+    goal: "Baseline with the full intended YOLO stack."
+    run_args: "session:=yolo_debug mode:=yolo gui:=false weights:=/home/ruben/halmstad_ws/models/obb/mymodels/baylands-leader-v9-tuned-full.pt obb:=true tracker:=true external_detection_node:=tracker tracker_config:=bytetrack.yaml use_estimate:=true yolo_control_mode:=follow_uav_estimate visual_follow_logic:=legacy detector_backend:=ultralytics detector_async_inference:=true yolo_device:=auto detector_onnx_model:=/home/ruben/halmstad_ws/models/obb/mymodels/onnx/baylands-leader-v9-tuned-full.onnx start_visual_actuation_bridge:=false start_visual_follow_controller:=false start_visual_follow_point_generator:=false start_visual_follow_planner:=false follow_yaw:=true pan_enable:=true use_tilt:=true omnet:=true range_mode:=radio"
+    param_overrides:
+      camera_tracker.tick_hz: 5.0,
+      leader_tracker && detector.predict_hz: 10.0,
+      follow_uav.leader_heading_offset_deg: 0.0
+      follow_uav.leader_motion_heading_min_speed_mps: 0.0
+      follow_uav.leader_motion_heading_min_delta_m: 0.0
+      follow_uav.leader_motion_heading_alpha: 0.0
+      follow_uav.follow_speed_mps: 2.0
+      follow_uav.follow_speed_gain: 1.5
+      follow_uav.follow_yaw_rate_rad_s: 0.2
+      follow_uav.follow_yaw_rate_gain: 1.5
+      leader_tracker && detector.async.inference: false # Overriden to true
+      leader_tracker && detector.async.latest_frame_only: false # Overriden to true
+    result:
+      status: "bad"
+      detects: true
+      follows: "kind of"
+      yaw_rotations: "small"
+      gazebo_stable: true
+      gpu_spike: false
+      notes: "Goes towards and away from the UGV, I think its the radio_distance estimate since it jumps from ~7 to ~ 20m and does not update so often.""
+
+  - id: "01_no_tracker_detector_only"
+    goal: "Check if tracker is causing bad/no detections."
+    run_args: "session:=yolo_debug mode:=yolo gui:=false weights:=/home/ruben/halmstad_ws/models/obb/mymodels/baylands-leader-v9-tuned-full.pt obb:=true tracker:=false external_detection_node:=detector tracker_config:=bytetrack.yaml use_estimate:=true yolo_control_mode:=follow_uav_estimate visual_follow_logic:=legacy detector_backend:=ultralytics detector_async_inference:=true yolo_device:=auto detector_onnx_model:=/home/ruben/halmstad_ws/models/obb/mymodels/onnx/baylands-leader-v9-tuned-full.onnx start_visual_actuation_bridge:=false start_visual_follow_controller:=false start_visual_follow_point_generator:=false start_visual_follow_planner:=false follow_yaw:=true pan_enable:=true use_tilt:=true omnet:=true range_mode:=radio"
+    param_overrides: {
+      same_as_previous_run: true,
+      exeptions: {
+        leader_tracker && detector.async_inference: false,
+        leader_tracker && detector.latest_frame_only: true,
+        leader_estimator.radio_range_topic: /omnet/radio_distance
+      }
+    }
+    result:
+      status: "very good"
+      detects: true
+      follows: true
+      yaw_rotations: "none"
+      gazebo_stable: true
+      gpu_spike: true
+      notes: "First run OmNet++ 300s time ran outAlmost too good to be true; very stable detections (>95) and smooth motion. Stays at the distance we want and holds it."
+
+  - id: "02_no_estimate_direct_detection"
+    goal: "Invalid control test; YOLO mode blocks use_estimate:=false to avoid UGV odom follow."
+    run_args: "session:=yolo_debug mode:=yolo gui:=false weights:=/home/ruben/halmstad_ws/models/obb/mymodels/baylands-leader-v9-tuned-full.pt obb:=true tracker:=true external_detection_node:=tracker tracker_config:=bytetrack.yaml use_estimate:=false yolo_control_mode:=follow_uav_estimate visual_follow_logic:=legacy detector_backend:=ultralytics detector_async_inference:=true yolo_device:=auto detector_onnx_model:=/home/ruben/halmstad_ws/models/obb/mymodels/onnx/baylands-leader-v9-tuned-full.onnx start_visual_actuation_bridge:=false start_visual_follow_controller:=false start_visual_follow_point_generator:=false start_visual_follow_planner:=false follow_yaw:=true pan_enable:=true use_tilt:=true omnet:=true range_mode:=radio"
+    param_overrides: {
+      same_as_previous_run: true,
+    }
+    result:
+      status: "not_run"
+      detects: false
+      follows: false
+      yaw_rotations: "n/a"
+      gazebo_stable: true
+      gpu_spike: false
+      notes: "Failed at ./run_1to1_yolo.sh, expects to have mode:=yolo, run_1to1_yolo does not allow use_estimate:=false."
+
+  - id: "03_no_async_inference"
+    goal: "Check if async worker timing is stale or racing."
+    run_args: "session:=yolo_debug mode:=yolo gui:=false weights:=/home/ruben/halmstad_ws/models/obb/mymodels/baylands-leader-v9-tuned-full.pt obb:=true tracker:=true external_detection_node:=tracker tracker_config:=bytetrack.yaml use_estimate:=true yolo_control_mode:=follow_uav_estimate visual_follow_logic:=legacy detector_backend:=ultralytics detector_async_inference:=false yolo_device:=auto detector_onnx_model:=/home/ruben/halmstad_ws/models/obb/mymodels/onnx/baylands-leader-v9-tuned-full.onnx start_visual_actuation_bridge:=false start_visual_follow_controller:=false start_visual_follow_point_generator:=false start_visual_follow_planner:=false follow_yaw:=true pan_enable:=true use_tilt:=true omnet:=true range_mode:=radio"
+    param_overrides: {
+      tracker: true,
+      leader_tracker.async_inference: true # Overriden to false by something
+    }
+    result:
+      status: "no difference"
+      detects: true
+      follows: true
+      yaw_rotations: "none"
+      gazebo_stable: true
+      gpu_spike: false
+      notes: "Something sets async_inference back to false, maybe leader_tracker.async_inference? No observed difference in behavior, detections still look good and it follows well. Still no GPU spike."
+
+- id: "03.1_no_async_inference"
+    goal: "Check if async worker timing is stale or racing."
+    run_args: "session:=yolo_debug mode:=yolo gui:=false weights:=/home/ruben/halmstad_ws/models/obb/mymodels/baylands-leader-v9-tuned-full.pt obb:=true tracker:=false external_detection_node:=tracker tracker_config:=bytetrack.yaml use_estimate:=true yolo_control_mode:=follow_uav_estimate visual_follow_logic:=legacy detector_backend:=ultralytics detector_async_inference:=false yolo_device:=auto detector_onnx_model:=/home/ruben/halmstad_ws/models/obb/mymodels/onnx/baylands-leader-v9-tuned-full.onnx start_visual_actuation_bridge:=false start_visual_follow_controller:=false start_visual_follow_point_generator:=false start_visual_follow_planner:=false follow_yaw:=true pan_enable:=true use_tilt:=true omnet:=true range_mode:=radio"
+    changes: {tracker: false}
+    param_overrides: {
+      leader_detector.async_inference: true,  # Overriden to false by something
+      detector.iou_threshold: 0.7, # yolo started detecting other objects because these were at 0.05...
+      detector.conf_threshold: 0.8
+    }
+    result:
+      status: "good"
+      detects: true
+      follows: false
+      yaw_rotations: "small"
+      gazebo_stable: true
+      gpu_spike: false
+      notes: "Does not move much, but it tracks with camera and yaw, until the UGV passes beneath it. Then it loses track of it"
+
+  - id: "03_no_async_no_latest_frame_only"
+    goal: "Same as no async, but also disable latest-frame-only."
+    run_args: "session:=yolo_debug mode:=yolo gui:=false weights:=/home/ruben/halmstad_ws/models/obb/mymodels/baylands-leader-v9-tuned-full.pt obb:=true tracker:=true external_detection_node:=tracker tracker_config:=bytetrack.yaml use_estimate:=true yolo_control_mode:=follow_uav_estimate visual_follow_logic:=legacy detector_backend:=ultralytics detector_async_inference:=false yolo_device:=auto detector_onnx_model:=/home/ruben/halmstad_ws/models/obb/mymodels/onnx/baylands-leader-v9-tuned-full.onnx start_visual_actuation_bridge:=false start_visual_follow_controller:=false start_visual_follow_point_generator:=false start_visual_follow_planner:=false follow_yaw:=true pan_enable:=true use_tilt:=true omnet:=true range_mode:=radio"
+    changes: {tracker: true}
+    param_overrides:
+      leader_tracker.async_inference: false 
+      leader_tracker.latest_frame_only: false # Overriden to true
+    result:
+      status: "good"
+      detects: true
+      follows: true
+      yaw_rotations: "none"
+      gazebo_stable: true
+      gpu_spike: false
+      notes: ""
+
+  - id: "03.1_no_async_no_latest_frame_only"
+    goal: "Same as no async, but also disable latest-frame-only."
+    run_args: "session:=yolo_debug mode:=yolo gui:=false weights:=/home/ruben/halmstad_ws/models/obb/mymodels/baylands-leader-v9-tuned-full.pt obb:=true tracker:=true external_detection_node:=tracker tracker_config:=bytetrack.yaml use_estimate:=true yolo_control_mode:=follow_uav_estimate visual_follow_logic:=legacy detector_backend:=ultralytics detector_async_inference:=true yolo_device:=auto detector_onnx_model:=/home/ruben/halmstad_ws/models/obb/mymodels/onnx/baylands-leader-v9-tuned-full.onnx start_visual_actuation_bridge:=false start_visual_follow_controller:=false start_visual_follow_point_generator:=false start_visual_follow_planner:=false follow_yaw:=true pan_enable:=true use_tilt:=true omnet:=true range_mode:=radio"
+    changes: {external_detection_node: tracker, detector_async_inference: true}
+    param_overrides:
+      leader_tracker.async_inference: false # Overriden to true by "detector_async_inference: true"
+      leader_tracker.latest_frame_only: false # Overriden to true
+    result:
+      status: "bad"
+      detects: true
+      follows: false
+      yaw_rotations: "none"
+      gazebo_stable: true
+      gpu_spike: false
+      notes: "We found what caused async inference to be disabled: setting detector_async_inference to false trackers also false."
+
+  - id: "04_lower_detector_rate"
+    goal: "Reduce inference pressure and ROS traffic."
+    run_args: "session:=yolo_debug mode:=yolo gui:=false weights:=/home/ruben/halmstad_ws/models/obb/mymodels/baylands-leader-v9-tuned-full.pt obb:=true tracker:=true external_detection_node:=tracker tracker_config:=bytetrack.yaml use_estimate:=true yolo_control_mode:=follow_uav_estimate visual_follow_logic:=legacy detector_backend:=ultralytics detector_async_inference:=true yolo_device:=auto detector_onnx_model:=/home/ruben/halmstad_ws/models/obb/mymodels/onnx/baylands-leader-v9-tuned-full.onnx start_visual_actuation_bridge:=false start_visual_follow_controller:=false start_visual_follow_point_generator:=false start_visual_follow_planner:=false follow_yaw:=true pan_enable:=true use_tilt:=true omnet:=true range_mode:=radio"
+    param_overrides:
+      leader_detector.predict_hz: 10.0
+      leader_tracker.predict_hz: 10.0
+      camera_tracker.tick_hz: 5.0
+    result:
+      status: "good"
+      detects: true
+      conf: "~95"
+      follows: true
+      yaw_rotations: "none"
+      gazebo_stable: true
+      gpu_spike: true
+      notes: "Works flawlessly after rebuild and restart."
+
+  - id: "05_disable_debug_images"
+    goal: "Check if debug image publishing overloads rendering/ROS."
+    run_args: "session:=yolo_debug mode:=yolo gui:=false weights:=/home/ruben/halmstad_ws/models/obb/mymodels/baylands-leader-v9-tuned-full.pt obb:=true tracker:=true external_detection_node:=tracker tracker_config:=bytetrack.yaml use_estimate:=true yolo_control_mode:=follow_uav_estimate visual_follow_logic:=legacy detector_backend:=ultralytics detector_async_inference:=true yolo_device:=auto detector_onnx_model:=/home/ruben/halmstad_ws/models/obb/mymodels/onnx/baylands-leader-v9-tuned-full.onnx start_visual_actuation_bridge:=false start_visual_follow_controller:=false start_visual_follow_point_generator:=false start_visual_follow_planner:=false follow_yaw:=true pan_enable:=true use_tilt:=true omnet:=true range_mode:=radio"
+    param_overrides:
+      leader_estimator.publish_debug_image: false
+      leader_estimator.publish_events: false
+      leader_estimator.publish_fault_status: false
+      leader_estimator.publish_status: false
+      camera_tracker.publish_debug_topics: false
+      leader && tracker.publish_events: false -> true # No difference
+    result:
+      status: "good"
+      detects: true
+      follows: true
+      yaw_rotations: "none"
+      gazebo_stable: true
+      gpu_spike: false
+      notes: "Not much difference in perforomance, but hard to see what happens with no debug image."
+
+  - id: "06_no_gimbal_image_correction"
+    goal: "Use geometry-only pan/tilt; avoid image-centering feedback loops."
+    run_args: "session:=yolo_debug mode:=yolo gui:=false weights:=/home/ruben/halmstad_ws/models/obb/mymodels/baylands-leader-v9-tuned-full.pt obb:=true tracker:=true external_detection_node:=tracker tracker_config:=bytetrack.yaml use_estimate:=true yolo_control_mode:=follow_uav_estimate visual_follow_logic:=legacy detector_backend:=ultralytics detector_async_inference:=true yolo_device:=auto detector_onnx_model:=/home/ruben/halmstad_ws/models/obb/mymodels/onnx/baylands-leader-v9-tuned-full.onnx start_visual_actuation_bridge:=false start_visual_follow_controller:=false start_visual_follow_point_generator:=false start_visual_follow_planner:=false follow_yaw:=true pan_enable:=true use_tilt:=true omnet:=true range_mode:=radio"
+    changes: {
+      leader_estimator.publish_debug_image: true,
+      leader_estimator.publish_events: true,
+      leader_estimator.publish_fault_status: true,
+      leader_estimator.publish_status: true,
+      tracker && detector.publish_events: true,
+      }
+    param_overrides:
+        camera_tracker.publish_debug_topics: true
+        camera_tracker.image_center_correction_enable: false -> true       # A
+        camera_tracker.weak_status_center_correction_enable: false -> true # B
+        camera_tracker.prefer_visual_estimate_tilt_recovery: false -> true # C
+    result:
+      status: "not_run"
+      detects: true, # For all runs
+      follows: false, false false false, true,true, true
+      yaw_rotations: none for all runs (totally ignores yaw, even with image correction enabled)
+      gazebo_stable: true*4, true, false, true(isch)
+      gpu_spike:
+      notes: "1st run: A true, B C false: UAV didnt move but kept the UGV centered well. Not much difference, except stationary?"
+      notes: "2nd run: A B true, C false: Now the UGV stood still barely moved in XY."
+      notes: "3rd run: A B C true: Confirmed the UGV is stationary. Interesting...
+      notes: "4th run A B false, C true: No difference, except tiny side movements."
+      notes: "5th run: A C false, B true: Finally the UAV moves forward with the UGV. But it ignores yaw and stays at the same angle. As the others did."
+      notes: "6th run: A false, B C true: Follows just as well, but image less stable. Increased tick_hz 5.0 -> 15.0: Less laggy at least.
+
+
+  - id: "07_hold_gimbal_fixed"
+    goal: "Check if moving camera/gimbal is pushing the target out or causing instability."
+    run_args: "session:=yolo_debug mode:=yolo gui:=false weights:=/home/ruben/halmstad_ws/models/obb/mymodels/baylands-leader-v9-tuned-full.pt obb:=true tracker:=true external_detection_node:=tracker tracker_config:=bytetrack.yaml use_estimate:=true yolo_control_mode:=follow_uav_estimate visual_follow_logic:=legacy detector_backend:=ultralytics detector_async_inference:=true yolo_device:=auto detector_onnx_model:=/home/ruben/halmstad_ws/models/obb/mymodels/onnx/baylands-leader-v9-tuned-full.onnx start_visual_actuation_bridge:=false start_visual_follow_controller:=false start_visual_follow_point_generator:=false start_visual_follow_planner:=false follow_yaw:=true pan_enable:=false use_tilt:=false omnet:=true range_mode:=radio"
+    changes: {
+      camera_tracker.publish_debug_topics: false,
+      camera_tracker.image_center_correction_enable: false,
+      camera_tracker.weak_status_center_correction_enable: false,
+      camera_tracker.prefer_visual_estimate_tilt_recovery: false 
+    }
+    param_overrides:
+      camera_tracker.pan_enable: false
+      camera_tracker.tilt_enable: false
+    result:
+      status: "best so far"
+      detects: true
+      follows: true
+      yaw_rotations: "none"
+      gazebo_stable: true
+      gpu_spike: true
+      notes: "Super-smooth, I even activated teleop to drive faster, and it followed.",
+      notes: "2nd try: not so smooth, it stated going forward by itself and moved too close to the UGV. But that was after crash so maybe does not count."
+      notes: "3rd try: super smooth, best one so far.
+
+  - id: "09_onnx_cpu"
+    goal: "Test exported ONNX path without DirectML/GPU."
+    run_args: "session:=yolo_debug mode:=yolo gui:=false obb:=true tracker:=true external_detection_node:=tracker tracker_config:=bytetrack.yaml use_estimate:=true yolo_control_mode:=follow_uav_estimate visual_follow_logic:=legacy detector_backend:=onnx_cpu detector_async_inference:=true yolo_device:=cpu detector_onnx_model:=/home/ruben/halmstad_ws/models/obb/mymodels/onnx/baylands-leader-v9-tuned-full.onnx /home/ruben/halmstad_ws/models/obb/mymodels/onnx/baylands-leader-v9-tuned-full.onnx start_visual_actuation_bridge:=false start_visual_follow_controller:=false start_visual_follow_point_generator:=false start_visual_follow_planner:=false follow_yaw:=true pan_enable:=true use_tilt:=true omnet:=true range_mode:=radio"
+    changes: {
+      camera_tracker.pan_enable: false,
+      camera_tracker.tilt_enable: false,
+      weight: "", # To not override ONNX
+      }
+    param_overrides:
+      leader_detector.backend: onnx_cpu
+      leader_tracker.backend: onnx_cpu
+      
+    result:
+      status: "very good"
+      detects: true
+      follows: true 
+      yaw_rotations: "barely"
+      gazebo_stable: false
+      gpu_spike: true, true, true
+      notes: "Previous ONNX note: outer bounding box format looked wrong. 
+      notes: "Green BB looks wrong, its supposed to ecnlose the blue OBB, but it is not. Don't know if it makes a difference."
+      notes: "Otherwise follows very good. BUT crashes occur AND rqt and RViz can't be launched now. Had to restart WSL..."
+      notes: "Broken, don't use this."
+
+  - id: "10_no_follow_motion_detection_only"
+    goal: "Run perception without UAV follow motion to isolate detector/tracker."
+    run_args: "session:=yolo_debug mode:=yolo gui:=false weights:=/home/ruben/halmstad_ws/models/obb/mymodels/baylands-leader-v9-tuned-full.pt obb:=true tracker:=true external_detection_node:=tracker tracker_config:=bytetrack.yaml use_estimate:=true yolo_control_mode:=follow_uav_estimate visual_follow_logic:=legacy detector_backend:=ultralytics detector_async_inference:=true yolo_device:=auto detector_onnx_model:=/home/ruben/halmstad_ws/models/obb/mymodels/onnx/baylands-leader-v9-tuned-full.onnx start_visual_actuation_bridge:=false start_visual_follow_controller:=false start_visual_follow_point_generator:=false start_visual_follow_planner:=false follow_yaw:=false pan_enable:=true use_tilt:=true omnet:=true range_mode:=radio"
+    param_overrides:
+      tilt_enable: false
+      pan_enable: false
+      detector.onnx_model: ""
+      follow_uav.follow_yaw: false
+      follow_uav.follow_speed_mps: 0.0
+      follow_uav.follow_speed_gain: 0.0
+    result:
+      status: "runs"
+      detects: true
+      follows: hell_no, too_fast, yes_buydoesnotstop,
+      yaw_rotations: hell_no
+      gazebo_stable: true
+      gpu_spike: false
+      notes: "Of course it does not move, when it has 0.0 speed set."
+      follow_speed_mps: 3.0
+      follow_speed_gain: 1.5
+      notes: "It zooms past the vehicle"
+      follow_speed_gain: 0.0
+      notes: "Now it does not move again."
+      follow_speed_gain: 0.5
+      follow_speed_mps: 0.0
+      notes: "No movement"
+      follow_speed_mps: 5.0
+      follow_speed_gain: 0.25
+      notes: "PERFECT. IT WAS THE GAIN THAT MADE THE UGV ZOOM PAST THE UGV... Keep it at most < 0.3!"
+
+      
+  - id: "11_no_omnet"
+    goal: "Ensure OMNeT/LoRa bridge is not adding timing/load issues."
+    run_args: "session:=yolo_debug mode:=yolo gui:=false weights:=/home/ruben/halmstad_ws/models/obb/mymodels/baylands-leader-v9-tuned-full.pt obb:=true tracker:=true external_detection_node:=tracker tracker_config:=bytetrack.yaml use_estimate:=true yolo_control_mode:=follow_uav_estimate visual_follow_logic:=legacy detector_backend:=ultralytics detector_async_inference:=true yolo_device:=auto detector_onnx_model:=/home/ruben/halmstad_ws/models/obb/mymodels/onnx/baylands-leader-v9-tuned-full.onnx start_visual_actuation_bridge:=false start_visual_follow_controller:=false start_visual_follow_point_generator:=false start_visual_follow_planner:=false follow_yaw:=true pan_enable:=true use_tilt:=true omnet:=false range_mode:=auto"
+    param_overrides:
+      leader_estimator.radio_range_topic: "",
+      omnet: false,
+      omnet_network: "",
+    result:
+      status: "could be best so far"
+      detects: true
+      follows: true 
+      yaw_rotations: "none"
+      gazebo_stable: false
+      gpu_spike: false
+      notes: "Really good at following, but a little more lag than I expected."
+
+  - id: "12_best_known_minimal"
+    goal: "Candidate stable config if baseline is noisy."
+
+    ## ARGS HERE ##
+    run_args: ./run.sh tmux_1to1 start baylands session:=yolo_debug mode:=yolo gui:=false weights:=...v9-tuned-full.pt follow_yaw:=true pan_enable:=false use_tilt:=false range_mode:=auto visual_follow_logic:=legacy tracker:=false external_detection_node:=detector detector_backend:=ultralytics detector_async_inference:=false use_estimate:=true omnet:=true omnet_network:=lora omnet_ui:=cmdenv
+
+    defaults_we_should_not_touch:
+            lidar: 3d, 
+            use_scan_relay: false,
+            scan_real_hz: 8.0,
+            use_actual_heading: false,
+            yolo_control_mode: follow_uav_estimate,
+            {
+                start_visual_actuation_bridge: false,
+                start_visual_follow_controller: false,
+                start_visual_follow_point_generator: false,
+                start_visual_follow_planner: false,
+            },
+            yolo_device: auto,
+            obb: true,
+            tracker_config: bytetrack.yaml, 
+
+
+    comments:
+            weights: Overrides the ONNX if set in args no matter what,
+            detector_onnx_model: Needs detector_backend:=onnix and obb:=true otherwise defaults back to .pt,
+            yolo_control_mode: Controls the visual-follow stuff,
+            lidar: There is no single 2d nav. We do 3d pc -> pc2ls -> 2d ls,
+            scan_real_hz: only if -,
+            use_scan_relay: - is set to "true",
+            use_actual_heading: Almost to dangerous too keep as it could leak ugv data,
+            detector_async_inference: This sets BOTH tracker and detection; if "true" sets "false" to trackers async,
+            detector_onnx_model: Leave unless you set detector_backen:=onnx,
+              
+    param_overrides: 
+      {
+      follow_uav: 
+        {
+        follow_uav.leader_heading_offset_deg: 0.0,
+        follow_uav.leader_motion_heading_min_speed_mps: 0.0,
+        follow_uav.leader_motion_heading_min_delta_m: 0.0,
+        follow_uav.leader_motion_heading_alpha: 0.0,
+        follow_uav.follow_speed_mps: 5.0,
+        follow_uav.follow_speed_gain: 0.3,
+        follow_uav.follow_yaw_rate_rad_s: 3.0,
+        follow_uav.follow_yaw_rate_gain: 0.8,
+        },
+        camera_tracker:
+          {
+          pan_enable: false,
+          tilt_enable: false,
+          prefer_visual_estimate_tilt_recovery: false,
+          image_center_correction_enable: false,
+          weak_status_center_correction_enable: false,
+          publish_debug_topics: false,
+          },
+        leader_detector:
+          {
+          leader_detector.predict_hz: 10.0,
+          leader_detector.async_inference: false,
+          leader.detector.latest_frame_only: false,
+          conf_threshold: 0.8,
+          iou_threshold: 0.7,
+          },
+        leader_tracker:
+          {
+          leader.tracker.async_inference: false,
+          leader.tracker.latest_frame_only: false,
+          conf_threshold: 0.8,
+          iou_threshold: 0.7,
+          },
+        leader_estimator:
+          {
+          radio_range_topic: /omnet/radio_distance, # DON'T USE link_distance
+          est_hz: 20.0,
+          range_mode: auto,
+          },
+      Everything else is disabled.             
+      }
+            
+
+    result:
+            status: "BEST"
+            detects: true 
+            follows: true
+            yaw_rotations: "none"
+            gazebo_stable: true
+            gpu_spike: false
+            notes: ""

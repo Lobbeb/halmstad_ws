@@ -1,0 +1,53 @@
+<?xml version="1.0"?>
+<sdf version="1.7">
+  <model name="goal_marker">
+    <!-- Static keeps the goal at the placed pose; Gazebo's transform tool can
+         still reposition it. No collision is used, so robots can reach it. -->
+    <static>true</static>
+    <link name="goal_link">
+      <visual name="target_disc">
+        <pose>0 0 0.03 0 0 0</pose>
+        <geometry>
+          <cylinder>
+            <radius>0.75</radius>
+            <length>0.06</length>
+          </cylinder>
+        </geometry>
+        <material>
+          <ambient>0.05 0.65 0.10 1</ambient>
+          <diffuse>0.08 0.95 0.15 1</diffuse>
+          <specular>0.10 0.10 0.10 1</specular>
+          <emissive>0.02 0.18 0.03 1</emissive>
+        </material>
+      </visual>
+
+      <visual name="goal_pole">
+        <pose>0 0 1.03 0 0 0</pose>
+        <geometry>
+          <cylinder>
+            <radius>0.035</radius>
+            <length>2.0</length>
+          </cylinder>
+        </geometry>
+        <material>
+          <ambient>0.80 0.80 0.80 1</ambient>
+          <diffuse>0.95 0.95 0.95 1</diffuse>
+        </material>
+      </visual>
+
+      <visual name="goal_flag">
+        <pose>0.38 0 1.75 0 0 0</pose>
+        <geometry>
+          <box>
+            <size>0.75 0.04 0.50</size>
+          </box>
+        </geometry>
+        <material>
+          <ambient>0.05 0.65 0.10 1</ambient>
+          <diffuse>0.08 0.95 0.15 1</diffuse>
+          <emissive>0.02 0.18 0.03 1</emissive>
+        </material>
+      </visual>
+    </link>
+  </model>
+</sdf>

@@ -7,13 +7,15 @@ STATE_DIR="/tmp/halmstad_ws"
 SIM_PID_FILE="$STATE_DIR/gazebo_sim.pid"
 TMUX_STATE_DIR="$STATE_DIR/tmux_sessions"
 WORLD="baylands"
-SESSION="halmstad-1to1"
+SESSION=""
+SESSION_EXPLICIT=false
+ACTION="start"
 MAP_PATH=""
 GUI="false"
 TMUX_ATTACH=true
 DRY_RUN=false
 LAYOUT="panes"
-MODE="follow"
+MODE="yolo"
 RECORD=false
 RECORD_PROFILE="default"
 RECORD_TAG=""
@@ -30,11 +32,17 @@ GAZEBO_READY_SETTLE_S=10
 UAV_NAME="dji0"
 ROS_DOMAIN_ID_EFFECTIVE="${ROS_DOMAIN_ID:-3}"
 RMW_IMPLEMENTATION_EFFECTIVE="${RMW_IMPLEMENTATION:-rmw_fastrtps_cpp}"
+
+# The ROS Python detector executable uses /usr/bin/python3. Do not let IDE or
+# conda settings hide user-site packages such as ultralytics.
+unset PYTHONNOUSERSITE
 UGV_NAMESPACE="a201_0000"
-OMNET_NETWORK="wifi"
+OMNET_NETWORK="lora"
 OMNET_UI="cmdenv"
 OMNET_PROJECT=""
 OMNET_RESULT_DIR=""
+OMNET_LORA_SF=""
+OMNET_LORA_BW=""
 OMNET_BRIDGE_PORT="5555"
 OMNET_START_DELAY_OVERRIDE=""
 DEFAULT_OMNET_START_DELAY_S="3.0"
@@ -52,18 +60,27 @@ BAYLANDS_NAV_SPAWN_Y="-54.861874768"
 BAYLANDS_NAV_SPAWN_Z="0.100975479"
 BAYLANDS_NAV_SPAWN_YAW="0.484129496"
 BAYLANDS_NAV_LIDAR_MODE="3d"
-NAV_LIDAR_MODE=""
+NAV_LIDAR_MODE="3d"
 HAS_GAZEBO_SPAWN_OVERRIDE="false"
 GAZEBO_SPAWN_STATE_NAME=""
 GAZEBO_WAYPOINT_NAME=""
+WAYPOINT_EXPLICIT="false"
 GAZEBO_SPAWN_X_OVERRIDE=""
 GAZEBO_SPAWN_Y_OVERRIDE=""
 GAZEBO_SPAWN_Z_OVERRIDE=""
 GAZEBO_SPAWN_YAW_OVERRIDE=""
 HAVE_UGV_GOAL_SEQUENCE="false"
 HAVE_RANGE_MODE="false"
+HAVE_RADIO_RANGE_TOPIC="false"
+HAVE_BRIDGE_DEPTH="false"
 FOLLOW_WAIT_TOPICS=""
 NAV2_GOALS_FOR_LIDAR=""
+STRICT_STACK_START="true"
+MODELS_ROOT="${LRS_HALMSTAD_MODELS_ROOT:-$WS_ROOT/models}"
+YOLO_WEIGHTS_RAW=""
+YOLO_OBB="true"
+YOLO_MODEL_SUBDIR=""
+YOLO_WEIGHTS_WAIT_TIMEOUT_S="${YOLO_WEIGHTS_WAIT_TIMEOUT_S:-30}"
 SPAWN_ARGS=()
 FOLLOW_ARGS=()
 GAZEBO_ARGS=()
@@ -75,6 +92,141 @@ source "$SCRIPT_DIR/slam_state_common.sh"
 source "$SCRIPT_DIR/baylands_waypoint_common.sh"
 source "$SCRIPT_DIR/baylands_route_lidar_common.sh"
 BAYLANDS_GROUP_WAYPOINT_CSV="$(baylands_group_waypoint_csv)"
+
+is_action() {
+  case "$1" in
+    start|restart|stack_restart|follow|follow_restart|status|attach)
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+print_usage() {
+  cat <<'EOF'
+Usage:
+  ./run.sh tmux_1to1 [world] [action] [options...]
+  ./run.sh tmux_1to1 [action] [world] [options...]
+
+Actions:
+  [ start | restart | stack_restart | follow | follow_restart | status | attach ]
+
+Common:
+
+  mode:=follow|yolo  |   gui:=true|false    |     waypoint:=name
+  session:=name
+  tmux_attach:=true|false
+  layout:=windows|panes
+  dry_run:=true|false
+
+Recording:
+  record:=[true|false]
+  record_profile:=[default|step2_light|vision|manual]
+  record_tag:=[name]
+  record_out:=[bags/experiments/... ]
+
+Gazebo spawn / scene:
+  state:=checkpoint ( x:=... y:=... z:=... yaw:=...)
+  camera:=attached
+  camera_update_rate:=20
+  laser:=true|false
+  laser_update_rate:=10
+  laser_max_range:=25
+  height:=7
+  mount_pitch_deg:=45
+  uav_name:=dji0
+  rtf:=1.0
+  clock_mode:=direct|guarded (deprecated; accepted but ignored, /clock is direct)
+
+Nav2 / route:
+  nav2_goals:=route_name|route.yaml
+  goal_sequence_file:=route_name|route.yaml
+  goal_sequence_csv:=x,y,yaw;...
+  ugv_goal_sequence_file:=route_name|route.yaml
+  ugv_goal_sequence_csv:=x,y,yaw;...
+  ugv_goal_sequence_randomize:=true|false
+  ugv_goal_sequence_random_reverse:=true|false
+  ugv_goal_sequence_relative_to_current_pose:=true|false
+
+Localization / lidar:
+  lidar:=2d|3d
+  scan_topic:=...
+  pointcloud_topic:=...
+  use_scan_relay:=true|false
+  scan_relay_hz:=...
+  pc2ls_min_height:=...
+  pc2ls_max_height:=...
+
+Follow / camera:
+  follow_yaw:=true|false
+  pan_enable:=true|false
+  use_tilt:=true|false
+  tilt_enable:=true|false
+  camera_default_tilt_deg:=...
+  start_camera_tracker:=true|false
+  use_actual_heading:=true|false
+  leader_actual_heading_enable:=true|false
+  leader_actual_pose_enable:=true|false
+  camera_actual_pose_reacquire_enable:=true|false
+  range_mode:=auto|depth|radio|const
+  radio_range_topic:=/omnet/radio_distance
+  bridge_depth:=true|false
+  params_file:=/path/run_follow_defaults.yaml
+
+YOLO only:
+  weights:=...
+  target:=...
+  obb:=true|false
+  tracker:=true|false
+  yolo_control_mode:=visual_bridge|follow_uav_estimate
+  visual_follow_logic:=legacy|follow_core
+  external_detection_node:=detector|tracker
+  tracker_config:=botsort.yaml
+  detector_backend:=ultralytics|onnx_cpu|onnx_directml
+  detector_async_inference:=true|false
+  detector_latest_frame_only:=true|false
+  detector_stale_detection_threshold_ms:=...
+  yolo_device:=cpu|auto
+  detector_onnx_model:=...
+  start_visual_follow_controller:=true|false
+  start_visual_follow_point_generator:=true|false
+  start_visual_follow_planner:=true|false
+  start_visual_actuation_bridge:=true|false
+
+OMNeT:
+  omnet:=true|false
+  omnet_network:=wifi|5g|lora|lora-sf10-250|lora-duplex|lora-sweep
+  lora_sf:=7..12
+  lora_bw:=125kHz|250kHz
+  omnet_ui:=cmdenv|qtenv
+  omnet_project:=/path/UAV_UGV
+  omnet_result_dir:=/path
+  omnet_bridge_port:=5555
+  omnet_start_delay_s:=3.0
+
+Timing:
+  delay_s:=9
+  spawn_delay_s:=9
+  localization_delay_s:=11
+  nav2_delay_s:=11
+  follow_delay_s:=13
+  follow_wait_topics:=/topic_a,/topic_b
+  record_delay_s:=13
+  ugv_start_delay_s:=3.0
+  uav_start_delay_s:=12.0
+  yolo_weights_wait_timeout_s:=30
+  gazebo_ready_timeout_s:=180
+  gazebo_ready_settle_s:=10
+  strict_stack_start:=true|false
+
+Examples:
+  ./run.sh tmux_1to1 baylands mode:=yolo omnet:=true record:=true
+  ./run.sh tmux_1to1 baylands mode:=follow waypoint:=rotundan_0 nav2_goals:=rotundan omnet:=true
+  ./run.sh tmux_1to1 status session:=halmstad-baylands-1to1
+EOF
+}
 
 resolve_baylands_waypoint() {
   local waypoint_name="$1"
@@ -142,9 +294,34 @@ print(f"uav_yaw_deg={math.degrees(ugv_yaw):.9f}")
 PY
 }
 
-if [ "$#" -gt 0 ] && [[ "$1" != *":="* ]] && [[ "$1" != *=* ]]; then
+case "${1:-}" in
+  help|-h|--help)
+    print_usage
+    exit 0
+    ;;
+esac
+
+case "$MODELS_ROOT" in
+  "~")
+    MODELS_ROOT="$HOME"
+    ;;
+  "~/"*)
+    MODELS_ROOT="$HOME/${MODELS_ROOT#\~/}"
+    ;;
+esac
+
+if [ "$#" -gt 0 ] && is_action "$1"; then
+  ACTION="$1"
+  shift
+fi
+
+if [ "$#" -gt 0 ] && [[ "$1" != *":="* ]] && [[ "$1" != *=* ]] && ! is_action "$1"; then
   WORLD="$1"
-  SESSION="halmstad-${WORLD}-1to1"
+  shift
+fi
+
+if [ "$#" -gt 0 ] && is_action "$1"; then
+  ACTION="$1"
   shift
 fi
 
@@ -152,6 +329,7 @@ for arg in "$@"; do
   case "$arg" in
     session:=*)
       SESSION="${arg#session:=}"
+      SESSION_EXPLICIT=true
       ;;
     map:=*)
       MAP_PATH="${arg#map:=}"
@@ -200,6 +378,7 @@ for arg in "$@"; do
     waypoint:=*)
       HAS_GAZEBO_SPAWN_OVERRIDE="true"
       GAZEBO_WAYPOINT_NAME="${arg#waypoint:=}"
+      WAYPOINT_EXPLICIT="true"
       GAZEBO_ARGS+=("$arg")
       ;;
     tmux_attach:=*|attach:=*)
@@ -281,11 +460,14 @@ for arg in "$@"; do
     follow_wait_topics:=*)
       FOLLOW_WAIT_TOPICS="${arg#follow_wait_topics:=}"
       ;;
+    yolo_weights_wait_timeout_s:=*|weights_wait_timeout_s:=*)
+      YOLO_WEIGHTS_WAIT_TIMEOUT_S="${arg#*:=}"
+      ;;
+    strict_stack_start:=*)
+      STRICT_STACK_START="${arg#strict_stack_start:=}"
+      ;;
     record_delay_s:=*)
       RECORD_DELAY_OVERRIDE="${arg#record_delay_s:=}"
-      ;;
-    lidar:=2d|scan_sensor:=2d)
-      NAV_LIDAR_MODE="2d"
       ;;
     lidar:=3d|scan_sensor:=3d)
       NAV_LIDAR_MODE="3d"
@@ -297,14 +479,25 @@ for arg in "$@"; do
       echo "Use camera:=attached with $0." >&2
       exit 2
       ;;
-    camera:=*|height:=*|mount_pitch_deg:=*|uav_name:=*)
+    camera:=*|height:=*|mount_pitch_deg:=*|camera_update_rate:=*|uav_name:=*|bridge_depth:=*|laser:=*|with_laser:=*|bridge_laser:=*|laser_name:=*|laser_update_rate:=*|laser_min_range:=*|laser_max_range:=*|laser_angle_deg:=*|laser_x:=*|laser_y:=*|laser_z:=*|laser_sensor_x:=*|laser_sensor_y:=*|laser_sensor_z:=*|laser_rpy:=*|laser_frame_id:=*)
+
       if [[ "$arg" == uav_name:=* ]]; then
         UAV_NAME="${arg#uav_name:=}"
       elif [[ "$arg" == height:=* ]]; then
         UAV_HEIGHT_OVERRIDE="${arg#height:=}"
+      elif [[ "$arg" == bridge_depth:=* ]]; then
+        HAVE_BRIDGE_DEPTH="true"
+        SPAWN_ARGS+=("$arg")
+        continue
+      elif [[ "$arg" == laser:=* || "$arg" == with_laser:=* || "$arg" == bridge_laser:=* || "$arg" == laser_*:=* ]]; then
+        SPAWN_ARGS+=("$arg")
+        continue
       fi
       SPAWN_ARGS+=("$arg")
       FOLLOW_ARGS+=("$arg")
+      ;;
+    clock_mode:=*)
+      GAZEBO_ARGS+=("$arg")
       ;;
     goal_sequence_file:=*)
       HAVE_UGV_GOAL_SEQUENCE="true"
@@ -343,14 +536,30 @@ for arg in "$@"; do
     params_file:=*)
       FOLLOW_ARGS+=("$arg")
       ;;
-    follow_yaw:=*|pan_enable:=*|use_tilt:=*|tilt_enable:=*|camera_default_tilt_deg:=*|use_actual_heading:=*|leader_actual_heading_enable:=*|leader_actual_heading_topic:=*|leader_actual_pose_enable:=*|camera_actual_pose_reacquire_enable:=*|ugv_goal_sequence_randomize:=*|ugv_goal_sequence_random_reverse:=*|ugv_goal_sequence_relative_to_current_pose:=*)
+    follow_yaw:=*|pan_enable:=*|use_tilt:=*|tilt_enable:=*|camera_default_tilt_deg:=*|start_camera_tracker:=*|use_actual_heading:=*|leader_actual_heading_enable:=*|leader_actual_heading_topic:=*|leader_actual_pose_enable:=*|camera_actual_pose_reacquire_enable:=*|ugv_goal_sequence_randomize:=*|ugv_goal_sequence_random_reverse:=*|ugv_goal_sequence_relative_to_current_pose:=*)
       FOLLOW_ARGS+=("$arg")
       ;;
     range_mode:=*)
       HAVE_RANGE_MODE="true"
       FOLLOW_ARGS+=("$arg")
       ;;
-    weights:=*|target:=*|use_estimate:=*|yolo_control_mode:=*|visual_follow_logic:=*|obb:=*|folder:=*|dir:=*|subdir:=*|tracker:=*|external_detection_node:=*|tracker_config:=*|yolo_device:=*|device:=*|detector_backend:=*|detector_async_inference:=*|detector_onnx_model:=*|ugv_start_delay_s:=*|start_visual_follow_controller:=*|start_visual_follow_point_generator:=*|start_visual_follow_planner:=*|start_visual_actuation_bridge:=*|follow_point_prefer_target_pose_heading:=*|follow_point_prefer_target_pose_position:=*|leader_selected_target_topic:=*|leader_selected_target_filtered_topic:=*|leader_selected_target_filtered_status_topic:=*|leader_visual_target_estimate_topic:=*|leader_visual_target_estimate_status_topic:=*|leader_follow_point_topic:=*|leader_follow_point_status_topic:=*|leader_planned_target_topic:=*|leader_planned_target_status_topic:=*|leader_visual_control_topic:=*|leader_visual_control_status_topic:=*|leader_visual_actuation_bridge_status_topic:=*)
+    radio_range_topic:=*)
+      HAVE_RADIO_RANGE_TOPIC="true"
+      FOLLOW_ARGS+=("$arg")
+      ;;
+    weights:=*)
+      YOLO_WEIGHTS_RAW="${arg#weights:=}"
+      FOLLOW_ARGS+=("$arg")
+      ;;
+    obb:=*)
+      YOLO_OBB="${arg#obb:=}"
+      FOLLOW_ARGS+=("$arg")
+      ;;
+    folder:=*|dir:=*|subdir:=*)
+      YOLO_MODEL_SUBDIR="${arg#*:=}"
+      FOLLOW_ARGS+=("$arg")
+      ;;
+    target:=*|use_estimate:=*|yolo_control_mode:=*|visual_follow_logic:=*|tracker:=*|external_detection_node:=*|tracker_config:=*|yolo_device:=*|device:=*|detector_backend:=*|detector_async_inference:=*|detector_latest_frame_only:=*|detector_stale_detection_threshold_ms:=*|detector_metrics_window_s:=*|detector_benchmark_csv_path:=*|detector_image_qos_depth:=*|detector_image_qos_reliability:=*|detector_onnx_model:=*|ugv_start_delay_s:=*|start_visual_follow_controller:=*|start_visual_follow_point_generator:=*|start_visual_follow_planner:=*|start_visual_actuation_bridge:=*|follow_point_prefer_target_pose_heading:=*|follow_point_prefer_target_pose_position:=*|leader_selected_target_topic:=*|leader_selected_target_filtered_topic:=*|leader_selected_target_filtered_status_topic:=*|leader_visual_target_estimate_topic:=*|leader_visual_target_estimate_status_topic:=*|leader_follow_point_topic:=*|leader_follow_point_status_topic:=*|leader_planned_target_topic:=*|leader_planned_target_status_topic:=*|leader_visual_control_topic:=*|leader_visual_control_status_topic:=*|leader_visual_actuation_bridge_status_topic:=*)
       FOLLOW_ARGS+=("$arg")
       ;;
     omnet:=*)
@@ -380,6 +589,12 @@ for arg in "$@"; do
     omnet_result_dir:=*)
       OMNET_RESULT_DIR="${arg#omnet_result_dir:=}"
       ;;
+    lora_sf:=*|omnet_lora_sf:=*|sf:=*)
+      OMNET_LORA_SF="${arg#*:=}"
+      ;;
+    lora_bw:=*|omnet_lora_bw:=*|bw:=*)
+      OMNET_LORA_BW="${arg#*:=}"
+      ;;
     omnet_bridge_port:=*)
       OMNET_BRIDGE_PORT="${arg#omnet_bridge_port:=}"
       FOLLOW_ARGS+=("$arg")
@@ -393,13 +608,21 @@ for arg in "$@"; do
     uav_start_delay_s:=*)
       UAV_START_DELAY_OVERRIDE="${arg#uav_start_delay_s:=}"
       ;;
+    help|-h|--help)
+      print_usage
+      exit 0
+      ;;
     *)
       echo "Unknown argument: $arg" >&2
-      echo "Usage: $0 [world] [mode:=follow|yolo] [record:=true|false] [record_profile:=default|step2_light|vision] [record_tag:=name] [record_out:=bags/experiments/...] [camera:=attached] [follow_yaw:=true|false] [pan_enable:=true|false] [use_tilt:=true|false] [height:=7] [mount_pitch_deg:=45] [uav_name:=dji0] [weights:=...] [target:=...] [yolo_control_mode:=visual_bridge|follow_uav_estimate] [visual_follow_logic:=legacy|follow_core] [obb:=true|false] [tracker:=true|false] [external_detection_node:=detector|tracker] [tracker_config:=botsort.yaml] [detector_backend:=ultralytics|onnx_cpu|onnx_directml] [detector_async_inference:=true|false] [yolo_device:=cpu|auto] [detector_onnx_model:=...] [params_file:=/path/run_follow_defaults.yaml] [ugv_start_delay_s:=12.0] [follow_point_prefer_target_pose_heading:=true|false] [follow_point_prefer_target_pose_position:=true|false] [start_visual_actuation_bridge:=true|false] [start_visual_follow_point_generator:=true|false] [start_visual_follow_planner:=true|false] [start_visual_follow_controller:=true|false] [nav2_goals:=parkinglot_east|route.yaml] [ugv_goal_sequence_csv:=x,y,yaw;...] [ugv_goal_sequence_randomize:=true|false] [ugv_goal_sequence_random_reverse:=true|false] [ugv_goal_sequence_relative_to_current_pose:=true|false] [folder:=...] [map:=/path/map.yaml] [lidar:=2d|3d] [pc2ls_min_height:=...] [pc2ls_max_height:=...] [scan_relay_hz:=...] [gui:=true|false] [rtf:=1.0] [x:=...] [y:=...] [z:=...] [yaw:=...] [state:=checkpoint] [waypoint:=name] [delay_s:=9] [spawn_delay_s:=9] [localization_delay_s:=11] [nav2_delay_s:=11] [follow_delay_s:=13] [follow_wait_topics:=/topic_a,/topic_b] [record_delay_s:=13] [session:=name] [tmux_attach:=true|false] [dry_run:=true|false] [layout:=windows|panes] [omnet:=true|false] [omnet_network:=wifi|5g|lora] [omnet_ui:=cmdenv|qtenv] [omnet_project:=/path/UAV_UGV] [omnet_result_dir:=/path] [omnet_bridge_port:=5555] [omnet_start_delay_s:=3.0] [ugv_start_delay_s:=3.0] [uav_start_delay_s:=12.0]" >&2
+      print_usage >&2
       exit 2
       ;;
   esac
 done
+
+if [ -z "$SESSION" ]; then
+  SESSION="halmstad-${WORLD}-1to1"
+fi
 
 if [[ "$WORLD" == baylands* ]]; then
   baylands_sync_waypoints "$DRY_RUN"
@@ -418,7 +641,7 @@ esac
 if [ "$MODE" != "yolo" ]; then
   for arg in "${FOLLOW_ARGS[@]}"; do
       case "$arg" in
-      weights:=*|target:=*|use_estimate:=*|yolo_control_mode:=*|visual_follow_logic:=*|obb:=*|folder:=*|dir:=*|subdir:=*|tracker:=*|external_detection_node:=*|tracker_config:=*|yolo_device:=*|device:=*|detector_backend:=*|detector_async_inference:=*|detector_onnx_model:=*|range_mode:=*|ugv_start_delay_s:=*|start_visual_follow_controller:=*|start_visual_follow_point_generator:=*|start_visual_follow_planner:=*|start_visual_actuation_bridge:=*|follow_point_prefer_target_pose_heading:=*|follow_point_prefer_target_pose_position:=*|leader_selected_target_topic:=*|leader_selected_target_filtered_topic:=*|leader_selected_target_filtered_status_topic:=*|leader_visual_target_estimate_topic:=*|leader_visual_target_estimate_status_topic:=*|leader_follow_point_topic:=*|leader_follow_point_status_topic:=*|leader_planned_target_topic:=*|leader_planned_target_status_topic:=*|leader_visual_control_topic:=*|leader_visual_control_status_topic:=*|leader_visual_actuation_bridge_status_topic:=*)
+      weights:=*|target:=*|use_estimate:=*|yolo_control_mode:=*|visual_follow_logic:=*|obb:=*|folder:=*|dir:=*|subdir:=*|tracker:=*|external_detection_node:=*|tracker_config:=*|yolo_device:=*|device:=*|detector_backend:=*|detector_async_inference:=*|detector_latest_frame_only:=*|detector_stale_detection_threshold_ms:=*|detector_metrics_window_s:=*|detector_benchmark_csv_path:=*|detector_image_qos_depth:=*|detector_image_qos_reliability:=*|detector_onnx_model:=*|range_mode:=*|radio_range_topic:=*|ugv_start_delay_s:=*|start_visual_follow_controller:=*|start_visual_follow_point_generator:=*|start_visual_follow_planner:=*|start_visual_actuation_bridge:=*|follow_point_prefer_target_pose_heading:=*|follow_point_prefer_target_pose_position:=*|leader_selected_target_topic:=*|leader_selected_target_filtered_topic:=*|leader_selected_target_filtered_status_topic:=*|leader_visual_target_estimate_topic:=*|leader_visual_target_estimate_status_topic:=*|leader_follow_point_topic:=*|leader_follow_point_status_topic:=*|leader_planned_target_topic:=*|leader_planned_target_status_topic:=*|leader_visual_control_topic:=*|leader_visual_control_status_topic:=*|leader_visual_actuation_bridge_status_topic:=*)
         echo "Argument '$arg' requires mode:=yolo" >&2
         exit 2
         ;;
@@ -460,11 +683,21 @@ case "$RECORD" in
 esac
 
 case "$RECORD_PROFILE" in
-  default|step2_light|vision)
+  default|step2_light|vision|manual)
     ;;
   *)
     echo "Invalid record_profile: $RECORD_PROFILE" >&2
-    echo "Use record_profile:=default, step2_light, or vision" >&2
+    echo "Use record_profile:=default, step2_light, vision or manual" >&2
+    exit 2
+    ;;
+esac
+
+case "$STRICT_STACK_START" in
+  true|false)
+    ;;
+  *)
+    echo "Invalid strict_stack_start option: $STRICT_STACK_START" >&2
+    echo "Use strict_stack_start:=true or strict_stack_start:=false" >&2
     exit 2
     ;;
 esac
@@ -484,6 +717,13 @@ SESSION_SAFE="$(printf '%s' "$SESSION" | tr -c 'A-Za-z0-9_.-' '_')"
 SESSION_STATE_FILE="$TMUX_STATE_DIR/${SESSION_SAFE}.env"
 record_pane=""
 omnet_pane=""
+GAZEBO_PANE_ID=""
+SPAWN_PANE_ID=""
+LOCALIZATION_PANE_ID=""
+NAV2_PANE_ID=""
+FOLLOW_PANE_ID=""
+OMNET_PANE_ID=""
+RECORD_PANE_ID=""
 
 apply_default_delays() {
   if [ "$EFFECTIVE_GUI" = false ]; then
@@ -534,6 +774,92 @@ shell_join() {
   printf '%s' "${out% }"
 }
 
+tmux_yolo_weight_root() {
+  if [ "$YOLO_OBB" = "false" ]; then
+    echo "detection"
+  else
+    echo "obb"
+  fi
+}
+
+resolve_tmux_yolo_weights_path() {
+  local raw="$YOLO_WEIGHTS_RAW"
+  local root
+  root="$(tmux_yolo_weight_root)"
+
+  if [ -z "$raw" ]; then
+    raw="/home/ruben/halmstad_ws/models/obb/mymodels/baylands-leader-v9-tuned-full.pt"
+  fi
+
+  case "$raw" in
+    "~")
+      raw="$HOME"
+      ;;
+    "~/"*)
+      raw="$HOME/${raw#\~/}"
+      ;;
+  esac
+
+  if [[ "$raw" = /* ]]; then
+    echo "$raw"
+  elif [[ "$raw" == ./* ]]; then
+    echo "$WS_ROOT/${raw#./}"
+  elif [ -e "$WS_ROOT/$raw" ]; then
+    echo "$WS_ROOT/$raw"
+  elif [ -e "$MODELS_ROOT/$raw" ]; then
+    echo "$MODELS_ROOT/$raw"
+  elif [[ "$raw" == models/* ]]; then
+    echo "$WS_ROOT/$raw"
+  elif [[ "$raw" == obb/* || "$raw" == detection/* ]]; then
+    echo "$MODELS_ROOT/$raw"
+  elif [[ "$raw" == */* ]]; then
+    echo "$MODELS_ROOT/$root/$raw"
+  elif [ -n "$YOLO_MODEL_SUBDIR" ]; then
+    echo "$MODELS_ROOT/$root/$YOLO_MODEL_SUBDIR/$raw"
+  else
+    echo "$MODELS_ROOT/$root/mymodels/$raw"
+  fi
+}
+
+wait_for_tmux_yolo_weights() {
+  if [ "$MODE" != "yolo" ]; then
+    return 0
+  fi
+
+  case "$YOLO_WEIGHTS_WAIT_TIMEOUT_S" in
+    ''|*[!0-9]*)
+      echo "Invalid yolo_weights_wait_timeout_s: $YOLO_WEIGHTS_WAIT_TIMEOUT_S" >&2
+      exit 2
+      ;;
+  esac
+
+  local weights_path
+  weights_path="$(resolve_tmux_yolo_weights_path)"
+  if [ -f "$weights_path" ]; then
+    echo "[run_tmux_1to1] Verified YOLO weights: $weights_path"
+    return 0
+  fi
+
+  if [ "$YOLO_WEIGHTS_WAIT_TIMEOUT_S" = "0" ]; then
+    echo "[run_tmux_1to1] YOLO weights file not found: $weights_path" >&2
+    exit 2
+  fi
+
+  echo "[run_tmux_1to1] Waiting up to ${YOLO_WEIGHTS_WAIT_TIMEOUT_S}s for YOLO weights: $weights_path"
+  local start_s="$SECONDS"
+  while [ ! -f "$weights_path" ] && [ "$((SECONDS - start_s))" -lt "$YOLO_WEIGHTS_WAIT_TIMEOUT_S" ]; do
+    sleep 1
+  done
+
+  if [ ! -f "$weights_path" ]; then
+    echo "[run_tmux_1to1] YOLO weights file not found after ${YOLO_WEIGHTS_WAIT_TIMEOUT_S}s: $weights_path" >&2
+    echo "[run_tmux_1to1] Use weights_wait_timeout_s:=0 to fail immediately, or pass an existing weights:=... path." >&2
+    exit 2
+  fi
+
+  echo "[run_tmux_1to1] Verified YOLO weights: $weights_path"
+}
+
 build_line() {
   local delay_s="$1"
   local wait_for_sim="$2"
@@ -548,10 +874,10 @@ build_line() {
   if [ "$delay_s" != "0" ] && [ "$delay_s" != "0.0" ]; then
     printf -v line '%ssleep %q && ' "$line" "$delay_s"
   fi
-  if [ "$wait_for_sim" = true ]; then
+  if [ "$wait_for_sim" = true ] && [ "$STRICT_STACK_START" = true ]; then
     printf -v line '%sbash -lc %q && ' "$line" "$(build_gazebo_ready_cmd)"
   fi
-  if [ -n "$ready_cmd" ]; then
+  if [ -n "$ready_cmd" ] && [ "$STRICT_STACK_START" = true ]; then
     printf -v line '%sbash -lc %q && ' "$line" "$ready_cmd"
   fi
   printf -v line '%s%s' "$line" "$(shell_join "$@")"
@@ -720,6 +1046,215 @@ signal_named_nodes() {
   signal_processes_by_pattern "__node:=($names_regex)(\\s|$)"
 }
 
+pane_target() {
+  local name="$1"
+  local pane_id=""
+
+  pane_id="$(lookup_saved_pane_id "$name" || true)"
+  if pane_exists "$pane_id"; then
+    printf '%s\n' "$pane_id"
+    return 0
+  fi
+
+  pane_id="$(tmux list-panes -a -t "$SESSION" -F '#{pane_id}\t#{pane_title}' 2>/dev/null | awk -F '\t' -v want="$name" '$2 == want { print $1; exit }' || true)"
+  if [ -n "$pane_id" ]; then
+    printf '%s\n' "$pane_id"
+    return 0
+  fi
+
+  if tmux list-windows -t "$SESSION" -F '#{window_name}' 2>/dev/null | grep -Fxq "$name"; then
+    tmux display-message -p -t "$SESSION:$name.0" '#{pane_id}' 2>/dev/null
+    return 0
+  fi
+
+  return 1
+}
+
+lookup_saved_pane_id() {
+  local name="$1"
+  case "$name" in
+    gazebo) printf '%s\n' "$GAZEBO_PANE_ID" ;;
+    spawn) printf '%s\n' "$SPAWN_PANE_ID" ;;
+    localization) printf '%s\n' "$LOCALIZATION_PANE_ID" ;;
+    nav2) printf '%s\n' "$NAV2_PANE_ID" ;;
+    follow) printf '%s\n' "$FOLLOW_PANE_ID" ;;
+    omnet) printf '%s\n' "$OMNET_PANE_ID" ;;
+    record) printf '%s\n' "$RECORD_PANE_ID" ;;
+    *) return 1 ;;
+  esac
+}
+
+pane_exists() {
+  local pane_id="$1"
+  [ -n "$pane_id" ] || return 1
+  [ "$(tmux display-message -p -t "$pane_id" '#{pane_id}' 2>/dev/null || true)" = "$pane_id" ]
+}
+
+load_session_state_if_present() {
+  local key=""
+  local value=""
+
+  SESSION_SAFE="$(printf '%s' "$SESSION" | tr -c 'A-Za-z0-9_.-' '_')"
+  SESSION_STATE_FILE="$TMUX_STATE_DIR/${SESSION_SAFE}.env"
+  TMUX_CMD_DIR="/tmp/${SESSION}_tmux_cmds"
+  [ -f "$SESSION_STATE_FILE" ] || return 1
+
+  while IFS='=' read -r key value; do
+    case "$key" in
+      GAZEBO_PANE_ID|SPAWN_PANE_ID|LOCALIZATION_PANE_ID|NAV2_PANE_ID|FOLLOW_PANE_ID|OMNET_PANE_ID|RECORD_PANE_ID)
+        eval "$key=$value"
+        ;;
+    esac
+  done < "$SESSION_STATE_FILE"
+}
+
+print_pane_lookup_debug() {
+  echo "Active panes in $SESSION:" >&2
+  tmux list-panes -a -t "$SESSION" -F '  #{pane_id} #{window_name}.#{pane_index} title=#{pane_title} cmd=#{pane_current_command}' >&2 || true
+  if [ -f "$SESSION_STATE_FILE" ]; then
+    echo "Saved pane IDs from $SESSION_STATE_FILE:" >&2
+    echo "  localization=$LOCALIZATION_PANE_ID nav2=$NAV2_PANE_ID follow=$FOLLOW_PANE_ID" >&2
+  else
+    echo "No saved pane state file found at $SESSION_STATE_FILE" >&2
+  fi
+}
+
+tmux_session_exists() {
+  local session_name="$1"
+  tmux has-session -t "$session_name" 2>/dev/null
+}
+
+list_active_tmux_sessions() {
+  tmux list-sessions -F '#{session_name}' 2>/dev/null || true
+}
+
+session_has_1to1_shape() {
+  local session_name="$1"
+  local pane_titles=""
+  local window_names=""
+
+  case "$session_name" in
+    *1to1*)
+      return 0
+      ;;
+  esac
+
+  pane_titles="$(tmux list-panes -a -t "$session_name" -F '#{pane_title}' 2>/dev/null || true)"
+  if printf '%s\n' "$pane_titles" | grep -Eq '^(localization|nav2|follow)$'; then
+    return 0
+  fi
+
+  window_names="$(tmux list-windows -t "$session_name" -F '#{window_name}' 2>/dev/null || true)"
+  if printf '%s\n' "$window_names" | grep -Eq '^(localization|nav2|follow)$'; then
+    return 0
+  fi
+
+  return 1
+}
+
+discover_single_likely_session() {
+  local active_session=""
+  local matches=()
+
+  while IFS= read -r active_session; do
+    [ -n "$active_session" ] || continue
+    if session_has_1to1_shape "$active_session"; then
+      matches+=("$active_session")
+    fi
+  done < <(list_active_tmux_sessions)
+
+  if [ "${#matches[@]}" -eq 1 ]; then
+    printf '%s\n' "${matches[0]}"
+    return 0
+  fi
+  return 1
+}
+
+print_missing_session_help() {
+  local requested_action="$1"
+  local active_sessions=()
+  local active_session=""
+
+  echo "tmux session not found: $SESSION" >&2
+  while IFS= read -r active_session; do
+    [ -n "$active_session" ] || continue
+    active_sessions+=("$active_session")
+  done < <(list_active_tmux_sessions)
+
+  if [ "${#active_sessions[@]}" -eq 0 ]; then
+    echo "No active tmux sessions exist. If you ran './stop.sh tmux_1to1', it kills the tmux session by default." >&2
+    echo "Use a cold start now: ./run.sh tmux_1to1 start $WORLD [args...]" >&2
+  else
+    echo "Active tmux sessions:" >&2
+    printf '  - %s\n' "${active_sessions[@]}" >&2
+    echo "If one of these is the target, rerun with: session:=<name>" >&2
+  fi
+
+  echo "For next time, keep panes reusable with: ./stop.sh tmux_1to1 session:=$SESSION kill_session:=false" >&2
+  if [ "$requested_action" = "status" ]; then
+    echo "After a full stop, there is no tmux session to inspect; use 'start' first." >&2
+  elif [ "$requested_action" = "attach" ]; then
+    echo "After a full stop, there is no tmux session to attach to; use 'start' first." >&2
+  elif [ "$requested_action" = "follow" ] || [ "$requested_action" = "follow_restart" ]; then
+    echo "After a full stop, 'follow' cannot restart anything; use 'start' first." >&2
+  else
+    echo "After a full stop, '$requested_action' cannot restart anything; use 'start' first." >&2
+  fi
+}
+
+resolve_existing_session_or_fail() {
+  local requested_action="$1"
+  local discovered_session=""
+
+  if tmux_session_exists "$SESSION"; then
+    return 0
+  fi
+
+  if [ "$SESSION_EXPLICIT" != true ]; then
+    discovered_session="$(discover_single_likely_session || true)"
+    if [ -n "$discovered_session" ]; then
+      echo "[run_tmux_1to1] Using active tmux session: $discovered_session"
+      SESSION="$discovered_session"
+      TMUX_CMD_DIR="/tmp/${SESSION}_tmux_cmds"
+      return 0
+    fi
+  fi
+
+  print_missing_session_help "$requested_action"
+  return 1
+}
+
+send_ctrl_c_target() {
+  local name="$1"
+  local pane_id=""
+  pane_id="$(pane_target "$name" || true)"
+  if [ -n "$pane_id" ]; then
+    echo "[run_tmux_1to1] Stopping $name pane ($pane_id)"
+    tmux send-keys -t "$pane_id" C-c
+  fi
+}
+
+stop_stack_processes() {
+  send_ctrl_c_target follow
+  send_ctrl_c_target nav2
+  send_ctrl_c_target localization
+  sleep 1
+
+  signal_processes_by_pattern 'scripts/run_localization\.sh'
+  signal_processes_by_pattern 'scripts/run_nav2\.sh'
+  signal_processes_by_pattern 'ros2 launch lrs_halmstad run_follow\.launch\.py'
+  signal_processes_by_pattern 'ros2 launch lrs_halmstad run_1to1_follow\.launch\.py'
+  signal_processes_by_pattern 'ros2 launch .*/run_follow\.launch\.py'
+  signal_processes_by_pattern 'ros2 launch clearpath_nav2_demos nav2\.launch\.py'
+  signal_processes_by_pattern 'ros2 launch .*/nav2_with_updates\.launch\.py'
+  signal_processes_by_pattern '/opt/ros/[^/]+/lib/nav2_'
+  signal_processes_by_pattern 'ros2 launch clearpath_nav2_demos localization\.launch\.py'
+  signal_processes_by_pattern 'ros2 launch .*/localization_with_params\.launch\.py'
+  signal_processes_by_pattern '(^|/)pointcloud_to_laserscan_node($| )'
+  signal_processes_by_pattern '(^|/)latest_scan_relay($| )'
+  signal_named_nodes 'amcl|map_server|planner_server|controller_server|behavior_server|bt_navigator|waypoint_follower|velocity_smoother|smoother_server|route_server|docking_server|lifecycle_manager_localization|lifecycle_manager_navigation|pointcloud_to_laserscan|latest_scan_relay|ugv_nav2_driver|ugv_amcl_to_odom|ugv_amcl_to_platform_odom|ugv_amcl_to_platform_filtered_odom|ugv_platform_odom_to_tf|follow_uav|follow_uav_odom|leader_detector|leader_tracker|leader_estimator|selected_target_filter|visual_target_estimator|follow_point_generator|follow_point_planner|visual_actuation_bridge|camera_tracker'
+}
+
 prelaunch_safety_cleanup() {
   rm -f "$SIM_PID_FILE"
   signal_processes_by_pattern 'scripts/run_gazebo_sim\.sh'
@@ -738,9 +1273,46 @@ prelaunch_safety_cleanup() {
   signal_processes_by_pattern 'ros2 launch lrs_halmstad managed_clearpath_sim\.launch\.py'
   signal_processes_by_pattern 'ros2 launch .*/managed_clearpath_sim\.launch\.py'
   signal_processes_by_pattern '/ros_gz_bridge/(bridge_node|parameter_bridge|image_bridge)(\\s|$)'
-  signal_named_nodes 'amcl|map_server|planner_server|controller_server|collision_monitor|behavior_server|bt_navigator|waypoint_follower|velocity_smoother|smoother_server|route_server|docking_server|lifecycle_manager_localization|lifecycle_manager_navigation|ugv_nav2_driver|ugv_amcl_to_odom|ugv_amcl_to_platform_odom|ugv_amcl_to_platform_filtered_odom|ugv_platform_odom_to_tf|uav_simulator|follow_uav|follow_uav_odom|leader_detector|leader_tracker|leader_estimator|selected_target_filter|visual_target_estimator|follow_point_generator|follow_point_planner|visual_actuation_bridge|camera_tracker|clock_bridge|clock_guard|omnet_uav_pose_to_odom|omnet_tcp_bridge|omnet_metrics_bridge'
+  signal_named_nodes 'amcl|map_server|planner_server|controller_server|behavior_server|bt_navigator|waypoint_follower|velocity_smoother|smoother_server|route_server|docking_server|lifecycle_manager_localization|lifecycle_manager_navigation|ugv_nav2_driver|ugv_amcl_to_odom|ugv_amcl_to_platform_odom|ugv_amcl_to_platform_filtered_odom|ugv_platform_odom_to_tf|uav_simulator|follow_uav|follow_uav_odom|leader_detector|leader_tracker|leader_estimator|selected_target_filter|visual_target_estimator|follow_point_generator|follow_point_planner|visual_actuation_bridge|camera_tracker|clock_bridge|omnet_uav_pose_to_odom|omnet_tcp_bridge|omnet_metrics_bridge'
   signal_processes_by_pattern '(^|/)UAV_UGV($| ).*-c Communication-GazeboBridge-'
   signal_processes_by_pattern '(^|/)gz sim($| )'
+}
+
+configure_gazebo_gpu_env() {
+  export MESA_D3D12_DEFAULT_ADAPTER_NAME="${LRS_SIM_GPU_ADAPTER:-AMD Radeon RX 7600}"
+  export GALLIUM_DRIVER=d3d12
+
+  unset LIBGL_ALWAYS_SOFTWARE
+  unset MESA_LOADER_DRIVER_OVERRIDE
+  unset GALLIUM_DRIVER_LLVM
+  unset vblank_mode
+  unset MESA_VK_WSI_PRESENT_MODE
+}
+
+TMUX_CMD_DIR="/tmp/${SESSION}_tmux_cmds"
+
+send_script_to_pane() {
+  local pane="$1"
+  local name="$2"
+  local command="$3"
+  local script="$TMUX_CMD_DIR/${name}.sh"
+
+  mkdir -p "$TMUX_CMD_DIR"
+  cat > "$script" <<EOF
+#!/usr/bin/env bash
+set -e
+cd /home/ruben/halmstad_ws
+export ROS_DOMAIN_ID=3
+export RMW_IMPLEMENTATION=rmw_fastrtps_cpp
+unset PYTHONNOUSERSITE
+
+$command
+EOF
+
+  chmod +x "$script"
+
+  tmux send-keys -t "$pane" C-c
+  tmux send-keys -t "$pane" "clear; bash '$script'" C-m
 }
 
 
@@ -766,6 +1338,8 @@ write_session_state() {
     printf 'OMNET_UI=%q\n' "$OMNET_UI"
     printf 'OMNET_PROJECT=%q\n' "$OMNET_PROJECT"
     printf 'OMNET_RESULT_DIR=%q\n' "$OMNET_RESULT_DIR"
+    printf 'OMNET_LORA_SF=%q\n' "$OMNET_LORA_SF"
+    printf 'OMNET_LORA_BW=%q\n' "$OMNET_LORA_BW"
     printf 'FOLLOW_CMD_STR=%q\n' "$(shell_join "${FOLLOW_CMD[@]}")"
     printf 'RECORD_CMD_STR=%q\n' "$_record_cmd_str"
     printf 'GAZEBO_PANE_ID=%q\n' "$gazebo_pane"
@@ -782,11 +1356,14 @@ apply_default_delays
 
 FOLLOW_ARGS+=("start_omnet_bridge:=$OMNET")
 if [ "$HAVE_RANGE_MODE" != true ]; then
-  if [ "$OMNET" = true ]; then
+  if [ "$OMNET" = true ] && [ "$MODE" != "yolo" ]; then
     FOLLOW_ARGS+=("range_mode:=radio")
   else
     FOLLOW_ARGS+=("range_mode:=auto")
   fi
+fi
+if [ "$HAVE_BRIDGE_DEPTH" != true ] && [ "$MODE" = "yolo" ]; then
+  SPAWN_ARGS+=("bridge_depth:=true")
 fi
 shared_start_delay_s="$DEFAULT_OMNET_START_DELAY_S"
 if [ -n "$OMNET_START_DELAY_OVERRIDE" ]; then
@@ -804,16 +1381,35 @@ else
 fi
 
 if [[ "$WORLD" == baylands* ]] && [ "$HAVE_UGV_GOAL_SEQUENCE" = "false" ]; then
-  FOLLOW_ARGS+=("nav2_goals:=$(baylands_route_yaml_path "$BAYLANDS_DEFAULT_NAV2_GOALS")")
-  NAV2_GOALS_FOR_LIDAR="$BAYLANDS_DEFAULT_NAV2_GOALS"
-  echo "[run_tmux_1to1] Baylands default Nav2 goals: nav2_goals:=$BAYLANDS_DEFAULT_NAV2_GOALS"
+  if [ -n "$GAZEBO_WAYPOINT_NAME" ]; then
+    inferred_nav2_goals="$(baylands_route_for_waypoint "$GAZEBO_WAYPOINT_NAME" 2>/dev/null || true)"
+    if [ -n "$inferred_nav2_goals" ]; then
+      FOLLOW_ARGS+=("nav2_goals:=$(baylands_route_yaml_path "$inferred_nav2_goals")")
+      NAV2_GOALS_FOR_LIDAR="$inferred_nav2_goals"
+      echo "[run_tmux_1to1] Baylands waypoint implies Nav2 goals: waypoint:=$GAZEBO_WAYPOINT_NAME nav2_goals:=$inferred_nav2_goals"
+    fi
+  fi
+  if [ -z "$NAV2_GOALS_FOR_LIDAR" ]; then
+    FOLLOW_ARGS+=("nav2_goals:=$(baylands_route_yaml_path "$BAYLANDS_DEFAULT_NAV2_GOALS")")
+    NAV2_GOALS_FOR_LIDAR="$BAYLANDS_DEFAULT_NAV2_GOALS"
+    echo "[run_tmux_1to1] Baylands default Nav2 goals: nav2_goals:=$BAYLANDS_DEFAULT_NAV2_GOALS"
+  fi
 fi
 
 if [[ "$WORLD" == baylands* ]] && [ "$HAS_GAZEBO_SPAWN_OVERRIDE" = "false" ]; then
-  GAZEBO_WAYPOINT_NAME="$BAYLANDS_DEFAULT_WAYPOINT"
+  route_start_waypoint=""
+  if [ -n "$NAV2_GOALS_FOR_LIDAR" ]; then
+    route_start_waypoint="$(baylands_first_waypoint_for_route "$NAV2_GOALS_FOR_LIDAR" 2>/dev/null || true)"
+    if [ -z "$route_start_waypoint" ]; then
+      echo "[run_tmux_1to1] Could not resolve first waypoint for nav2_goals:=$NAV2_GOALS_FOR_LIDAR" >&2
+      echo "[run_tmux_1to1] Pass waypoint:=... explicitly for this route." >&2
+      exit 2
+    fi
+  fi
+  GAZEBO_WAYPOINT_NAME="${route_start_waypoint:-$BAYLANDS_DEFAULT_WAYPOINT}"
   HAS_GAZEBO_SPAWN_OVERRIDE="true"
   GAZEBO_ARGS+=("waypoint:=$GAZEBO_WAYPOINT_NAME")
-  echo "[run_tmux_1to1] Baylands default UGV spawn waypoint: waypoint:=$GAZEBO_WAYPOINT_NAME"
+  echo "[run_tmux_1to1] Baylands UGV spawn waypoint: waypoint:=$GAZEBO_WAYPOINT_NAME"
 fi
 
 UGV_SPAWN_X=""
@@ -873,7 +1469,7 @@ if [ -n "$UGV_SPAWN_X" ] && [ -n "$UGV_SPAWN_Y" ] && [ -n "$UGV_SPAWN_YAW" ]; th
   }
   eval "$UAV_SPAWN_ENV"
   SPAWN_ARGS+=("x:=$uav_x" "y:=$uav_y" "z:=$uav_z" "yaw:=$uav_yaw")
-  if [[ "$WORLD" != baylands* ]]; then
+  if [[ "$WORLD" != baylands* ]] || [ "$MODE" = "yolo" ]; then
     FOLLOW_ARGS+=(
       "uav_start_x:=$uav_x"
       "uav_start_y:=$uav_y"
@@ -883,7 +1479,11 @@ if [ -n "$UGV_SPAWN_X" ] && [ -n "$UGV_SPAWN_Y" ] && [ -n "$UGV_SPAWN_YAW" ]; th
   fi
   echo "[run_tmux_1to1] Using deterministic UAV spawn from UGV spawn x=${UGV_SPAWN_X} y=${UGV_SPAWN_Y} yaw=${UGV_SPAWN_YAW}: uav_x=${uav_x} uav_y=${uav_y} uav_z=${uav_z} uav_yaw_deg=${uav_yaw_deg}"
   if [[ "$WORLD" == baylands* ]]; then
-    echo "[run_tmux_1to1] Baylands follow start will be resolved from the live UAV pose by run_1to1_follow."
+    if [ "$MODE" = "yolo" ]; then
+      echo "[run_tmux_1to1] Baylands YOLO follow will use the deterministic UAV spawn as its simulator start pose."
+    else
+      echo "[run_tmux_1to1] Baylands follow start will be resolved from the live UAV pose by run_1to1_follow."
+    fi
   fi
 fi
 
@@ -896,6 +1496,16 @@ if [ "${#GAZEBO_ARGS[@]}" -gt 0 ]; then
 fi
 
 SPAWN_CMD=(./run.sh spawn_uav "$WORLD" "${SPAWN_ARGS[@]}")
+RESTART_REALIGN_CMD=()
+if [ "$WAYPOINT_EXPLICIT" = "true" ]; then
+  RESTART_REALIGN_CMD=(
+    ./run.sh realign_yaw "$WORLD"
+    "waypoint:=$GAZEBO_WAYPOINT_NAME"
+    "with_uav:=true"
+    "uav_name:=$UAV_NAME"
+    "height:=${UAV_HEIGHT_OVERRIDE:-$DEFAULT_UAV_Z}"
+  )
+fi
 LOCALIZATION_CMD=(./run.sh localization "$WORLD")
 if [ -n "$MAP_PATH" ]; then
   LOCALIZATION_CMD+=("$MAP_PATH")
@@ -938,6 +1548,7 @@ NAV2_READY_CMD="$(build_nav2_ready_cmd)"
 FOLLOW_READY_CMD="$(build_follow_ready_cmd)"
 if [ "$RECORD" = true ]; then
   RECORD_CMD=(./run.sh record_experiment "$WORLD" "mode:=$MODE" "uav_name:=$UAV_NAME" "profile:=$RECORD_PROFILE")
+  RECORD_CMD+=("omnet:=$OMNET")
   if [ -n "$RECORD_TAG" ]; then
     RECORD_CMD+=("tag:=$RECORD_TAG")
   fi
@@ -954,6 +1565,12 @@ if [ "$OMNET" = true ]; then
   if [ -n "$OMNET_RESULT_DIR" ]; then
     OMNET_CMD+=("result_dir:=$OMNET_RESULT_DIR")
   fi
+  if [ -n "$OMNET_LORA_SF" ]; then
+    OMNET_CMD+=("lora_sf:=$OMNET_LORA_SF")
+  fi
+  if [ -n "$OMNET_LORA_BW" ]; then
+    OMNET_CMD+=("lora_bw:=$OMNET_LORA_BW")
+  fi
   OMNET_READY_CMD="$(build_omnet_ready_cmd)"
 fi
 
@@ -962,6 +1579,13 @@ SPAWN_LINE="$(build_line "$SPAWN_DELAY_S" true "" "${SPAWN_CMD[@]}")"
 LOCALIZATION_LINE="$(build_line "$LOCALIZATION_DELAY_S" true "" "${LOCALIZATION_CMD[@]}")"
 NAV2_LINE="$(build_line "$NAV2_DELAY_S" true "$LOCALIZATION_READY_CMD" "${NAV2_CMD[@]}")"
 FOLLOW_LINE="$(build_line "$FOLLOW_DELAY_S" true "$FOLLOW_READY_CMD" "${FOLLOW_CMD[@]}")"
+STACK_LOCALIZATION_LINE="$(build_line 0 false "" "${LOCALIZATION_CMD[@]}")"
+STACK_NAV2_LINE="$(build_line 0 false "$LOCALIZATION_READY_CMD" "${NAV2_CMD[@]}")"
+STACK_FOLLOW_LINE="$(build_line 0 false "$NAV2_READY_CMD" "${FOLLOW_CMD[@]}")"
+RESTART_REALIGN_LINE=""
+if [ "${#RESTART_REALIGN_CMD[@]}" -gt 0 ]; then
+  RESTART_REALIGN_LINE="$(build_line 0 false "" "${RESTART_REALIGN_CMD[@]}")"
+fi
 if [ "$OMNET" = true ]; then
   OMNET_LINE="$(build_line "$FOLLOW_DELAY_S" true "$OMNET_READY_CMD" "${OMNET_CMD[@]}")"
 fi
@@ -969,16 +1593,16 @@ if [ "$RECORD" = true ]; then
   RECORD_LINE="$(build_line "$RECORD_DELAY_S" true "$LOCALIZATION_READY_CMD" "${RECORD_CMD[@]}")"
 fi
 
-if tmux has-session -t "$SESSION" 2>/dev/null; then
-  echo "tmux session already exists: $SESSION" >&2
-  echo "Attach with: tmux attach -t $SESSION" >&2
-  exit 1
-fi
-
-prelaunch_safety_cleanup
+case "$ACTION" in
+  restart|stack_restart|follow|follow_restart|status|attach)
+    resolve_existing_session_or_fail "$ACTION"
+    load_session_state_if_present || true
+    ;;
+esac
 
 if [ "$DRY_RUN" = true ]; then
   echo "Session: $SESSION"
+  echo "Action: $ACTION"
   echo "Mode: $MODE"
   echo "Layout: $LAYOUT"
   echo "GUI: $EFFECTIVE_GUI"
@@ -990,22 +1614,115 @@ if [ "$DRY_RUN" = true ]; then
     echo "Startup holds: shared=${OMNET_START_DELAY_OVERRIDE:-$DEFAULT_OMNET_START_DELAY_S} ugv=${UGV_START_DELAY_OVERRIDE:-${OMNET:+$shared_start_delay_s}} uav=${UAV_START_DELAY_OVERRIDE:-$DEFAULT_UAV_START_DELAY_S}"
   fi
   echo "Delays: spawn=$SPAWN_DELAY_S localization=$LOCALIZATION_DELAY_S nav2=$NAV2_DELAY_S follow=$FOLLOW_DELAY_S record=$RECORD_DELAY_S"
-  echo "[gazebo]       $GAZEBO_LINE"
-  echo "[spawn]        $SPAWN_LINE"
-  echo "[localization] $LOCALIZATION_LINE"
-  echo "[nav2]         $NAV2_LINE"
-  echo "[follow]       $FOLLOW_LINE"
-  if [ "$OMNET" = true ]; then
-    echo "[omnet]        $OMNET_LINE"
-  fi
-  if [ "$RECORD" = true ]; then
-    echo "[record]       $RECORD_LINE"
-  fi
+  case "$ACTION" in
+    restart|stack_restart)
+      if [ -n "$RESTART_REALIGN_LINE" ]; then
+        echo "[realign restart]      $RESTART_REALIGN_LINE"
+      fi
+      echo "[localization restart] $STACK_LOCALIZATION_LINE"
+      echo "[nav2 restart]         $STACK_NAV2_LINE"
+      echo "[follow restart]       $STACK_FOLLOW_LINE"
+      ;;
+    follow|follow_restart)
+      echo "[follow restart]       $STACK_FOLLOW_LINE"
+      ;;
+    *)
+      echo "[gazebo]       $GAZEBO_LINE"
+      echo "[spawn]        $SPAWN_LINE"
+      echo "[localization] $LOCALIZATION_LINE"
+      echo "[nav2]         $NAV2_LINE"
+      echo "[follow]       $FOLLOW_LINE"
+      if [ "$OMNET" = true ]; then
+        echo "[omnet]        $OMNET_LINE"
+      fi
+      if [ "$RECORD" = true ]; then
+        echo "[record]       $RECORD_LINE"
+      fi
+      ;;
+  esac
   exit 0
 fi
 
+case "$ACTION" in
+  start|restart|stack_restart|follow|follow_restart)
+    wait_for_tmux_yolo_weights
+    ;;
+esac
+
+configure_gazebo_gpu_env
+
+case "$ACTION" in
+  start)
+    if tmux has-session -t "$SESSION" 2>/dev/null; then
+      echo "tmux session already exists: $SESSION" >&2
+      echo "Restart stack with: ./run.sh tmux_1to1 restart session:=$SESSION [new args...]" >&2
+      echo "Restart follow with: ./run.sh tmux_1to1 follow session:=$SESSION [new args...]" >&2
+      echo "Attach with: tmux attach -t $SESSION" >&2
+      exit 1
+    fi
+    prelaunch_safety_cleanup
+    ;;
+  restart|stack_restart)
+    localization_pane="$(pane_target localization || true)"
+    nav2_pane="$(pane_target nav2 || true)"
+    follow_pane="$(pane_target follow || true)"
+    if [ -z "$localization_pane" ] || [ -z "$nav2_pane" ] || [ -z "$follow_pane" ]; then
+      echo "Could not find localization/nav2/follow panes in tmux session: $SESSION" >&2
+      print_pane_lookup_debug
+      exit 1
+    fi
+    stop_stack_processes
+    if [ "${#RESTART_REALIGN_CMD[@]}" -gt 0 ]; then
+      echo "[run_tmux_1to1] Realigning Gazebo models before stack restart: waypoint:=$GAZEBO_WAYPOINT_NAME with_uav:=true"
+      "${RESTART_REALIGN_CMD[@]}"
+    fi
+    send_script_to_pane "$localization_pane" "localization" "$STACK_LOCALIZATION_LINE"
+    send_script_to_pane "$nav2_pane" "nav2" "$STACK_NAV2_LINE"
+    send_script_to_pane "$follow_pane" "follow" "$STACK_FOLLOW_LINE"
+    echo "Restarted localization/nav2/follow in tmux session: $SESSION"
+    exit 0
+    ;;
+  follow|follow_restart)
+    follow_pane="$(pane_target follow || true)"
+    if [ -z "$follow_pane" ]; then
+      echo "Could not find follow pane in tmux session: $SESSION" >&2
+      print_pane_lookup_debug
+      exit 1
+    fi
+    send_ctrl_c_target follow
+    sleep 1
+    signal_processes_by_pattern 'ros2 launch lrs_halmstad run_follow\.launch\.py'
+    signal_processes_by_pattern 'ros2 launch lrs_halmstad run_1to1_follow\.launch\.py'
+    signal_processes_by_pattern 'ros2 launch .*/run_follow\.launch\.py'
+    signal_named_nodes 'ugv_nav2_driver|follow_uav|follow_uav_odom|leader_detector|leader_tracker|leader_estimator|selected_target_filter|visual_target_estimator|follow_point_generator|follow_point_planner|visual_actuation_bridge|camera_tracker'
+    send_script_to_pane "$follow_pane" "follow" "$STACK_FOLLOW_LINE"
+    echo "Restarted follow in tmux session: $SESSION"
+    exit 0
+    ;;
+  status)
+    tmux list-panes -a -t "$SESSION" -F '#{session_name}:#{window_name}.#{pane_index} #{pane_id} #{pane_title} #{pane_current_command}'
+    exit 0
+    ;;
+  attach)
+    exec tmux attach -t "$SESSION"
+    ;;
+  *)
+    echo "Invalid action: $ACTION" >&2
+    echo "Use: start, restart, follow, status, or attach" >&2
+    exit 2
+    ;;
+esac
+
 if [ "$LAYOUT" = "windows" ]; then
   tmux new-session -d -s "$SESSION" -n gazebo
+  tmux set-environment -g MESA_D3D12_DEFAULT_ADAPTER_NAME "$MESA_D3D12_DEFAULT_ADAPTER_NAME"
+  tmux set-environment -g GALLIUM_DRIVER "$GALLIUM_DRIVER"
+  tmux set-environment -gu LIBGL_ALWAYS_SOFTWARE 2>/dev/null || true
+  tmux set-environment -gu MESA_LOADER_DRIVER_OVERRIDE 2>/dev/null || true
+  tmux set-environment -gu GALLIUM_DRIVER_LLVM 2>/dev/null || true
+  tmux set-environment -gu vblank_mode 2>/dev/null || true
+  tmux set-environment -gu MESA_VK_WSI_PRESENT_MODE 2>/dev/null || true
+  tmux set-environment -gu PYTHONNOUSERSITE 2>/dev/null || true
   tmux new-window -t "$SESSION" -n spawn
   tmux new-window -t "$SESSION" -n localization
   tmux new-window -t "$SESSION" -n nav2
@@ -1034,16 +1751,16 @@ if [ "$LAYOUT" = "windows" ]; then
 
   write_session_state
 
-  tmux send-keys -t "$SESSION:gazebo" "$GAZEBO_LINE" C-m
-  tmux send-keys -t "$SESSION:spawn" "$SPAWN_LINE" C-m
-  tmux send-keys -t "$SESSION:localization" "$LOCALIZATION_LINE" C-m
-  tmux send-keys -t "$SESSION:nav2" "$NAV2_LINE" C-m
-  tmux send-keys -t "$SESSION:follow" "$FOLLOW_LINE" C-m
+  send_script_to_pane "$SESSION:gazebo" "gazebo" "$GAZEBO_LINE" C-m
+  send_script_to_pane "$SESSION:spawn" "spawn" "$SPAWN_LINE" C-m
+  send_script_to_pane "$SESSION:localization" "localization" "$LOCALIZATION_LINE" C-m
+  send_script_to_pane "$SESSION:nav2" "nav2" "$NAV2_LINE" C-m
+  send_script_to_pane "$SESSION:follow" "follow" "$FOLLOW_LINE" C-m
   if [ "$OMNET" = true ]; then
-    tmux send-keys -t "$SESSION:omnet" "$OMNET_LINE" C-m
+    send_script_to_pane "$SESSION:omnet" "omnet" "$OMNET_LINE" C-m
   fi
   if [ "$RECORD" = true ]; then
-    tmux send-keys -t "$SESSION:record" "$RECORD_LINE" C-m
+    send_script_to_pane "$SESSION:record" "record" "$RECORD_LINE" C-m
   fi
   tmux select-window -t "$SESSION:gazebo"
 else
@@ -1074,16 +1791,16 @@ else
 
   write_session_state
 
-  tmux send-keys -t "$gazebo_pane" "$GAZEBO_LINE" C-m
-  tmux send-keys -t "$spawn_pane" "$SPAWN_LINE" C-m
-  tmux send-keys -t "$localization_pane" "$LOCALIZATION_LINE" C-m
-  tmux send-keys -t "$nav2_pane" "$NAV2_LINE" C-m
-  tmux send-keys -t "$follow_pane" "$FOLLOW_LINE" C-m
+  send_script_to_pane "$gazebo_pane" "gazebo" "$GAZEBO_LINE"
+  send_script_to_pane "$spawn_pane" "spawn" "$SPAWN_LINE"
+  send_script_to_pane "$localization_pane" "localization" "$LOCALIZATION_LINE"
+  send_script_to_pane "$nav2_pane" "nav2" "$NAV2_LINE"
+  send_script_to_pane "$follow_pane" "follow" "$FOLLOW_LINE"
   if [ "$OMNET" = true ]; then
-    tmux send-keys -t "$omnet_pane" "$OMNET_LINE" C-m
+    send_script_to_pane "$omnet_pane" "omnet" "$OMNET_LINE" C-m
   fi
   if [ "$RECORD" = true ]; then
-    tmux send-keys -t "$record_pane" "$RECORD_LINE" C-m
+    send_script_to_pane "$record_pane" "record" "$RECORD_LINE" C-m
   fi
   tmux select-window -t "$SESSION:sim"
   tmux select-pane -t "$gazebo_pane"

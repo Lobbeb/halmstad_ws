@@ -6,16 +6,22 @@ NETWORK="wifi"
 UI="qtenv"
 RESULT_DIR=""
 DRY_RUN=false
+LORA_SF=""
+LORA_BW=""
 EXTRA_ARGS=()
 
 usage() {
   cat <<'EOF'
-Usage: ./run.sh omnet [network:=wifi|5g|lora] [ui:=cmdenv|qtenv] [project:=/path/UAV_UGV] [result_dir:=/path] [dry_run:=true|false] [extra OMNeT args...]
+Usage: ./run.sh omnet [network:=wifi|5g|lora|lora-sf10-250|lora-duplex|lora-sweep] [lora_sf:=7..12] [lora_bw:=125kHz|250kHz] [ui:=cmdenv|qtenv] [project:=/path/UAV_UGV] [result_dir:=/path] [dry_run:=true|false] [extra OMNeT args...]
 
 Examples:
   ./run.sh omnet
   ./run.sh omnet network:=5g
   ./run.sh omnet network:=lora ui:=qtenv
+  ./run.sh omnet network:=lora lora_sf:=8 lora_bw:=125kHz ui:=cmdenv
+  ./run.sh omnet network:=lora lora_sf:=10 lora_bw:=250kHz ui:=cmdenv
+  ./run.sh omnet network:=lora-sf10-250 ui:=cmdenv
+  ./run.sh omnet network:=lora-duplex ui:=cmdenv
   ./run.sh omnet result_dir:=/tmp/omnet-results
 EOF
 }
@@ -47,6 +53,12 @@ for arg in "$@"; do
     result_dir:=*|results:=*)
       RESULT_DIR="${arg#*:=}"
       ;;
+    lora_sf:=*|sf:=*)
+      LORA_SF="${arg#*:=}"
+      ;;
+    lora_bw:=*|bw:=*)
+      LORA_BW="${arg#*:=}"
+      ;;
     dry_run:=*)
       DRY_RUN="${arg#dry_run:=}"
       ;;
@@ -75,11 +87,20 @@ case "$NETWORK" in
     CONFIG_NAME="Communication-GazeboBridge-5G"
     ;;
   lora)
-    CONFIG_NAME="Communication-GazeboBridge-LoRa"
+    CONFIG_NAME="Communication-GazeboBridge-LoRa-Simplex"
+    ;;
+  lora-sf10-250|lora-sf10-bw250)
+    CONFIG_NAME="Communication-GazeboBridge-LoRa-SF10-BW250"
+    ;;
+  lora-duplex)
+    CONFIG_NAME="Communication-GazeboBridge-LoRa-Duplex"
+    ;;
+  lora-sweep)
+    CONFIG_NAME="Communication-GazeboBridge-LoRa-Sweep"
     ;;
   *)
     echo "Invalid network: $NETWORK" >&2
-    echo "Use network:=wifi, network:=5g, or network:=lora" >&2
+    echo "Use network:=wifi, network:=5g, network:=lora, network:=lora-sf10-250, network:=lora-duplex, or network:=lora-sweep" >&2
     exit 2
     ;;
 esac
@@ -108,6 +129,32 @@ case "$DRY_RUN" in
     ;;
 esac
 
+if [ -n "$LORA_SF" ]; then
+  case "$LORA_SF" in
+    7|8|9|10|11|12)
+      EXTRA_ARGS+=("--*.uav.app[0].initialLoRaSF=$LORA_SF")
+      ;;
+    *)
+      echo "Invalid lora_sf: $LORA_SF" >&2
+      echo "Use lora_sf:=7, 8, 9, 10, 11, or 12" >&2
+      exit 2
+      ;;
+  esac
+fi
+
+if [ -n "$LORA_BW" ]; then
+  case "$LORA_BW" in
+    125kHz|250kHz|500kHz)
+      EXTRA_ARGS+=("--*.uav.app[0].initialLoRaBW=$LORA_BW")
+      ;;
+    *)
+      echo "Invalid lora_bw: $LORA_BW" >&2
+      echo "Use lora_bw:=125kHz, 250kHz, or 500kHz" >&2
+      exit 2
+      ;;
+  esac
+fi
+
 PROJECT_ROOT="$(cd -- "$PROJECT_ROOT" && pwd)"
 WORKSPACE_DIR="$(cd -- "$PROJECT_ROOT/.." && pwd)"
 SIM_BIN="$PROJECT_ROOT/UAV_UGV"
@@ -118,7 +165,7 @@ NED_PATH_PARTS=(
   "$PROJECT_ROOT/src"
   "$WORKSPACE_DIR/inet4.5/src"
 )
-if [ "$NETWORK" = "lora" ]; then
+if [[ "$NETWORK" == lora* ]]; then
   NED_PATH_PARTS+=("$WORKSPACE_DIR/flora/src")
 fi
 

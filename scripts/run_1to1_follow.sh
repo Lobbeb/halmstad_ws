@@ -19,6 +19,40 @@ source "$SCRIPT_DIR/slam_state_common.sh"
 source "$SCRIPT_DIR/baylands_waypoint_common.sh"
 BAYLANDS_GROUP_WAYPOINT_CSV="$(baylands_group_waypoint_csv)"
 
+usage() {
+  cat <<'EOF'
+Usage:
+  ./run.sh 1to1_follow [world] [options...]
+
+Start the odom/follow pipeline and the Nav2-backed UGV route driver.
+
+Common options:
+  waypoint:=rotundan_0
+  nav2_goals:=rotundan|path.yaml
+  start_uav_simulator:=true|false
+  start_uav_follow:=true|false
+  start_camera_tracker:=true|false
+  start_ugv_ground_truth_bridge:=true|false
+  ugv_odom_topic:=/a201_0000/ground_truth/odom
+  params_file:=path/to/run_follow_defaults.yaml
+  height:=7
+  uav_start_x:=... uav_start_y:=... uav_start_z:=... uav_start_yaw_deg:=...
+
+Examples:
+  ./run.sh 1to1_follow baylands waypoint:=rotundan_0 nav2_goals:=rotundan
+  ./run.sh 1to1_follow baylands start_uav_simulator:=false start_uav_follow:=false
+EOF
+}
+
+for arg in "$@"; do
+  case "$arg" in
+    help|-h|--help)
+      usage
+      exit 0
+      ;;
+  esac
+done
+
 resolve_baylands_amcl_waypoint_pose() {
   local waypoint_name="$1"
   python3 - "$waypoint_name" "$BAYLANDS_GROUP_WAYPOINT_CSV" <<'PY'

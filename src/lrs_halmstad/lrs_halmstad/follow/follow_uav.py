@@ -24,6 +24,13 @@ from lrs_halmstad.follow.follow_math import (
 )
 
 
+def move_towards(value: float, target: float, max_step: float) -> float:
+    delta = float(target) - float(value)
+    if abs(delta) <= max_step:
+        return float(target)
+    return float(value) + math.copysign(float(max_step), delta)
+
+
 class FollowUav(FollowControllerCoreMixin, Node):
     """Pose/estimate-mode UAV follow controller with odom-style geometry."""
 
@@ -53,6 +60,8 @@ class FollowUav(FollowControllerCoreMixin, Node):
         declare_yaml_param(self, "follow_speed_mps", descriptor=dyn_num)
         declare_yaml_param(self, "follow_speed_gain", descriptor=dyn_num)
         declare_yaml_param(self, "follow_z_offset_m", descriptor=dyn_num)
+        declare_yaml_param(self, "d_target_slew_mps", descriptor=dyn_num)
+        declare_yaml_param(self, "follow_z_slew_mps", descriptor=dyn_num)
         declare_yaml_param(self, "leader_heading_offset_deg", descriptor=dyn_num)
         declare_yaml_param(self, "leader_motion_heading_min_speed_mps", descriptor=dyn_num)
         declare_yaml_param(self, "leader_motion_heading_min_delta_m", descriptor=dyn_num)
@@ -96,6 +105,8 @@ class FollowUav(FollowControllerCoreMixin, Node):
         self.follow_speed_mps = float(required_param_value(self, "follow_speed_mps"))
         self.follow_speed_gain = float(required_param_value(self, "follow_speed_gain"))
         self.follow_z_offset_m = float(required_param_value(self, "follow_z_offset_m"))
+        self.d_target_slew_mps = float(required_param_value(self, "d_target_slew_mps"))
+        self.follow_z_slew_mps = float(required_param_value(self, "follow_z_slew_mps"))
         self.leader_heading_offset_rad = math.radians(
             float(required_param_value(self, "leader_heading_offset_deg"))
         )
@@ -144,6 +155,9 @@ class FollowUav(FollowControllerCoreMixin, Node):
         self._startup_hold_logged = False
         self._waiting_for_actual_pose_logged = False
         self._stale_hold_logged = False
+        self._active_d_target = self.d_target
+        self._active_follow_z_offset_m = self.follow_z_offset_m
+        self._last_follow_slew_time: Optional[Time] = None
 
         self.leader_sub = self.create_subscription(
             PoseStamped,
@@ -181,6 +195,8 @@ class FollowUav(FollowControllerCoreMixin, Node):
             f"leader_pose={self.leader_pose_topic}, tick={self.tick_hz}Hz, "
             f"d_target={self.d_target:.2f}, xy_anchor_max={self.xy_anchor_max:.2f}, "
             f"follow_z_offset_m={self.follow_z_offset_m:.2f}, "
+            f"d_target_slew={self.d_target_slew_mps:.2f}m/s, "
+            f"follow_z_slew={self.follow_z_slew_mps:.2f}m/s, "
             f"leader_heading_offset_deg={math.degrees(self.leader_heading_offset_rad):.1f}, "
             f"motion_heading_min_speed={self.leader_motion_heading_min_speed_mps:.2f}m/s, "
             f"follow_yaw={self.follow_yaw}, publish_pose_cmd_topics={self.publish_pose_cmd_topics}, "
@@ -203,14 +219,17 @@ class FollowUav(FollowControllerCoreMixin, Node):
             self.follow_speed_mps < 0.0
             or self.follow_speed_gain < 0.0
             or self.follow_z_offset_m < 0.0
+            or self.d_target_slew_mps < 0.0
+            or self.follow_z_slew_mps < 0.0
             or self.leader_motion_heading_min_speed_mps < 0.0
             or self.leader_motion_heading_min_delta_m < 0.0
             or self.follow_yaw_rate_rad_s < 0.0
             or self.follow_yaw_rate_gain < 0.0
         ):
             raise ValueError(
-                "follow_speed_mps, follow_speed_gain, follow_z_offset_m, leader motion heading thresholds, "
-                "follow_yaw_rate_rad_s, and follow_yaw_rate_gain must be >= 0"
+                "follow_speed_mps, follow_speed_gain, follow_z_offset_m, d_target_slew_mps, "
+                "follow_z_slew_mps, leader motion heading thresholds, follow_yaw_rate_rad_s, "
+                "and follow_yaw_rate_gain must be >= 0"
             )
         if self.follow_z_offset_m > self.d_target:
             raise ValueError("follow_z_offset_m must be <= d_target to preserve the 3D follow distance")
@@ -228,6 +247,8 @@ class FollowUav(FollowControllerCoreMixin, Node):
             "min_cmd_period_s",
             "start_delay_s",
             "follow_z_offset_m",
+            "d_target_slew_mps",
+            "follow_z_slew_mps",
         }
         numeric_positive = {
             "d_target",
@@ -425,7 +446,43 @@ class FollowUav(FollowControllerCoreMixin, Node):
         return age_s <= self.pose_timeout_s
 
     def _target_uav_z(self) -> float:
-        return self.ugv_z + self.follow_z_offset_m
+        return self.ugv_z + self._active_follow_z_offset_m
+
+    def _slew_follow_targets(self, now: Time) -> None:
+        desired_d = float(self.d_target)
+        desired_z = min(float(self.follow_z_offset_m), desired_d)
+
+        if self._last_follow_slew_time is None:
+            self._last_follow_slew_time = now
+            self._active_follow_z_offset_m = min(self._active_follow_z_offset_m, self._active_d_target)
+            return
+
+        dt_s = max(0.0, (now - self._last_follow_slew_time).nanoseconds * 1e-9)
+        self._last_follow_slew_time = now
+        if dt_s <= 0.0:
+            return
+        dt_s = min(dt_s, 1.0)
+
+        d_slew_target = max(desired_d, self._active_follow_z_offset_m)
+        if self.d_target_slew_mps > 0.0:
+            self._active_d_target = move_towards(
+                self._active_d_target,
+                d_slew_target,
+                self.d_target_slew_mps * dt_s,
+            )
+        else:
+            self._active_d_target = d_slew_target
+
+        desired_z = min(desired_z, self._active_d_target)
+        if self.follow_z_slew_mps > 0.0:
+            self._active_follow_z_offset_m = move_towards(
+                self._active_follow_z_offset_m,
+                desired_z,
+                self.follow_z_slew_mps * dt_s,
+            )
+        else:
+            self._active_follow_z_offset_m = desired_z
+        self._active_follow_z_offset_m = min(self._active_follow_z_offset_m, self._active_d_target)
 
     def _compute_anchor_pose(self, target_horizontal_distance: float) -> Pose2D:
         heading = wrap_pi(self.ugv_follow_heading + self.leader_heading_offset_rad)
@@ -515,10 +572,11 @@ class FollowUav(FollowControllerCoreMixin, Node):
         if not self.can_send_command_now(now):
             return
 
+        self._slew_follow_targets(now)
         current_uav = self._current_uav_pose()
         target_uav_z = self._target_uav_z()
         vertical_delta = target_uav_z - self.ugv_z
-        target_horizontal_distance = horizontal_distance_for_euclidean(self.d_target, vertical_delta)
+        target_horizontal_distance = horizontal_distance_for_euclidean(self._active_d_target, vertical_delta)
         anchor_pose = self._compute_anchor_pose(target_horizontal_distance)
 
         dx = anchor_pose.x - current_uav.x

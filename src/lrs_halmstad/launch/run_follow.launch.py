@@ -303,6 +303,40 @@ def _build_camera_tracker_node(context, *args, **kwargs):
     ]
 
 
+def _build_simulator_node(context, *args, **kwargs):
+    simulator_params = {
+        'use_sim_time': True,
+        'world': LaunchConfiguration('world'),
+        'uav_name': LaunchConfiguration('uav_name'),
+        'camera_mode': LaunchConfiguration('uav_camera_mode'),
+        'start_x': LaunchConfiguration('uav_start_x'),
+        'start_y': LaunchConfiguration('uav_start_y'),
+        'start_z': LaunchConfiguration('uav_start_z'),
+        'start_yaw_deg': LaunchConfiguration('uav_start_yaw_deg'),
+        'camera_mount_pitch_deg': LaunchConfiguration('camera_mount_pitch_deg'),
+        'camera_yaw_offset_deg': LaunchConfiguration('camera_yaw_offset_deg'),
+        'camera_pan_sign': LaunchConfiguration('camera_pan_sign'),
+    }
+    pan_enable = _optional_bool_from_launch(context, 'pan_enable')
+    if pan_enable is not None:
+        simulator_params['pan_enable'] = pan_enable
+    tilt_enable = _optional_bool_from_launch(context, 'tilt_enable')
+    if tilt_enable is not None:
+        simulator_params['tilt_enable'] = tilt_enable
+    return [
+        Node(
+            package='lrs_halmstad',
+            executable='simulator',
+            name='uav_simulator',
+            output='screen',
+            parameters=[
+                simulator_params,
+                LaunchConfiguration('params_file'),
+            ],
+        )
+    ]
+
+
 def _load_node_params_from_yaml(context, node_name: str) -> dict:
     params_file = LaunchConfiguration('params_file').perform(context).strip()
     if not params_file:
@@ -406,6 +440,9 @@ def _build_leader_estimator_node(context, *args, **kwargs):
     range_mode = _launch_str(context, 'range_mode').strip()
     if range_mode:
         estimator_params['range_mode'] = range_mode
+    radio_range_topic = _launch_str(context, 'radio_range_topic').strip()
+    if radio_range_topic:
+        estimator_params['radio_range_topic'] = radio_range_topic
     return [
         Node(
             package='lrs_halmstad',
@@ -577,6 +614,7 @@ def _build_ugv_ground_truth_bridge_node(context, *args, **kwargs):
                 'model_name': f'{ugv_ns}/robot',
                 'pose_topic': 'ground_truth/pose',
                 'odom_topic': 'ground_truth/odom',
+                'publish_hz': 20.0,
                 # These values are Gazebo world coordinates, not AMCL map-frame poses.
                 'frame_id': 'world',
                 'child_frame_id': 'base_link',
@@ -653,7 +691,7 @@ def generate_launch_description():
     )
     follow_yaw_arg = DeclareLaunchArgument('follow_yaw', default_value='true')
     publish_follow_debug_topics_arg = DeclareLaunchArgument('publish_follow_debug_topics', default_value='false')
-    publish_pose_cmd_topics_arg = DeclareLaunchArgument('publish_pose_cmd_topics', default_value='true')
+    publish_pose_cmd_topics_arg = DeclareLaunchArgument('publish_pose_cmd_topics', default_value='false')
     require_uav_actual_before_motion_arg = DeclareLaunchArgument(
         'require_uav_actual_before_motion',
         default_value='false',
@@ -687,7 +725,7 @@ def generate_launch_description():
     camera_default_tilt_deg_arg = DeclareLaunchArgument('camera_default_tilt_deg', default_value='-45.0')
     pan_enable_arg = DeclareLaunchArgument('pan_enable', default_value='')
     tilt_enable_arg = DeclareLaunchArgument('tilt_enable', default_value='')
-    publish_camera_debug_topics_arg = DeclareLaunchArgument('publish_camera_debug_topics', default_value='true')
+    publish_camera_debug_topics_arg = DeclareLaunchArgument('publish_camera_debug_topics', default_value='false')
     camera_yaw_offset_deg_arg = DeclareLaunchArgument('camera_yaw_offset_deg', default_value='0.0')
     camera_pan_sign_arg = DeclareLaunchArgument('camera_pan_sign', default_value='1.0')
     start_uav_simulator_arg = DeclareLaunchArgument('start_uav_simulator', default_value='true')
@@ -698,7 +736,7 @@ def generate_launch_description():
     )
     start_camera_tracker_arg = DeclareLaunchArgument(
         'start_camera_tracker',
-        default_value='true',
+        default_value='false',
         description='Start the legacy camera pan/tilt tracker.',
     )
     uav_camera_mode_arg = DeclareLaunchArgument('uav_camera_mode', default_value='integrated_joint')
@@ -892,6 +930,11 @@ def generate_launch_description():
         default_value='',
         description='Optional leader_estimator range source override: auto|depth|radio|const. Empty uses params_file YAML.',
     )
+    radio_range_topic_arg = DeclareLaunchArgument(
+        'radio_range_topic',
+        default_value='',
+        description='Optional leader_estimator radio range topic override. Empty uses params_file YAML.',
+    )
     target_class_name_arg = DeclareLaunchArgument('target_class_name', default_value='')
     target_class_id_arg = DeclareLaunchArgument('target_class_id', default_value='-1')
     yolo_weights_arg = DeclareLaunchArgument(
@@ -901,11 +944,11 @@ def generate_launch_description():
     yolo_device_arg = DeclareLaunchArgument('yolo_device', default_value='auto')
     detector_backend_arg = DeclareLaunchArgument('detector_backend', default_value='ultralytics')
     detector_onnx_model_arg = DeclareLaunchArgument('detector_onnx_model', default_value='')
-    detector_async_inference_arg = DeclareLaunchArgument('detector_async_inference', default_value='true')
-    detector_latest_frame_only_arg = DeclareLaunchArgument('detector_latest_frame_only', default_value='true')
+    detector_async_inference_arg = DeclareLaunchArgument('detector_async_inference', default_value='false')
+    detector_latest_frame_only_arg = DeclareLaunchArgument('detector_latest_frame_only', default_value='false')
     detector_stale_detection_threshold_ms_arg = DeclareLaunchArgument(
         'detector_stale_detection_threshold_ms',
-        default_value='500.0',
+        default_value='3000.0',
     )
     detector_metrics_window_s_arg = DeclareLaunchArgument('detector_metrics_window_s', default_value='5.0')
     detector_benchmark_csv_path_arg = DeclareLaunchArgument('detector_benchmark_csv_path', default_value='')
@@ -1018,28 +1061,9 @@ def generate_launch_description():
         default_value=['/', LaunchConfiguration('uav_name'), '/camera/actual/center_pose'],
     )
 
-    simulator_node = Node(
-        package='lrs_halmstad',
-        executable='simulator',
-        name='uav_simulator',
-        output='screen',
+    simulator_node = OpaqueFunction(
+        function=_build_simulator_node,
         condition=IfCondition(LaunchConfiguration('start_uav_simulator')),
-        parameters=[
-            {
-                'use_sim_time': True,
-                'world': LaunchConfiguration('world'),
-                'uav_name': LaunchConfiguration('uav_name'),
-                'camera_mode': LaunchConfiguration('uav_camera_mode'),
-                'start_x': LaunchConfiguration('uav_start_x'),
-                'start_y': LaunchConfiguration('uav_start_y'),
-                'start_z': LaunchConfiguration('uav_start_z'),
-                'start_yaw_deg': LaunchConfiguration('uav_start_yaw_deg'),
-                'camera_mount_pitch_deg': LaunchConfiguration('camera_mount_pitch_deg'),
-                'camera_yaw_offset_deg': LaunchConfiguration('camera_yaw_offset_deg'),
-                'camera_pan_sign': LaunchConfiguration('camera_pan_sign'),
-            },
-            LaunchConfiguration('params_file'),
-        ],
     )
 
     detector_runtime_params = RewrittenYaml(
@@ -1255,6 +1279,7 @@ def generate_launch_description():
         name='ugv_amcl_to_odom',
         namespace=LaunchConfiguration('ugv_namespace'),
         output='screen',
+        condition=IfCondition(LaunchConfiguration('ugv_use_amcl_odom_fallback')),
         parameters=[
             {
                 'use_sim_time': True,
@@ -1401,6 +1426,7 @@ def generate_launch_description():
         leader_depth_topic_arg,
         leader_uav_pose_topic_arg,
         range_mode_arg,
+        radio_range_topic_arg,
         target_class_name_arg,
         target_class_id_arg,
         yolo_weights_arg,

@@ -1,0 +1,13 @@
+{
+  "dataset": "/home/ruben/halmstad_ws/datasets/final/baylands_sam3_obb_generalization_playground",
+  "pred_dir": "/home/ruben/halmstad_ws/models/obb/experiments/sam3_hybrid_full/runs/predictions/baylands-original-yolo26n/baylands_sam3_obb_generalization_playground_test_all",
+  "split": "test",
+  "images": 249,
+  "status_counts": {
+    "matched": 109,
+    "no_prediction": 115,
+    "correct_empty": 24,
+    "multi_prediction": 1
+  },
+  "mean_best_iou_non_empty": 0.5951883636363636
+}

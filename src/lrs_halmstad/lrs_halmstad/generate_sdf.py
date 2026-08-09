@@ -56,6 +56,28 @@ class GenSdf(Node):
         
         self.declare_parameter("laser_update_rate", 10)
         self.laser_update_rate = self.get_parameter('laser_update_rate').get_parameter_value().integer_value
+        self.declare_parameter("laser_min_range", 0.2, numeric_param)
+        self.laser_min_range = float(self.get_parameter('laser_min_range').value)
+        self.declare_parameter("laser_max_range", 25.0, numeric_param)
+        self.laser_max_range = float(self.get_parameter('laser_max_range').value)
+        self.declare_parameter("laser_angle_deg", 180.0, numeric_param)
+        self.laser_angle_deg = float(self.get_parameter('laser_angle_deg').value)
+        self.declare_parameter("laser_x", 0.0, numeric_param)
+        self.laser_x = float(self.get_parameter('laser_x').value)
+        self.declare_parameter("laser_y", 0.0, numeric_param)
+        self.laser_y = float(self.get_parameter('laser_y').value)
+        self.declare_parameter("laser_z", 0.5, numeric_param)
+        self.laser_z = float(self.get_parameter('laser_z').value)
+        self.declare_parameter("laser_sensor_x", 0.0, numeric_param)
+        self.laser_sensor_x = float(self.get_parameter('laser_sensor_x').value)
+        self.declare_parameter("laser_sensor_y", 0.0, numeric_param)
+        self.laser_sensor_y = float(self.get_parameter('laser_sensor_y').value)
+        self.declare_parameter("laser_sensor_z", 0.0, numeric_param)
+        self.laser_sensor_z = float(self.get_parameter('laser_sensor_z').value)
+        self.declare_parameter("laser_rpy", "0 0 0")
+        self.laser_rpy = self.get_parameter('laser_rpy').get_parameter_value().string_value
+        self.declare_parameter("laser_frame_id", "")
+        self.laser_frame_id = self.get_parameter('laser_frame_id').get_parameter_value().string_value
         
         #self.get_logger().error(f'GenSdf: {self.name}')        
         #self.get_logger().error(f'GenSdf: {self.type}')        
@@ -87,10 +109,21 @@ class GenSdf(Node):
             mappings["name"] = self.name
 
         if self.laser:
+            mappings["with_laser"] = "true"
             mappings["laser_name"] = self.laser_name
             mappings["robot_name"] = self.robot_name
-            mappings["laser_far_clip"] = "900"
             mappings["laser_update_rate"] = f'{self.laser_update_rate}'
+            mappings["laser_min_range"] = f'{self.laser_min_range}'
+            mappings["laser_max_range"] = f'{self.laser_max_range}'
+            mappings["laser_angle_deg"] = f'{self.laser_angle_deg}'
+            mappings["laser_x"] = f'{self.laser_x}'
+            mappings["laser_y"] = f'{self.laser_y}'
+            mappings["laser_z"] = f'{self.laser_z}'
+            mappings["laser_sensor_x"] = f'{self.laser_sensor_x}'
+            mappings["laser_sensor_y"] = f'{self.laser_sensor_y}'
+            mappings["laser_sensor_z"] = f'{self.laser_sensor_z}'
+            mappings["laser_rpy"] = self.laser_rpy
+            mappings["laser_frame_id"] = self.laser_frame_id or f"{self.laser_name}_laser"
 
             
         # self.get_logger().error(f'GenSdf XACROFILE: {self.xacro_file}')                        

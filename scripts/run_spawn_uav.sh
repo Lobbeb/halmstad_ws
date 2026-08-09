@@ -6,11 +6,80 @@ WS_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 STATE_DIR="/tmp/halmstad_ws"
 SIM_PID_FILE="$STATE_DIR/gazebo_sim.pid"
 SIM_WORLD_FILE="$STATE_DIR/gazebo_sim.world"
-FOLLOW_SIM=false
+FOLLOW_SIM=true
 LAUNCH_PID=""
 WATCH_PID=""
 WAIT_FOR_GAZEBO="${WAIT_FOR_GAZEBO:-true}"
 GAZEBO_READY_TIMEOUT_S="${GAZEBO_READY_TIMEOUT_S:-180}"
+NEXT_TO_UGV="false"
+POSE_TIMEOUT_S="5"
+UAV_BODY_X_OFFSET="-7.0"
+UAV_BODY_Y_OFFSET="0.0"
+UAV_Z=""
+POSITION_ARG_SET="false"
+
+source "$SCRIPT_DIR/slam_state_common.sh"
+
+usage() {
+  cat <<'EOF'
+Usage:
+  ./run.sh spawn_uav [world] [options...]
+
+Spawn the DJI UAV model into the active Gazebo world.
+
+Common options:
+  world                         World key. Default: active Gazebo world, else baylands.
+  wait_for_gazebo:=true|false   Wait for /clock and /world/<world>/create. Default: true.
+  gazebo_ready_timeout_s:=180   Wait timeout in seconds.
+  name:=dji0                    UAV entity/name. Forwarded as uav_name.
+  uav_mode:=teleport            UAV simulator mode forwarded to launch.
+  camera:=attached              Camera mode. detached is intentionally unsupported.
+  camera_name:=camera0          Camera namespace/name.
+  camera_update_rate:=20        Camera update rate.
+  bridge_depth:=true|false      Bridge depth image. Default: false.
+  bridge_gimbal:=true|false     Bridge Gazebo gimbal joint cmd topics. Default: false.
+  laser:=true|false             Alias for with_laser and bridge_laser. Default: false.
+  with_laser:=true|false        Attach optional 2D lidar to the UAV.
+  bridge_laser:=true|false      Bridge /<name>/<laser_name>/scan to ROS.
+  laser_name:=laser0            Laser namespace/name.
+  laser_update_rate:=10         Laser update rate.
+  laser_min_range:=0.2          Laser minimum range.
+  laser_max_range:=25.0         Laser maximum range.
+  laser_angle_deg:=180          Half angle in degrees; 180 gives a 360 degree scan.
+  height:=7                     Alias for z.
+  x:=... y:=... z:=... yaw:=... Spawn pose.
+  next_to_ugv:=true|false       Compute spawn behind current UGV. Default: false.
+  pose_timeout_s:=5             Timeout for reading Gazebo UGV pose.
+  uav_body_x_offset:=-7.0       Offset in UGV body x when next_to_ugv:=true.
+  uav_body_y_offset:=0.0        Offset in UGV body y when next_to_ugv:=true.
+  mount_pitch_deg:=45           Alias for camera_pitch_offset_deg.
+
+Forwarded launch arguments:
+  uav_name:=NAME
+  uav_camera_mode:=integrated_joint
+  camera_pitch_offset_deg:=DEG
+
+Environment:
+  WAIT_FOR_GAZEBO=true|false
+  GAZEBO_READY_TIMEOUT_S=180
+
+Examples:
+  ./run.sh spawn_uav baylands name:=dji0 height:=7
+  ./run.sh spawn_uav baylands x:=0 y:=0 z:=7 yaw:=0
+  ./run.sh spawn_uav baylands next_to_ugv:=true height:=7
+  ./run.sh spawn_uav baylands camera_update_rate:=10 mount_pitch_deg:=45
+  ./run.sh spawn_uav baylands next_to_ugv:=true height:=7 laser:=true
+EOF
+}
+
+for arg in "$@"; do
+  case "$arg" in
+    help|-h|--help)
+      usage
+      exit 0
+      ;;
+  esac
+done
 
 sim_helper_running() {
   if [ ! -f "$SIM_PID_FILE" ]; then
@@ -121,6 +190,18 @@ for arg in "$@"; do
     gazebo_ready_timeout_s:=*|sim_ready_timeout_s:=*)
       GAZEBO_READY_TIMEOUT_S="${arg#*:=}"
       ;;
+    next_to_ugv:=*)
+      NEXT_TO_UGV="${arg#next_to_ugv:=}"
+      ;;
+    pose_timeout_s:=*)
+      POSE_TIMEOUT_S="${arg#pose_timeout_s:=}"
+      ;;
+    uav_body_x_offset:=*|uav_x_offset:=*)
+      UAV_BODY_X_OFFSET="${arg#*:=}"
+      ;;
+    uav_body_y_offset:=*|uav_y_offset:=*)
+      UAV_BODY_Y_OFFSET="${arg#*:=}"
+      ;;
     camera:=*)
       camera_mode="${arg#camera:=}"
       case "$camera_mode" in
@@ -140,16 +221,63 @@ for arg in "$@"; do
       ARGS+=("uav_name:=${arg#name:=}")
       ;;
     height:=*)
-      ARGS+=("z:=${arg#height:=}")
+      UAV_Z="${arg#height:=}"
+      ;;
+    z:=*)
+      UAV_Z="${arg#z:=}"
+      POSITION_ARG_SET="true"
+      ARGS+=("$arg")
+      ;;
+    x:=*|y:=*|yaw:=*)
+      POSITION_ARG_SET="true"
+      ARGS+=("$arg")
       ;;
     mount_pitch_deg:=*)
       ARGS+=("camera_pitch_offset_deg:=${arg#mount_pitch_deg:=}")
+      ;;
+    laser:=*)
+      laser_enabled="${arg#laser:=}"
+      ARGS+=("with_laser:=$laser_enabled" "bridge_laser:=$laser_enabled")
       ;;
     *)
       ARGS+=("$arg")
       ;;
   esac
 done
+
+case "$NEXT_TO_UGV" in
+  true|false)
+    ;;
+  *)
+    echo "[run_spawn_uav] Invalid next_to_ugv option: $NEXT_TO_UGV (use true or false)" >&2
+    exit 2
+    ;;
+esac
+
+if [ -z "$UAV_Z" ]; then
+  UAV_Z="7.0"
+fi
+
+if [ "$NEXT_TO_UGV" = "false" ] && [ -n "$UAV_Z" ]; then
+  if ! printf '%s\n' "${ARGS[*]}" | grep -q 'z:='; then
+    ARGS+=("z:=$UAV_Z")
+  fi
+fi
+
+if [ "$NEXT_TO_UGV" = "true" ] && [ "$POSITION_ARG_SET" = "true" ]; then
+  echo "[run_spawn_uav] next_to_ugv:=true ignores manual x/y/z/yaw spawn pose args." >&2
+  FILTERED_ARGS=()
+  for arg in "${ARGS[@]}"; do
+    case "$arg" in
+      x:=*|y:=*|z:=*|yaw:=*)
+        ;;
+      *)
+        FILTERED_ARGS+=("$arg")
+        ;;
+    esac
+  done
+  ARGS=("${FILTERED_ARGS[@]}")
+fi
 
 ORIG_ROS_DOMAIN_ID="${ROS_DOMAIN_ID-}"
 
@@ -162,6 +290,17 @@ set -u
 
 if [ -n "$ORIG_ROS_DOMAIN_ID" ]; then
   export ROS_DOMAIN_ID="$ORIG_ROS_DOMAIN_ID"
+fi
+
+if [ "$NEXT_TO_UGV" = "true" ]; then
+  if UAV_SPAWN_ENV="$(slam_state_capture_uav_spawn_from_ugv_env "$WS_ROOT" "$WORLD" "$UAV_BODY_X_OFFSET" "$UAV_BODY_Y_OFFSET" "$UAV_Z" "$POSE_TIMEOUT_S")"; then
+    eval "$UAV_SPAWN_ENV"
+    ARGS+=("x:=$uav_x" "y:=$uav_y" "z:=$uav_z" "yaw:=$uav_yaw")
+    echo "[run_spawn_uav] Using UGV-relative spawn x=${uav_x} y=${uav_y} z=${uav_z} yaw=${uav_yaw}"
+  else
+    echo "[run_spawn_uav] Failed to read UGV pose for next_to_ugv:=true" >&2
+    exit 1
+  fi
 fi
 
 gazebo_world_name() {

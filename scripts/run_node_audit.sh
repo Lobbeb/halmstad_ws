@@ -4,6 +4,27 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 WS_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
+usage() {
+  cat <<'EOF'
+Usage:
+  ./run.sh node_audit
+
+Print a compact audit of active ROS nodes and topics:
+  - required platform / Nav2 / localization nodes
+  - optional nodes that should be absent in minimal runs
+  - bridge, camera, lidar, follow-debug, and clock topics
+
+No arguments are required.
+EOF
+}
+
+case "${1:-}" in
+  help|-h|--help)
+    usage
+    exit 0
+    ;;
+esac
+
 set +u
 source /opt/ros/jazzy/setup.bash >/dev/null 2>&1
 if [ -f "$WS_ROOT/install/setup.bash" ]; then
@@ -48,7 +69,7 @@ print_matches "Required Nav2/localization nodes" \
   '(^|/)(map_server|amcl|planner_server|controller_server|behavior_server|bt_navigator|lifecycle_manager_localization|lifecycle_manager_navigation|pointcloud_to_laserscan)$'
 
 print_matches "Optional nodes that should be absent in profile:=minimal" \
-  '(^|/)(clock_guard|joy_node|teleop_twist_joy_node|twist_server_node|camera_0_static_tf|camera_0_gz_bridge|camera_0_gz_image_bridge|camera_0_gz_depth_bridge|follow_uav|camera_tracker|uav_simulator|rviz2|rqt_gui)$'
+  '(^|/)(joy_node|teleop_twist_joy_node|twist_server_node|camera_0_static_tf|camera_0_gz_bridge|camera_0_gz_image_bridge|camera_0_gz_depth_bridge|follow_uav|camera_tracker|uav_simulator|rviz2|rqt_gui)$'
 
 print_matches "Bridge nodes" \
   '(_bridge$|parameter_bridge|image_bridge)'

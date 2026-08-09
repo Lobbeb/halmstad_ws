@@ -92,7 +92,7 @@ ARGUMENTS = [
     ),
     DeclareLaunchArgument(
         "scan_relay_hz",
-        default_value="2.0",
+        default_value="1.0",
         description="Publish rate for the optional latest-scan relay",
     ),
     DeclareLaunchArgument(
