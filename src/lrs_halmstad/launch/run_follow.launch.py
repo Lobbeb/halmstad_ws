@@ -849,7 +849,7 @@ def generate_launch_description():
     )
     ugv_use_amcl_odom_fallback_arg = DeclareLaunchArgument(
         'ugv_use_amcl_odom_fallback',
-        default_value='true',
+        default_value='false',
         description='Publish fallback platform odom topics and odom->base_link TF from AMCL when sim odom is unavailable',
     )
     leader_pose_topic_arg = DeclareLaunchArgument(

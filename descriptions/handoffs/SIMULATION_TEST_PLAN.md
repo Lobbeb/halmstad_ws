@@ -252,6 +252,16 @@ Generate only the summary CSV and best/worst metric tables:
 ./run.sh plot_network_metrics --results-dir bags/ruben_c1_c4_selected_rosbags_2026-05-25 --offline-omnet --summary-only --rank-limit 5
 ```
 
+Summarize RSSI and PER ranges for paper tables from generated `network_metrics.csv` files:
+
+```bash
+./run.sh network_metric_stats
+./run.sh network_metric_stats --by-rep --out bags/network_metric_rssi_per_by_rep_summary.csv
+./run.sh network_metric_stats bags/results_baylands_lora_c2 --grouping condition --stats-source plot-line --out bags/results_baylands_lora_c2/plots/network/combined/network_metric_rssi_per_plot_line_summary.csv
+```
+
+This writes CSV and Markdown tables. It aggregates C1/C2 by campaign and network mode by default, excludes the first 30 s of simulation time, and reports PER in percent. Use `--grouping condition --stats-source plot-line` when the table should match the C2 repetition-average plots, which group by C2 condition label and report min/mean/max over the plotted 5 s binned-average line instead of raw CSV samples.
+
 ## Run Notes
 
 ### C2 Live Collection

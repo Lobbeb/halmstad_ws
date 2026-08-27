@@ -23,6 +23,13 @@ def _gazebo_world_name(world_sub):
     ])
 
 
+def _world_pose_default(world_sub, baylands_value, fallback_value):
+    return PythonExpression([
+        "'", baylands_value, "' if '", world_sub,
+        "'.startswith('baylands') else '", fallback_value, "'",
+    ])
+
+
 ARGUMENTS = [
     DeclareLaunchArgument(
         'rviz',
@@ -38,7 +45,7 @@ ARGUMENTS = [
     ),
     DeclareLaunchArgument(
         'world',
-        default_value='warehouse',
+        default_value='baylands',
         description='Gazebo World',
     ),
     DeclareLaunchArgument(
@@ -77,8 +84,13 @@ ARGUMENTS = [
     ),
 ]
 
-for pose_element in ['x', 'y', 'yaw']:
-    default_value = '0.0'
+world = LaunchConfiguration('world')
+pose_defaults = {
+    'x': _world_pose_default(world, '-14.085738068', '0.0'),
+    'y': _world_pose_default(world, '-54.861874768', '0.0'),
+    'yaw': '0.0',
+}
+for pose_element, default_value in pose_defaults.items():
     ARGUMENTS.append(
         DeclareLaunchArgument(
             pose_element,
@@ -90,7 +102,7 @@ for pose_element in ['x', 'y', 'yaw']:
 ARGUMENTS.append(
     DeclareLaunchArgument(
         'z',
-        default_value='0.3',
+        default_value=_world_pose_default(world, '0.100975479', '0.3'),
         description='z component of the robot pose.',
     )
 )

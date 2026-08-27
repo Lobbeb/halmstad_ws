@@ -44,7 +44,11 @@ follow_uav:
 
     # Velocities and gains.
     follow_speed_mps: 5.0   # Confirmed YOLO follow value from yolo_debug 12_best_known_minimal.
-    follow_speed_gain: 0.3  # Confirmed stable YOLO gain; higher values can make the UAV overshoot the UGV.
+    follow_speed_gain: 0.5  # Confirmed stable YOLO gain; higher values can make the UAV overshoot the UGV.
+    reverse_speed_feedforward_gain: 1.0  # Add estimated UGV closing speed when it moves toward the UAV; YOLO positions only.
+    reverse_speed_min_mps: 0.15           # Ignore smaller estimated closing speeds as likely position jitter.
+    leader_velocity_alpha: 0.35           # EMA alpha for velocity derived from consecutive leader estimates.
+    leader_velocity_max_mps: 2.0          # Clamp estimated leader speed before filtering to reject YOLO jumps.
     d_target_slew_mps: 8.0           # Smooth runtime d_target changes so long-distance tests do not jump the anchor.
     follow_z_slew_mps: 1.5           # Smooth runtime altitude-offset changes instead of commanding instant vertical jumps.
 
@@ -89,7 +93,7 @@ camera_tracker:
 
     # Tracking enable switches.
     pan_enable: false                     # Enable geometric pan tracking; false = hold default_pan_deg.
-    tilt_enable: false                      # Enable geometric tilt tracking; false = hold default_tilt_deg.
+    tilt_enable: true                      # Enable geometric tilt tracking; false = hold default_tilt_deg.
     prefer_visual_estimate_tilt_recovery: false  # Needs "weak_status_center_correction_enable: true" otherwise doesn't move the UAV. Once direct detections drop out, let tilt recovery follow the visual target estimate earlier instead of waiting for the world-pose path to age out.
 
     # Loop timing and pose freshness.

@@ -59,6 +59,10 @@ class FollowUav(FollowControllerCoreMixin, Node):
         declare_yaml_param(self, "min_cmd_period_s", descriptor=dyn_num)
         declare_yaml_param(self, "follow_speed_mps", descriptor=dyn_num)
         declare_yaml_param(self, "follow_speed_gain", descriptor=dyn_num)
+        declare_yaml_param(self, "reverse_speed_feedforward_gain", descriptor=dyn_num)
+        declare_yaml_param(self, "reverse_speed_min_mps", descriptor=dyn_num)
+        declare_yaml_param(self, "leader_velocity_alpha", descriptor=dyn_num)
+        declare_yaml_param(self, "leader_velocity_max_mps", descriptor=dyn_num)
         declare_yaml_param(self, "follow_z_offset_m", descriptor=dyn_num)
         declare_yaml_param(self, "d_target_slew_mps", descriptor=dyn_num)
         declare_yaml_param(self, "follow_z_slew_mps", descriptor=dyn_num)
@@ -104,6 +108,12 @@ class FollowUav(FollowControllerCoreMixin, Node):
         self.min_cmd_period_s = float(required_param_value(self, "min_cmd_period_s"))
         self.follow_speed_mps = float(required_param_value(self, "follow_speed_mps"))
         self.follow_speed_gain = float(required_param_value(self, "follow_speed_gain"))
+        self.reverse_speed_feedforward_gain = float(
+            required_param_value(self, "reverse_speed_feedforward_gain")
+        )
+        self.reverse_speed_min_mps = float(required_param_value(self, "reverse_speed_min_mps"))
+        self.leader_velocity_alpha = float(required_param_value(self, "leader_velocity_alpha"))
+        self.leader_velocity_max_mps = float(required_param_value(self, "leader_velocity_max_mps"))
         self.follow_z_offset_m = float(required_param_value(self, "follow_z_offset_m"))
         self.d_target_slew_mps = float(required_param_value(self, "d_target_slew_mps"))
         self.follow_z_slew_mps = float(required_param_value(self, "follow_z_slew_mps"))
@@ -137,6 +147,8 @@ class FollowUav(FollowControllerCoreMixin, Node):
         self._leader_heading_ref_stamp: Optional[Time] = None
         self._leader_motion_last_xy: Optional[tuple[float, float]] = None
         self._leader_motion_last_stamp: Optional[Time] = None
+        self._leader_velocity_x_mps = 0.0
+        self._leader_velocity_y_mps = 0.0
         self._leader_heading_dir_xy: Optional[tuple[float, float]] = None
         self._last_logged_heading_source = ""
 
@@ -195,6 +207,8 @@ class FollowUav(FollowControllerCoreMixin, Node):
             f"leader_pose={self.leader_pose_topic}, tick={self.tick_hz}Hz, "
             f"d_target={self.d_target:.2f}, xy_anchor_max={self.xy_anchor_max:.2f}, "
             f"follow_z_offset_m={self.follow_z_offset_m:.2f}, "
+            f"reverse_ff_gain={self.reverse_speed_feedforward_gain:.2f}, "
+            f"velocity_alpha={self.leader_velocity_alpha:.2f}, "
             f"d_target_slew={self.d_target_slew_mps:.2f}m/s, "
             f"follow_z_slew={self.follow_z_slew_mps:.2f}m/s, "
             f"leader_heading_offset_deg={math.degrees(self.leader_heading_offset_rad):.1f}, "
@@ -218,6 +232,9 @@ class FollowUav(FollowControllerCoreMixin, Node):
         if (
             self.follow_speed_mps < 0.0
             or self.follow_speed_gain < 0.0
+            or self.reverse_speed_feedforward_gain < 0.0
+            or self.reverse_speed_min_mps < 0.0
+            or self.leader_velocity_max_mps < 0.0
             or self.follow_z_offset_m < 0.0
             or self.d_target_slew_mps < 0.0
             or self.follow_z_slew_mps < 0.0
@@ -227,7 +244,7 @@ class FollowUav(FollowControllerCoreMixin, Node):
             or self.follow_yaw_rate_gain < 0.0
         ):
             raise ValueError(
-                "follow_speed_mps, follow_speed_gain, follow_z_offset_m, d_target_slew_mps, "
+                "follow speed and reverse feed-forward parameters, follow_z_offset_m, d_target_slew_mps, "
                 "follow_z_slew_mps, leader motion heading thresholds, follow_yaw_rate_rad_s, "
                 "and follow_yaw_rate_gain must be >= 0"
             )
@@ -235,11 +252,16 @@ class FollowUav(FollowControllerCoreMixin, Node):
             raise ValueError("follow_z_offset_m must be <= d_target to preserve the 3D follow distance")
         if not (0.0 <= self.leader_motion_heading_alpha <= 1.0):
             raise ValueError("leader_motion_heading_alpha must be within [0, 1]")
+        if not (0.0 <= self.leader_velocity_alpha <= 1.0):
+            raise ValueError("leader_velocity_alpha must be within [0, 1]")
 
     def _on_set_parameters(self, params):
         numeric_nonnegative = {
             "follow_speed_mps",
             "follow_speed_gain",
+            "reverse_speed_feedforward_gain",
+            "reverse_speed_min_mps",
+            "leader_velocity_max_mps",
             "leader_motion_heading_min_speed_mps",
             "leader_motion_heading_min_delta_m",
             "follow_yaw_rate_rad_s",
@@ -276,7 +298,7 @@ class FollowUav(FollowControllerCoreMixin, Node):
                     return SetParametersResult(successful=False, reason=f"invalid {param.name}: {exc}")
             elif param.name == "follow_yaw":
                 updates[param.name] = coerce_bool(param.value)
-            elif param.name == "leader_motion_heading_alpha":
+            elif param.name in {"leader_motion_heading_alpha", "leader_velocity_alpha"}:
                 try:
                     value = float(param.value)
                 except Exception as exc:
@@ -379,9 +401,25 @@ class FollowUav(FollowControllerCoreMixin, Node):
         if dt_s > self.pose_timeout_s:
             self._leader_heading_ref_xy = (float(leader_x), float(leader_y))
             self._leader_heading_ref_stamp = stamp
+            self._leader_velocity_x_mps = 0.0
+            self._leader_velocity_y_mps = 0.0
             return
 
-        meas_speed_mps = math.hypot(float(leader_x) - last_x, float(leader_y) - last_y) / dt_s
+        meas_vx_mps = (float(leader_x) - last_x) / dt_s
+        meas_vy_mps = (float(leader_y) - last_y) / dt_s
+        meas_speed_mps = math.hypot(meas_vx_mps, meas_vy_mps)
+        if self.leader_velocity_max_mps > 0.0 and meas_speed_mps > self.leader_velocity_max_mps:
+            scale = self.leader_velocity_max_mps / meas_speed_mps
+            meas_vx_mps *= scale
+            meas_vy_mps *= scale
+            meas_speed_mps = self.leader_velocity_max_mps
+        alpha = self.leader_velocity_alpha
+        self._leader_velocity_x_mps = (
+            (1.0 - alpha) * self._leader_velocity_x_mps + alpha * meas_vx_mps
+        )
+        self._leader_velocity_y_mps = (
+            (1.0 - alpha) * self._leader_velocity_y_mps + alpha * meas_vy_mps
+        )
         ref_x, ref_y = self._leader_heading_ref_xy
         dx = float(leader_x) - ref_x
         dy = float(leader_y) - ref_y
@@ -500,9 +538,25 @@ class FollowUav(FollowControllerCoreMixin, Node):
 
     def _effective_follow_speed_mps(self, current_uav: Pose2D, anchor_pose: Pose2D) -> float:
         error = math.hypot(anchor_pose.x - current_uav.x, anchor_pose.y - current_uav.y)
+        leader_to_uav_x = current_uav.x - self.ugv_pose.x
+        leader_to_uav_y = current_uav.y - self.ugv_pose.y
+        leader_to_uav_distance = math.hypot(leader_to_uav_x, leader_to_uav_y)
+        closing_speed_mps = 0.0
+        if leader_to_uav_distance > 1e-6:
+            closing_speed_mps = max(
+                0.0,
+                (
+                    self._leader_velocity_x_mps * leader_to_uav_x
+                    + self._leader_velocity_y_mps * leader_to_uav_y
+                )
+                / leader_to_uav_distance,
+            )
+        if closing_speed_mps < self.reverse_speed_min_mps:
+            closing_speed_mps = 0.0
         return min(
             self.follow_speed_mps,
-            self.follow_speed_gain * max(error, 0.0),
+            self.follow_speed_gain * max(error, 0.0)
+            + self.reverse_speed_feedforward_gain * closing_speed_mps,
         )
 
     def _compute_command_yaw(self, current_yaw: float, target_yaw: float) -> float:
