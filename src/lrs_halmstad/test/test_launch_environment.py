@@ -1,5 +1,6 @@
-from pathlib import Path
+import importlib.util
 import os
+from pathlib import Path
 import subprocess
 
 import yaml
@@ -104,6 +105,69 @@ def test_normal_support_startup_reaches_gazebo_without_broad_cleanup():
     assert "signal_processes_by_pattern" not in startup_sources
     assert "pgrep -f" not in startup_sources
     assert "prepare_task_state" in startup_sources
+
+
+def test_support_planner_validation_is_wall_time_planner_only_and_opt_in():
+    output = _dry_run([
+        "support_planner_validation",
+        "scenario:=valid",
+        "output:=/tmp/planner-evidence",
+        "dry_run:=true",
+    ])
+    launch_source = (
+        REPO_ROOT / "src/lrs_halmstad/launch/support_planner_validation.launch.py"
+    ).read_text(encoding="utf-8")
+
+    assert "support_planner_validation.launch.py" in output
+    assert "scenario:=valid" in output
+    assert "rviz:=false" in output
+    assert "time_model=wall" in output
+    assert "'use_sim_time': False" in launch_source
+    assert "'dji2_enable': False" in launch_source
+    assert "executable='planner_server'" in launch_source
+    assert "executable='map_server'" in launch_source
+    assert "controller_server" not in launch_source
+    assert "cmd_vel" not in launch_source
+    assert "gazebo" not in launch_source.lower()
+    assert "on_exit=EmitEvent(event=Shutdown" in launch_source
+    assert "localization_testing.rviz" in launch_source
+    assert "'--nav2-config', LaunchConfiguration('params_file')" in launch_source
+    assert "'--params-file', LaunchConfiguration('params_file')" not in launch_source
+
+
+def test_support_planner_launch_actions_construct_for_every_scenario():
+    from launch import LaunchContext
+
+    launch_path = (
+        REPO_ROOT / "src/lrs_halmstad/launch/support_planner_validation.launch.py"
+    )
+    spec = importlib.util.spec_from_file_location("support_planner_validation", launch_path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    for scenario in module.SCENARIOS:
+        context = LaunchContext()
+        context.launch_configurations["scenario"] = scenario
+        context.launch_configurations["namespace"] = "a201_0000"
+        actions = module._launch_setup(context)
+
+        assert len(actions) == (8 if scenario == "baseline" else 9)
+
+
+def test_support_planner_map_check_resolves_without_ros_runtime():
+    output = _dry_run([
+        "support_planner_validation",
+        "scenario:=map_check",
+        "output:=/tmp/planner-map-check",
+        "dry_run:=true",
+    ])
+
+    assert "support_hazard_evidence map-check" in output
+    assert "--hazard-x -72.0" in output
+    assert "--covariance-sigma-scale 2.0" in output
+    assert "--nav2-config" in output
+    assert "--inflation-radius" not in output
+    assert "ros2 launch" not in output
 
 
 def test_support_observation_defaults_to_baylands_weights():

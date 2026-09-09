@@ -2,24 +2,45 @@ from __future__ import annotations
 
 import copy
 import json
+from pathlib import Path
+from types import SimpleNamespace
 
 from builtin_interfaces.msg import Duration, Time
 from geometry_msgs.msg import Point
 from lrs_halmstad.tools.support_hazard_evidence import (
+    _request_costmap_snapshot,
+    _set_aerial_layer,
+    baseline_repeatability,
+    build_parser,
+    discrete_hausdorff_distance,
     DJI0_TOPIC,
     DJI1_TOPIC,
     DJI2_TOPIC,
+    effective_hazard_geometry,
     EvidenceCollector,
     EvidenceExpectations,
+    GridSnapshot,
+    load_nav2_inflation_config,
+    nav2_cost_class,
+    path_cost_exposure,
+    path_hazard_metrics,
+    PlannerEvidenceCollector,
+    PlanRecord,
+    relevant_costmap_delta,
+    segment_crosses_lethal_cost,
+    settled_baseline_selection,
     UGV_TOPIC,
     write_evidence,
+    write_planner_evidence,
 )
 from lrs_halmstad_interfaces.msg import AerialHazard, AerialHazardArray
+from nav2_msgs.msg import Costmap, CostmapUpdate
 from std_msgs.msg import Header
 from vision_msgs.msg import Detection3D, ObjectHypothesisWithPose
 
 
 SECOND = 1_000_000_000
+REPO_ROOT = Path(__file__).resolve().parents[3]
 
 
 def _time(nanoseconds: int) -> Time:
@@ -120,6 +141,24 @@ def test_confirmation_flow_source_retention_selection_and_covariance():
     assert summary['dji0_to_ugv_forwarding_preserved'] is True
 
 
+def test_forwarding_evidence_tolerates_independent_subscriber_sampling():
+    collector = EvidenceCollector()
+    forwarded = _array(_hazard(
+        track_id='forwarded', source_uavs=['dji1'],
+        state=AerialHazard.CONFIRMED, x=4.0,
+    ))
+    captured_only_at_ugv = _array(_hazard(
+        track_id='missed-at-dji0', source_uavs=['dji1'],
+        state=AerialHazard.CONFIRMED, x=5.0,
+    ))
+    collector.add(DJI0_TOPIC, forwarded, 1)
+    collector.add(UGV_TOPIC, captured_only_at_ugv, 2)
+    collector.add(UGV_TOPIC, copy.deepcopy(forwarded), 3)
+
+    assert collector._forwarding_preserved() is True
+    assert collector._forwarding_match_count() == 1
+
+
 def test_conflict_and_expiry_are_packaged_without_navigation_claims():
     collector = EvidenceCollector()
     dji1_hazard = _hazard(
@@ -208,3 +247,338 @@ def test_evidence_writer_creates_machine_readable_outputs_and_figure(tmp_path):
     assert (tmp_path / 'summary.csv').is_file()
     assert (tmp_path / 'timeline.csv').is_file()
     assert '<svg' in (tmp_path / 'timeline.svg').read_text()
+
+
+def test_effective_geometry_applies_covariance_to_both_sides():
+    hazard = _hazard(
+        track_id='route-hazard',
+        source_uavs=['dji1'],
+        state=AerialHazard.CONFIRMED,
+        x=-72.0,
+        covariance=0.25,
+    )
+    hazard.detection.bbox.size.x = 2.0
+    hazard.detection.bbox.size.y = 2.0
+
+    geometry = effective_hazard_geometry(hazard, covariance_sigma_scale=2.0)
+
+    assert geometry['uncertainty_per_side_m'] == 1.0
+    assert geometry['effective_size_x'] == 4.0
+    assert geometry['effective_size_y'] == 4.0
+
+
+def test_plan_geometry_detects_route_crossing_and_material_change():
+    geometry = {
+        'center_x': 0.0, 'center_y': 0.0, 'yaw': 0.0,
+        'effective_size_x': 4.0, 'effective_size_y': 4.0,
+    }
+    baseline = [(0.0, 5.0), (0.0, -5.0)]
+    detour = [(0.0, 5.0), (3.0, 3.0), (3.0, -3.0), (0.0, -5.0)]
+
+    assert path_hazard_metrics(baseline, geometry)['crosses_effective_hazard']
+    assert not path_hazard_metrics(detour, geometry)['crosses_effective_hazard']
+    assert discrete_hausdorff_distance(baseline, detour) >= 3.0
+
+
+def test_costmap_full_and_update_are_distinguished_and_reconstructed():
+    collector = PlannerEvidenceCollector()
+    full = Costmap()
+    full.metadata.resolution = 1.0
+    full.metadata.size_x = 5
+    full.metadata.size_y = 5
+    full.data = [0] * 25
+    collector.add_full_costmap(full, 10)
+    update = CostmapUpdate(x=2, y=2, size_x=1, size_y=1, data=[254])
+    collector.add_costmap_update(update, 20)
+    geometry = {
+        'center_x': 2.5, 'center_y': 2.5, 'yaw': 0.0,
+        'effective_size_x': 1.0, 'effective_size_y': 1.0,
+    }
+
+    delta = relevant_costmap_delta(collector.costmaps[0], collector.costmaps[1], geometry)
+
+    assert collector.costmap_full_count == 1
+    assert collector.costmap_update_count == 1
+    assert delta['affected_cells'] == 1
+    assert delta['lethal_cells'] == 1
+    assert delta['relevant_cost_values'] == [254]
+    assert delta['affected_cell_values'][0]['current_cost'] == 254
+    assert segment_crosses_lethal_cost([(0.0, 2.5), (5.0, 2.5)], collector.costmaps[1])
+
+
+def test_costmap_delta_distinguishes_lethal_core_and_graded_inflation_halo():
+    baseline = GridSnapshot(1, 'full', 1.0, 7, 7, 0.0, 0.0, bytes([0] * 49))
+    data = bytearray([0] * 49)
+    data[3 * 7 + 3] = 254
+    data[3 * 7 + 4] = 100
+    candidate = GridSnapshot(2, 'update', 1.0, 7, 7, 0.0, 0.0, bytes(data))
+    geometry = {
+        'center_x': 3.5, 'center_y': 3.5, 'yaw': 0.0,
+        'effective_size_x': 1.0, 'effective_size_y': 1.0,
+    }
+
+    delta = relevant_costmap_delta(baseline, candidate, geometry, 2.0)
+
+    assert delta['hazard_footprint_lethal_cells'] == 1
+    assert delta['inflation_halo_nonzero_cells'] == 1
+    assert delta['analysis_region_affected_cells'] == 2
+    assert {item['region'] for item in delta['affected_cell_values']} == {
+        'covariance_footprint', 'inflation_halo'
+    }
+
+    exposure = path_cost_exposure(
+        [(3.5, 3.5), (5.5, 3.5)], candidate, geometry,
+        {**geometry, 'effective_size_x': 5.0, 'effective_size_y': 5.0}, baseline,
+    )
+    assert exposure['crosses_lethal_costmap_cell'] is True
+    assert exposure['graded_inflated_cost_unique_cell_count'] == 1
+    assert exposure['graded_inflated_cost_path_length_m'] > 0.0
+
+
+def test_nav2_cost_classification_distinguishes_253_254_and_255():
+    assert nav2_cost_class(0) == 'free'
+    assert nav2_cost_class(253) == 'graded'
+    assert nav2_cost_class(254) == 'lethal'
+    assert nav2_cost_class(255) == 'no_information'
+
+    for cost, expected in ((253, False), (254, True), (255, False)):
+        snapshot = GridSnapshot(1, 'full', 1.0, 1, 1, 0.0, 0.0, bytes([cost]))
+        assert segment_crosses_lethal_cost(
+            [(0.1, 0.5), (0.9, 0.5)], snapshot
+        ) is expected
+
+
+def test_no_information_startup_transition_is_not_an_aerial_effect():
+    baseline = GridSnapshot(1, 'full', 1.0, 1, 1, 0.0, 0.0, bytes([255]))
+    settled = GridSnapshot(2, 'update', 1.0, 1, 1, 0.0, 0.0, bytes([0]))
+    geometry = {
+        'center_x': 0.5, 'center_y': 0.5, 'yaw': 0.0,
+        'effective_size_x': 1.0, 'effective_size_y': 1.0,
+    }
+
+    delta = relevant_costmap_delta(baseline, settled, geometry)
+
+    assert delta['analysis_region_raw_changed_cells'] == 1
+    assert delta['no_information_transition_cells'] == 1
+    assert delta['analysis_region_affected_cells'] == 0
+    assert delta['lethal_cells'] == 0
+
+
+def test_baseline_selection_requires_consecutive_known_stable_regions():
+    geometry = {
+        'center_x': 0.5, 'center_y': 0.5, 'yaw': 0.0,
+        'effective_size_x': 1.0, 'effective_size_y': 1.0,
+    }
+    unknown = GridSnapshot(1, 'full', 1.0, 1, 1, 0.0, 0.0, bytes([255]))
+    known_once = GridSnapshot(2, 'update', 1.0, 1, 1, 0.0, 0.0, bytes([0]))
+    known_twice = GridSnapshot(3, 'update', 1.0, 1, 1, 0.0, 0.0, bytes([0]))
+
+    missing, incomplete = settled_baseline_selection(
+        [unknown, known_once], geometry, 0.0
+    )
+    selected, complete = settled_baseline_selection(
+        [unknown, known_once, known_twice], geometry, 0.0
+    )
+
+    assert missing is None
+    assert incomplete['status'] == 'unsettled'
+    assert selected == known_twice
+    assert complete['status'] == 'settled'
+    assert complete['maximum_consecutive_stable_snapshots'] == 2
+    assert complete['observations'][0]['no_information_cell_count'] == 1
+
+
+def test_aerial_layer_parameter_client_uses_jazzy_wait_for_services():
+    class CompletedFuture:
+        def done(self):
+            return True
+
+        def result(self):
+            return SimpleNamespace(results=[SimpleNamespace(successful=True)])
+
+    class ParameterClient:
+        def __init__(self):
+            self.wait_called = False
+
+        def wait_for_services(self, timeout_sec):
+            self.wait_called = True
+            return timeout_sec == 2.0
+
+        def set_parameters(self, parameters):
+            assert parameters[0].name == 'aerial_support_layer.enabled'
+            assert parameters[0].value is True
+            return CompletedFuture()
+
+    client = ParameterClient()
+    node = SimpleNamespace(layer_parameters=client)
+
+    assert _set_aerial_layer(node, True, 2.0)
+    assert client.wait_called
+
+
+def test_costmap_service_seeds_a_full_snapshot_for_deterministic_settling():
+    message = Costmap()
+    message.metadata.resolution = 1.0
+    message.metadata.size_x = 1
+    message.metadata.size_y = 1
+    message.data = [0]
+
+    class CompletedFuture:
+        def done(self):
+            return True
+
+        def result(self):
+            return SimpleNamespace(map=message)
+
+    class CostmapClient:
+        def wait_for_service(self, timeout_sec):
+            return timeout_sec == 2.0
+
+        def call_async(self, request):
+            return CompletedFuture()
+
+    collector = PlannerEvidenceCollector()
+    node = SimpleNamespace(
+        costmap_client=CostmapClient(),
+        collector=collector,
+        get_clock=lambda: SimpleNamespace(now=lambda: SimpleNamespace(nanoseconds=10)),
+    )
+
+    assert _request_costmap_snapshot(node, 2.0)
+    assert collector.latest_costmap().source_kind == 'service'
+    assert collector.latest_costmap().data == bytes([0])
+
+
+def test_nav2_config_provenance_and_inflation_are_loaded_from_yaml(tmp_path):
+    config = tmp_path / 'nav2.yaml'
+    config.write_text("""
+global_costmap:
+  global_costmap:
+    ros__parameters:
+      aerial_support_layer:
+        min_confidence: 0.35
+        max_observation_age_s: 1.0
+        covariance_sigma_scale: 2.0
+      inflation_layer:
+        inflation_radius: 1.25
+        cost_scaling_factor: 3.5
+""")
+
+    loaded = load_nav2_inflation_config(config)
+
+    assert loaded['source_yaml'] == str(config.resolve())
+    assert len(loaded['source_sha256']) == 64
+    assert loaded['inflation_radius_m'] == 1.25
+    assert loaded['cost_scaling_factor'] == 3.5
+    assert loaded['aerial_min_confidence'] == 0.35
+
+
+def test_baylands_global_inflation_is_derived_from_the_actual_config():
+    loaded = load_nav2_inflation_config(
+        REPO_ROOT / 'src/lrs_halmstad/config/nav2_baylands_large_map.yaml'
+    )
+
+    assert loaded['inflation_radius_m'] == 0.95
+    assert loaded['cost_scaling_factor'] == 3.0
+    assert loaded['aerial_covariance_sigma_scale'] == 2.0
+
+
+def test_planner_cli_keeps_nav2_config_separate_from_ros_params_file():
+    parser = build_parser()
+    parsed, ros_args = parser.parse_known_args([
+        'planner-live', '--scenario', 'baseline', '--map', '/tmp/map.yaml',
+        '--nav2-config', '/tmp/nav2.yaml', '--start-x', '0', '--start-y', '0',
+        '--goal-x', '1', '--goal-y', '1', '--hazard-x', '0.5', '--hazard-y', '0.5',
+        '--output', '/tmp/evidence', '--ros-args', '--params-file', '/tmp/ros.yaml',
+    ])
+
+    assert parsed.nav2_config == Path('/tmp/nav2.yaml')
+    assert ros_args == ['--ros-args', '--params-file', '/tmp/ros.yaml']
+
+
+def test_baseline_repeatability_requires_all_results_and_stable_geometry():
+    stable = [
+        PlanRecord(f'baseline_repeat_{index}', index, index + 1, 0.01, 0, '',
+                   ((0.0, 0.0), (1.0, 1.0)))
+        for index in range(1, 4)
+    ]
+
+    result = baseline_repeatability(stable, required_count=3, tolerance_m=0.05)
+    missing = baseline_repeatability(stable[:2], required_count=3, tolerance_m=0.05)
+    changed = list(stable)
+    changed[-1] = PlanRecord(
+        'baseline_repeat_3', 3, 4, 0.01, 0, '', ((0.0, 0.0), (2.0, 1.0))
+    )
+
+    assert result['status'] == 'pass'
+    assert result['successful_result_count'] == 3
+    assert result['timing_is_acceptance_criterion'] is False
+    assert missing['status'] == 'fail'
+    assert 'baseline_request_count_incomplete' in missing['failures']
+    assert baseline_repeatability(
+        changed, required_count=3, tolerance_m=0.05
+    )['status'] == 'fail'
+
+
+def test_missing_typed_evidence_cannot_pass():
+    summary = EvidenceCollector().summarize(EvidenceExpectations())
+
+    assert summary['status'] == 'fail'
+    assert 'typed_flow_incomplete' in summary['failures']
+
+
+def test_hazard_timeline_records_timestamps_quality_covariance_and_geometry():
+    collector = PlannerEvidenceCollector()
+    hazard = _hazard(
+        track_id='route-hazard', source_uavs=['dji1'],
+        state=AerialHazard.CONFIRMED, x=-72.0,
+    )
+    hazard.detection.bbox.size.x = 2.0
+    hazard.detection.bbox.size.y = 2.0
+    collector.add(DJI1_TOPIC, _array(hazard), 11 * SECOND)
+
+    row = collector.hazard_rows()[0]
+
+    assert row['track_id'] == 'route-hazard'
+    assert row['acquisition_ns'] == 10 * SECOND
+    assert row['publication_ns'] == 10_100_000_000
+    assert row['observation_ns'] == 10 * SECOND
+    assert row['support_quality'] == 0.9
+    assert row['age_at_receipt_s'] == 1.0
+    assert row['ttl_s'] == 2.0
+    assert row['covariance_x_m2'] == 0.25
+    assert row['effective_size_x_m'] == 4.0
+
+
+def test_planner_writer_creates_structured_plans_timelines_and_overlay(tmp_path):
+    geometry = {
+        'center_x': 0.0, 'center_y': 0.0, 'yaw': 0.0,
+        'nominal_size_x': 2.0, 'nominal_size_y': 2.0,
+        'effective_size_x': 4.0, 'effective_size_y': 4.0,
+    }
+    plan = PlanRecord(
+        label='baseline', requested_ns=1, received_ns=2,
+        planning_time_s=0.01, error_code=0, error_message='',
+        points=((0.0, 5.0), (0.0, -5.0)),
+    )
+    summary = {
+        'schema_version': 2,
+        'hazard_geometry': geometry,
+        'planner': {'plans': [{
+            'label': plan.label,
+            'points': [list(point) for point in plan.points],
+        }]},
+    }
+
+    write_planner_evidence(
+        tmp_path,
+        summary,
+        [{'topic': DJI1_TOPIC, 'snapshot_kind': 'hazard'}],
+        [{'label': 'baseline', 'affected_cells': 0}],
+    )
+
+    assert json.loads((tmp_path / 'summary.json').read_text())['schema_version'] == 2
+    assert json.loads((tmp_path / 'plans.json').read_text())[0]['label'] == 'baseline'
+    assert 'snapshot_kind' in (tmp_path / 'hazard_timeline.csv').read_text()
+    assert 'affected_cells' in (tmp_path / 'costmap_timeline.csv').read_text()
+    assert '<svg' in (tmp_path / 'planner_overlay.svg').read_text()

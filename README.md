@@ -1,11 +1,12 @@
 # Halmstad ROS 2 + Gazebo Testbed — Workspace Snapshot
-Phase 1 shared-runtime reconciliation is local and awaiting review. See
+Phase 1 shared-runtime reconciliation is checkpointed. See
 [the reconciliation record](William/Replanning_&detection_markdowns/03_STATUS_AND_DECISIONS.md#phase-1-selective-shared-runtime-reconciliation)
 for changes, preserved defaults and remaining Baylands runtime gates.
 Normal tmux/Gazebo startup does not kill matching ROS, Nav2, Gazebo or tmux
 processes. The Gazebo wrapper refuses to replace a live recorded simulator
 helper, and exit cleanup remains limited to its own PID record and child.
-No new Track A runtime validation is claimed.
+The lightweight Track A planner harness and evidence analyzer are implemented;
+their ROS runtime scenarios still require the operator run described below.
 
 Current source of truth
 -----------------------
@@ -88,6 +89,22 @@ Closed-loop synthetic hazard validation is also opt-in. `hazard_chain_enable:=tr
 Task 5 real RGB-D projection is separately opt-in with `hazard_projector_enable:=true`. The tmux wrapper then enables the dji1 simulation-localization contract, its Gazebo gimbal-command bridge, and typed forwarding, while the aerial costmap layer remains off unless explicitly requested. This path uses only dji1 RGB, aligned `32FC1` depth, CameraInfo, detector acquisition stamps, and timestamped TF; it has no operational dependency on UGV pose or odometry. The current verified model class is `ugv`, so this validates geometry and integration only—not hazard-detector accuracy or suitability.
 
 Task 8 packages bounded future-work evidence without changing those defaults. `./run.sh validate_support_hazards scenario:=...` runs deterministic non-simulation Task 6/7 fixtures, and `support_hazard_evidence` validates live or recorded typed flow into timestamped JSON/CSV/timeline outputs under ignored `bags/validation/`. The named `./run.sh support_chain_live_typed_flow` profile provides the validated headless Baylands dji1 camera setup; dji2 and the aerial costmap remain explicit opt-ins. The harness does not add perception, motion planning, or thesis-result claims. See `src/lrs_halmstad/README.md` for exact commands and evidence limits.
+
+Lightweight Track A planner validation is available through
+`./run.sh support_planner_validation scenario:=...`. It uses the saved Baylands
+map, fixed robot TF, Nav2 global planner/costmap, synthetic dji1 typed chain and
+optional RViz without Gazebo, a controller, or `cmd_vel`. Start with the offline
+`scenario:=map_check`; then run the seven ROS scenarios in the package README.
+Each ROS run uses wall time, writes machine-readable evidence, and stops only
+its launch-owned processes when the bounded analyzer exits. Planner-only results
+do not establish NavigateToPose replanning, UGV motion, goal completion, or safety.
+The first planner-only baseline run produced a valid Navfn path, but the initial
+seven-scenario gate was incomplete. The evidence harness has since been corrected
+to preserve the real Nav2-config provenance, analyze the configured inflation
+halo, and require repeatable baseline plans. The final corrected seven-scenario
+planner-only suite under `evidence/support_planner_corrected_v5/` passes. This
+closes the bounded typed-flow, costmap, planner-response, negative-control, and
+clearing gates only; full NavigateToPose motion and goal completion remain pending.
 
 The first bounded headless Task 5 live run produced detector records with `valid:false` and no dji1 typed hazard because no explicit downward dji1 camera pitch was commanded and the UGV was outside the image; it was not a model, projector, fusion, or source-selection failure. The validated profile fixes the dji1-only camera scanner at `-60.0` degrees. That bounded retry produced non-empty typed hazards at dji1, dji0, and the UGV, selected dji1, preserved source covariance, and preserved dji0-to-UGV forwarding. This validates the live typed contract under the corrected camera orientation only; it does not establish detector accuracy, general environmental hazard perception, closed-loop navigation success, full SLAM, quantitative safety improvement, or UAV repositioning. Deterministic synthetic/replayed Task 6/7 checks remain the Task 8 pass basis.
 

@@ -70,6 +70,78 @@ The typed path is disabled by default. Enable its map-frame association/fusion a
 
 The path validates age, TTL, dimensions, confidence, and covariance, associates class-compatible observations in time and XY, and assigns deterministic dji0 track IDs. First evidence is tentative; repeated single-UAV evidence or consistent two-UAV evidence confirms a track; incompatible overlapping cross-UAV evidence is marked conflict. Estimate selection remains conservative: one fresh acceptable source is forwarded without averaging or covariance reduction. Typed dji2 evidence is disabled unless `hazard_fusion_dji2_enable:=true` is supplied. The Baylands global costmap can consume the typed UGV output only when explicitly enabled below.
 
+## Track A: lightweight Baylands planner validation
+
+This opt-in harness exercises the existing synthetic dji1 publisher, fusion,
+dji0-to-UGV forwarding, `AerialSupportLayer`, fixed global costmap, and
+`ComputePathToPose`. It starts no Gazebo process, controller server, waypoint
+driver, or `cmd_vel` publisher. Every node uses wall time in this harness; the
+normal simulation-time runtime is unchanged. Typed dji2 input and RViz remain
+disabled unless explicitly requested.
+
+Build first, then recheck the saved-map candidate without starting ROS nodes:
+
+```bash
+source /opt/ros/jazzy/setup.bash
+colcon build --symlink-install --packages-select \
+  lrs_halmstad_interfaces lrs_halmstad_nav_plugins lrs_halmstad
+source install/setup.bash
+./run.sh support_planner_validation scenario:=map_check \
+  output:=evidence/support_planner_corrected/map_check
+```
+
+Run each planner scenario from a sourced terminal. Use a fresh output directory
+for every run because evidence is never overwritten:
+
+```bash
+./run.sh support_planner_validation scenario:=baseline output:=evidence/support_planner_corrected/baseline
+./run.sh support_planner_validation scenario:=valid output:=evidence/support_planner_corrected/valid
+./run.sh support_planner_validation scenario:=clearing output:=evidence/support_planner_corrected/clearing
+./run.sh support_planner_validation scenario:=off_route output:=evidence/support_planner_corrected/off_route
+./run.sh support_planner_validation scenario:=low_confidence output:=evidence/support_planner_corrected/low_confidence
+./run.sh support_planner_validation scenario:=stale output:=evidence/support_planner_corrected/stale
+./run.sh support_planner_validation scenario:=layer_disabled output:=evidence/support_planner_corrected/layer_disabled
+```
+
+Add `rviz:=true` to one command for the saved map, global costmap, fixed robot
+pose, and latest global plan. The generated SVG overlays preserve the baseline,
+hazard-active, and post-clear plans together with nominal and covariance-expanded
+hazard footprints. RViz is observational only and does not determine pass/fail.
+
+The evidence process ends the launch after its bounded check, which stops only
+the processes created by that launch. Press Ctrl-C to stop early. No broad ROS,
+Gazebo, or tmux cleanup is used.
+
+The earlier `evidence/support_planner/baseline` run is retained as historical
+evidence. It produced a valid first planner path, but it cannot pass the gate:
+only one path was requested, the analyzer recorded a ROS-generated temporary
+parameter file instead of the supplied Nav2 YAML, and runtime costmap analysis
+stopped at the covariance footprint. The final corrected suite is retained under
+`evidence/support_planner_corrected_v5/`. All seven scenarios pass after adding
+bounded stable-baseline acquisition, exact Nav2 cost classification, reliable
+`GetCostmap` baseline seeding, Jazzy parameter-client handling, and sampling-safe
+exact forwarding evidence. Earlier corrected roots remain diagnostic attempts.
+
+`map_check` writes `map_check.json` and `map_check.svg`. ROS scenarios write
+`summary.json`, `hazard_timeline.csv`, `costmap_timeline.csv`, `plans.json`, and
+`planner_overlay.svg`. These record typed-flow identities and timestamps,
+the resolved Nav2 YAML and hash, nominal and covariance-expanded geometry,
+the configured inflation radius and analysis region, lethal-core and graded-halo
+cells, mark/clear times, full versus update counts, planner timing, path geometry,
+and the observed clearing mechanism. The baseline scenario requests three paths
+and requires successful, repeatable geometry; timing is recorded but is not an
+acceptance criterion. Inflation and aerial-layer thresholds are read from the
+actual Nav2 YAML supplied to the launch rather than duplicated in the analyzer.
+
+A passing planner run establishes typed propagation, fixed-global-costmap
+integration, planner response, and the tested clearing behavior. It does not
+establish automatic NavigateToPose BT replanning, physical detour, goal
+completion, or motion safety. Those remain full Baylands runtime gates.
+
+The fixed Baylands global costmap has no rolling window, so the known generic
+rolling-grid origin portability issue is outside this harness. Correct and test
+that plugin behavior before adapting the layer to a downstream rolling costmap.
+
 ## Task 4: interactive synthetic hazard validation
 
 This is an operator-run simulation workflow. It does not establish runtime success until its evidence has been reviewed. The existing C1-C4 behavior remains unchanged because both the typed chain and the aerial layer default to disabled.
