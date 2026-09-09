@@ -1,4 +1,12 @@
 # Halmstad ROS 2 + Gazebo Testbed — Workspace Snapshot
+Phase 1 shared-runtime reconciliation is local and awaiting review. See
+[the reconciliation record](William/Replanning_&detection_markdowns/03_STATUS_AND_DECISIONS.md#phase-1-selective-shared-runtime-reconciliation)
+for changes, preserved defaults and remaining Baylands runtime gates.
+Normal tmux/Gazebo startup does not kill matching ROS, Nav2, Gazebo or tmux
+processes. The Gazebo wrapper refuses to replace a live recorded simulator
+helper, and exit cleanup remains limited to its own PID record and child.
+No new Track A runtime validation is claimed.
+
 Current source of truth
 -----------------------
 - `AGENTS.md`

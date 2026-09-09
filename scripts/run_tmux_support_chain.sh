@@ -140,40 +140,6 @@ EOF
   fi
 }
 
-signal_processes_by_pattern() {
-  local pattern="$1"
-  local pids=()
-  local pid=""
-  while IFS= read -r pid; do
-    [ -n "$pid" ] || continue
-    [ "$pid" = "$$" ] && continue
-    pids+=("$pid")
-  done < <(pgrep -f "$pattern" 2>/dev/null || true)
-  if [ "${#pids[@]}" -eq 0 ]; then
-    return 0
-  fi
-  kill -INT "${pids[@]}" 2>/dev/null || true
-  sleep 1
-  kill -TERM "${pids[@]}" 2>/dev/null || true
-  sleep 1
-  kill -KILL "${pids[@]}" 2>/dev/null || true
-}
-
-signal_named_nodes() {
-  local names_regex="$1"
-  signal_processes_by_pattern "__node:=($names_regex)(\\s|$)"
-}
-
-prelaunch_support_cleanup() {
-  signal_processes_by_pattern 'scripts/run_support_follow_odom\.sh'
-  signal_processes_by_pattern 'scripts/run_support_observation\.sh'
-  signal_processes_by_pattern 'ros2 run lrs_halmstad synthetic_hazard_publisher'
-  signal_processes_by_pattern 'ros2 launch lrs_halmstad support_follow_odom\.launch\.py'
-  signal_processes_by_pattern 'ros2 launch lrs_halmstad support_observation\.launch\.py'
-  signal_named_nodes \
-    'support_follow_dji0_pose_to_odom|support_follow_dji1_simulator|support_follow_dji1_odom_controller|support_follow_dji2_simulator|support_follow_dji2_odom_controller|support_dji1_leader_detector|support_dji2_leader_detector|support_dji1_hazard_detector|support_dji1_hazard_projector|dji1_simulation_localization|support_detection_mux|support_hazard_fusion|dji0_to_ugv_forwarder|synthetic_hazard_publisher'
-}
-
 for arg in "$@"; do
   case "$arg" in
     session:=*)
@@ -525,7 +491,7 @@ if tmux has-session -t "$SESSION" 2>/dev/null; then
   exit 1
 fi
 
-prelaunch_support_cleanup
+# Startup must not kill pre-existing support processes from other sessions.
 
 "${BASE_CMD[@]}"
 

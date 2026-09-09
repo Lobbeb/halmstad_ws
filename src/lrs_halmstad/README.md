@@ -1,4 +1,19 @@
 # lrs_halmstad
+Shared-runtime compatibility notes:
+
+- Independent bridge_depth and bridge_gimbal controls retain existing enabled
+  defaults and support RGB-D projection inputs.
+- Follow slew and radio-readiness controls use compatibility defaults in
+  run_follow_defaults.yaml.
+- record_experiment accepts omnet:=true and profile:=manual; existing
+  support_hazard topics and defaults remain.
+- Use omnet_network:=lora-simplex in tmux for the current-team Simplex profile;
+  the legacy lora mapping is preserved.
+- Model preflight: ./run.sh 1to1_yolo baylands weights:=<path> check_weights:=true.
+
+See [the Phase 1 record](../../William/Replanning_&detection_markdowns/03_STATUS_AND_DECISIONS.md#phase-1-selective-shared-runtime-reconciliation)
+for exact scope and unverified runtime gates.
+
 
 Reference for the current 1-to-1 Gazebo/ROS 2 workflow.
 

@@ -12,6 +12,8 @@ PROFILE="default"
 TAG=""
 RUN_DIR=""
 DRY_RUN=false
+OMNET=false
+RECORD_IGNORE_REGEX=""
 ORIGINAL_ARGS=("$@")
 
 if [ -f "$SIM_WORLD_FILE" ]; then
@@ -43,12 +45,18 @@ for arg in "$@"; do
     out:=*)
       RUN_DIR="${arg#out:=}"
       ;;
+    omnet:=*)
+      OMNET="${arg#omnet:=}"
+      ;;
+    ignore_regex:=*)
+      RECORD_IGNORE_REGEX="${arg#ignore_regex:=}"
+      ;;
     dry_run:=*)
       DRY_RUN="${arg#dry_run:=}"
       ;;
     *)
       echo "Unknown argument: $arg" >&2
-      echo "Usage: $0 [world] [mode:=follow|yolo] [uav_name:=dji0] [profile:=default|step2_light|vision|support_hazard] [tag:=name] [out:=bags/experiments/...] [dry_run:=true|false]" >&2
+      echo "Usage: $0 [world] [mode:=follow|yolo] [uav_name:=dji0] [profile:=default|step2_light|vision|support_hazard|manual] [tag:=name] [out:=bags/experiments/...] [dry_run:=true|false]" >&2
       exit 2
       ;;
   esac
@@ -64,7 +72,7 @@ case "$MODE" in
 esac
 
 case "$PROFILE" in
-  default|step2_light|vision|support_hazard)
+  default|step2_light|vision|support_hazard|manual)
     ;;
   *)
     echo "Invalid profile: $PROFILE" >&2
@@ -79,6 +87,11 @@ case "$DRY_RUN" in
     echo "Invalid dry_run option: $DRY_RUN" >&2
     exit 2
     ;;
+esac
+
+case "$OMNET" in
+  true|false) ;;
+  *) echo "Invalid omnet option: $OMNET" >&2; exit 2 ;;
 esac
 
 timestamp="$(date +%m%d-%H%M%S)"
@@ -182,6 +195,27 @@ if [ "$PROFILE" = "support_hazard" ]; then
   )
 fi
 
+# Keep existing baseline/support profiles intact. New profiles/options are additive.
+if [ "$PROFILE" = "manual" ]; then
+  TOPICS=("/clock" "/$UAV_NAME/pose" "/a201_0000/platform/cmd_vel")
+  if [[ "$WORLD" == baylands* ]]; then
+    TOPICS+=("/a201_0000/ground_truth/odom")
+  fi
+fi
+
+if [ "$OMNET" = true ]; then
+  TOPICS+=(
+    "/omnet/sim_time"
+    "/omnet/rssi_dbm"
+    "/omnet/snir_db"
+    "/omnet/packet_error_rate"
+    "/omnet/packet_delivery_ratio"
+    "/omnet/latency_s"
+    "/omnet/jitter_s"
+    "/omnet/radio_distance"
+  )
+fi
+
 shell_join() {
   local out=""
   local part=""
@@ -210,7 +244,12 @@ else
 fi
 
 invocation="$(shell_join "$0" "${ORIGINAL_ARGS[@]}")"
-bag_command="$(shell_join ros2 bag record -o "$BAG_DIR" "${TOPICS[@]}")"
+RECORD_ARGS=(ros2 bag record -o "$BAG_DIR")
+if [ -n "$RECORD_IGNORE_REGEX" ] && [ "$RECORD_IGNORE_REGEX" != "none" ]; then
+  RECORD_ARGS+=(--exclude-regex "$RECORD_IGNORE_REGEX")
+fi
+RECORD_ARGS+=("${TOPICS[@]}")
+bag_command="$(shell_join "${RECORD_ARGS[@]}")"
 hostname_value="$(hostname 2>/dev/null || true)"
 started_at="$(date -Is)"
 
@@ -218,6 +257,7 @@ if [ "$DRY_RUN" = true ]; then
   echo "Run dir: $RUN_DIR_ABS"
   echo "Bag dir: $BAG_DIR"
   echo "Profile: $PROFILE"
+  echo "Command: $bag_command"
   echo "Topics: ${#TOPICS[@]}"
   printf '%s\n' "${TOPICS[@]}"
   exit 0
@@ -236,6 +276,8 @@ printf '%s\n' "${TOPICS[@]}" > "$TOPICS_FILE"
   printf '  "world": "%s",\n' "$(json_escape "$WORLD")"
   printf '  "mode": "%s",\n' "$(json_escape "$MODE")"
   printf '  "profile": "%s",\n' "$(json_escape "$PROFILE")"
+  printf '  "omnet": %s,\n' "$OMNET"
+  printf '  "record_ignore_regex": "%s",\n' "$(json_escape "$RECORD_IGNORE_REGEX")"
   printf '  "uav_name": "%s",\n' "$(json_escape "$UAV_NAME")"
   printf '  "tag": "%s",\n' "$(json_escape "$TAG")"
   printf '  "run_name": "%s",\n' "$(json_escape "$run_name")"
@@ -277,4 +319,4 @@ source "$WS_ROOT/install/setup.bash"
 set -u
 
 echo "[run_record_experiment] Recording profile=$PROFILE mode=$MODE topics=${#TOPICS[@]} bag_dir=$BAG_DIR"
-exec ros2 bag record -o "$BAG_DIR" "${TOPICS[@]}"
+exec "${RECORD_ARGS[@]}"

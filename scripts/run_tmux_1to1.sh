@@ -12,6 +12,7 @@ MAP_PATH=""
 GUI="false"
 TMUX_ATTACH=true
 DRY_RUN=false
+YOLO_WEIGHTS_WAIT_TIMEOUT_S="${YOLO_WEIGHTS_WAIT_TIMEOUT_S:-30}"
 LAYOUT="panes"
 MODE="follow"
 RECORD=false
@@ -35,6 +36,8 @@ OMNET_NETWORK="wifi"
 OMNET_UI="cmdenv"
 OMNET_PROJECT=""
 OMNET_RESULT_DIR=""
+OMNET_LORA_SF=""
+OMNET_LORA_BW=""
 OMNET_BRIDGE_PORT="5555"
 OMNET_START_DELAY_OVERRIDE=""
 DEFAULT_OMNET_START_DELAY_S="3.0"
@@ -282,6 +285,12 @@ for arg in "$@"; do
     follow_wait_topics:=*)
       FOLLOW_WAIT_TOPICS="${arg#follow_wait_topics:=}"
       ;;
+    yolo_weights_wait_timeout_s:=*|weights_wait_timeout_s:=*)
+      YOLO_WEIGHTS_WAIT_TIMEOUT_S="${arg#*:=}"
+      ;;
+    bridge_depth:=*|bridge_gimbal:=*|camera_update_rate:=*)
+      SPAWN_ARGS+=("$arg")
+      ;;
     record_delay_s:=*)
       RECORD_DELAY_OVERRIDE="${arg#record_delay_s:=}"
       ;;
@@ -347,14 +356,14 @@ for arg in "$@"; do
     params_file:=*)
       FOLLOW_ARGS+=("$arg")
       ;;
-    follow_yaw:=*|pan_enable:=*|use_tilt:=*|tilt_enable:=*|camera_default_tilt_deg:=*|use_actual_heading:=*|leader_actual_heading_enable:=*|leader_actual_heading_topic:=*|leader_actual_pose_enable:=*|camera_actual_pose_reacquire_enable:=*|ugv_goal_sequence_randomize:=*|ugv_goal_sequence_random_reverse:=*|ugv_goal_sequence_relative_to_current_pose:=*)
+    follow_yaw:=*|pan_enable:=*|use_tilt:=*|tilt_enable:=*|camera_default_tilt_deg:=*|start_camera_tracker:=*|use_actual_heading:=*|leader_actual_heading_enable:=*|leader_actual_heading_topic:=*|leader_actual_pose_enable:=*|camera_actual_pose_reacquire_enable:=*|ugv_goal_sequence_randomize:=*|ugv_goal_sequence_random_reverse:=*|ugv_goal_sequence_relative_to_current_pose:=*)
       FOLLOW_ARGS+=("$arg")
       ;;
-    range_mode:=*)
-      HAVE_RANGE_MODE="true"
+    range_mode:=*|radio_range_topic:=*)
+      [[ "$arg" != range_mode:=* ]] || HAVE_RANGE_MODE="true"
       FOLLOW_ARGS+=("$arg")
       ;;
-    weights:=*|target:=*|use_estimate:=*|yolo_control_mode:=*|visual_follow_logic:=*|obb:=*|folder:=*|dir:=*|subdir:=*|tracker:=*|external_detection_node:=*|tracker_config:=*|yolo_device:=*|device:=*|detector_backend:=*|detector_async_inference:=*|detector_onnx_model:=*|ugv_start_delay_s:=*|start_visual_follow_controller:=*|start_visual_follow_point_generator:=*|start_visual_follow_planner:=*|start_visual_actuation_bridge:=*|follow_point_prefer_target_pose_heading:=*|follow_point_prefer_target_pose_position:=*|leader_selected_target_topic:=*|leader_selected_target_filtered_topic:=*|leader_selected_target_filtered_status_topic:=*|leader_visual_target_estimate_topic:=*|leader_visual_target_estimate_status_topic:=*|leader_follow_point_topic:=*|leader_follow_point_status_topic:=*|leader_planned_target_topic:=*|leader_planned_target_status_topic:=*|leader_visual_control_topic:=*|leader_visual_control_status_topic:=*|leader_visual_actuation_bridge_status_topic:=*)
+    weights:=*|target:=*|use_estimate:=*|yolo_control_mode:=*|visual_follow_logic:=*|obb:=*|folder:=*|dir:=*|subdir:=*|tracker:=*|external_detection_node:=*|tracker_config:=*|yolo_device:=*|device:=*|detector_backend:=*|detector_async_inference:=*|detector_latest_frame_only:=*|detector_stale_detection_threshold_ms:=*|detector_metrics_window_s:=*|detector_benchmark_csv_path:=*|detector_image_qos_depth:=*|detector_image_qos_reliability:=*|detector_onnx_model:=*|onnx_model:=*|ugv_start_delay_s:=*|start_visual_follow_controller:=*|start_visual_follow_point_generator:=*|start_visual_follow_planner:=*|start_visual_actuation_bridge:=*|follow_point_prefer_target_pose_heading:=*|follow_point_prefer_target_pose_position:=*|leader_selected_target_topic:=*|leader_selected_target_filtered_topic:=*|leader_selected_target_filtered_status_topic:=*|leader_visual_target_estimate_topic:=*|leader_visual_target_estimate_status_topic:=*|leader_follow_point_topic:=*|leader_follow_point_status_topic:=*|leader_planned_target_topic:=*|leader_planned_target_status_topic:=*|leader_visual_control_topic:=*|leader_visual_control_status_topic:=*|leader_visual_actuation_bridge_status_topic:=*)
       FOLLOW_ARGS+=("$arg")
       ;;
     omnet:=*)
@@ -384,6 +393,12 @@ for arg in "$@"; do
     omnet_result_dir:=*)
       OMNET_RESULT_DIR="${arg#omnet_result_dir:=}"
       ;;
+    lora_sf:=*|omnet_lora_sf:=*|sf:=*)
+      OMNET_LORA_SF="${arg#*:=}"
+      ;;
+    lora_bw:=*|omnet_lora_bw:=*|bw:=*)
+      OMNET_LORA_BW="${arg#*:=}"
+      ;;
     omnet_bridge_port:=*)
       OMNET_BRIDGE_PORT="${arg#omnet_bridge_port:=}"
       FOLLOW_ARGS+=("$arg")
@@ -399,7 +414,7 @@ for arg in "$@"; do
       ;;
     *)
       echo "Unknown argument: $arg" >&2
-      echo "Usage: $0 [world] [mode:=follow|yolo] [record:=true|false] [record_profile:=default|step2_light|vision|support_hazard] [record_tag:=name] [record_out:=bags/experiments/...] [aerial_support_layer_enable:=true|false] [camera:=attached] [follow_yaw:=true|false] [pan_enable:=true|false] [use_tilt:=true|false] [height:=7] [mount_pitch_deg:=45] [uav_name:=dji0] [weights:=...] [target:=...] [yolo_control_mode:=visual_bridge|follow_uav_estimate] [visual_follow_logic:=legacy|follow_core] [obb:=true|false] [tracker:=true|false] [external_detection_node:=detector|tracker] [tracker_config:=botsort.yaml] [detector_backend:=ultralytics|onnx_cpu|onnx_directml] [detector_async_inference:=true|false] [yolo_device:=cpu|auto] [detector_onnx_model:=...] [params_file:=/path/run_follow_defaults.yaml] [ugv_start_delay_s:=12.0] [follow_point_prefer_target_pose_heading:=true|false] [follow_point_prefer_target_pose_position:=true|false] [start_visual_actuation_bridge:=true|false] [start_visual_follow_point_generator:=true|false] [start_visual_follow_planner:=true|false] [start_visual_follow_controller:=true|false] [nav2_goals:=parkinglot_east|route.yaml] [ugv_goal_sequence_csv:=x,y,yaw;...] [ugv_goal_sequence_randomize:=true|false] [ugv_goal_sequence_random_reverse:=true|false] [ugv_goal_sequence_relative_to_current_pose:=true|false] [folder:=...] [map:=/path/map.yaml] [lidar:=2d|3d] [pc2ls_min_height:=...] [pc2ls_max_height:=...] [scan_relay_hz:=...] [gui:=true|false] [rtf:=1.0] [x:=...] [y:=...] [z:=...] [yaw:=...] [state:=checkpoint] [waypoint:=name] [delay_s:=9] [spawn_delay_s:=9] [localization_delay_s:=11] [nav2_delay_s:=11] [follow_delay_s:=13] [follow_wait_topics:=/topic_a,/topic_b] [record_delay_s:=13] [session:=name] [tmux_attach:=true|false] [dry_run:=true|false] [layout:=windows|panes] [omnet:=true|false] [omnet_network:=wifi|5g|lora] [omnet_ui:=cmdenv|qtenv] [omnet_project:=/path/UAV_UGV] [omnet_result_dir:=/path] [omnet_bridge_port:=5555] [omnet_start_delay_s:=3.0] [uav_start_delay_s:=12.0]" >&2
+      echo "Usage: $0 [world] [mode:=follow|yolo] [record:=true|false] [record_profile:=default|step2_light|vision|support_hazard|manual] [record_tag:=name] [record_out:=bags/experiments/...] [aerial_support_layer_enable:=true|false] [camera:=attached] [follow_yaw:=true|false] [pan_enable:=true|false] [use_tilt:=true|false] [height:=7] [mount_pitch_deg:=45] [uav_name:=dji0] [weights:=...] [target:=...] [yolo_control_mode:=visual_bridge|follow_uav_estimate] [visual_follow_logic:=legacy|follow_core] [obb:=true|false] [tracker:=true|false] [external_detection_node:=detector|tracker] [tracker_config:=botsort.yaml] [detector_backend:=ultralytics|onnx_cpu|onnx_directml] [detector_async_inference:=true|false] [yolo_device:=cpu|auto] [detector_onnx_model:=...] [params_file:=/path/run_follow_defaults.yaml] [ugv_start_delay_s:=12.0] [follow_point_prefer_target_pose_heading:=true|false] [follow_point_prefer_target_pose_position:=true|false] [start_visual_actuation_bridge:=true|false] [start_visual_follow_point_generator:=true|false] [start_visual_follow_planner:=true|false] [start_visual_follow_controller:=true|false] [nav2_goals:=parkinglot_east|route.yaml] [ugv_goal_sequence_csv:=x,y,yaw;...] [ugv_goal_sequence_randomize:=true|false] [ugv_goal_sequence_random_reverse:=true|false] [ugv_goal_sequence_relative_to_current_pose:=true|false] [folder:=...] [map:=/path/map.yaml] [lidar:=2d|3d] [pc2ls_min_height:=...] [pc2ls_max_height:=...] [scan_relay_hz:=...] [gui:=true|false] [rtf:=1.0] [x:=...] [y:=...] [z:=...] [yaw:=...] [state:=checkpoint] [waypoint:=name] [delay_s:=9] [spawn_delay_s:=9] [localization_delay_s:=11] [nav2_delay_s:=11] [follow_delay_s:=13] [follow_wait_topics:=/topic_a,/topic_b] [record_delay_s:=13] [session:=name] [tmux_attach:=true|false] [dry_run:=true|false] [layout:=windows|panes] [omnet:=true|false] [omnet_network:=wifi|5g|lora] [omnet_ui:=cmdenv|qtenv] [omnet_project:=/path/UAV_UGV] [omnet_result_dir:=/path] [omnet_bridge_port:=5555] [omnet_start_delay_s:=3.0] [uav_start_delay_s:=12.0]" >&2
       exit 2
       ;;
   esac
@@ -422,7 +437,7 @@ esac
 if [ "$MODE" != "yolo" ]; then
   for arg in "${FOLLOW_ARGS[@]}"; do
       case "$arg" in
-      weights:=*|target:=*|use_estimate:=*|yolo_control_mode:=*|visual_follow_logic:=*|obb:=*|folder:=*|dir:=*|subdir:=*|tracker:=*|external_detection_node:=*|tracker_config:=*|yolo_device:=*|device:=*|detector_backend:=*|detector_async_inference:=*|detector_onnx_model:=*|range_mode:=*|ugv_start_delay_s:=*|start_visual_follow_controller:=*|start_visual_follow_point_generator:=*|start_visual_follow_planner:=*|start_visual_actuation_bridge:=*|follow_point_prefer_target_pose_heading:=*|follow_point_prefer_target_pose_position:=*|leader_selected_target_topic:=*|leader_selected_target_filtered_topic:=*|leader_selected_target_filtered_status_topic:=*|leader_visual_target_estimate_topic:=*|leader_visual_target_estimate_status_topic:=*|leader_follow_point_topic:=*|leader_follow_point_status_topic:=*|leader_planned_target_topic:=*|leader_planned_target_status_topic:=*|leader_visual_control_topic:=*|leader_visual_control_status_topic:=*|leader_visual_actuation_bridge_status_topic:=*)
+      weights:=*|target:=*|use_estimate:=*|yolo_control_mode:=*|visual_follow_logic:=*|obb:=*|folder:=*|dir:=*|subdir:=*|tracker:=*|external_detection_node:=*|tracker_config:=*|yolo_device:=*|device:=*|detector_backend:=*|detector_async_inference:=*|detector_latest_frame_only:=*|detector_stale_detection_threshold_ms:=*|detector_metrics_window_s:=*|detector_benchmark_csv_path:=*|detector_image_qos_depth:=*|detector_image_qos_reliability:=*|detector_onnx_model:=*|onnx_model:=*|range_mode:=*|radio_range_topic:=*|ugv_start_delay_s:=*|start_visual_follow_controller:=*|start_visual_follow_point_generator:=*|start_visual_follow_planner:=*|start_visual_actuation_bridge:=*|follow_point_prefer_target_pose_heading:=*|follow_point_prefer_target_pose_position:=*|leader_selected_target_topic:=*|leader_selected_target_filtered_topic:=*|leader_selected_target_filtered_status_topic:=*|leader_visual_target_estimate_topic:=*|leader_visual_target_estimate_status_topic:=*|leader_follow_point_topic:=*|leader_follow_point_status_topic:=*|leader_planned_target_topic:=*|leader_planned_target_status_topic:=*|leader_visual_control_topic:=*|leader_visual_control_status_topic:=*|leader_visual_actuation_bridge_status_topic:=*)
         echo "Argument '$arg' requires mode:=yolo" >&2
         exit 2
         ;;
@@ -464,7 +479,7 @@ case "$RECORD" in
 esac
 
 case "$RECORD_PROFILE" in
-  default|step2_light|vision|support_hazard)
+  default|step2_light|vision|support_hazard|manual)
     ;;
   *)
     echo "Invalid record_profile: $RECORD_PROFILE" >&2
@@ -701,54 +716,6 @@ build_follow_ready_cmd() {
   done
 }
 
-signal_processes_by_pattern() {
-  local pattern="$1"
-  local pids=()
-  local pid=""
-  while IFS= read -r pid; do
-    [ -n "$pid" ] || continue
-    [ "$pid" = "$$" ] && continue
-    pids+=("$pid")
-  done < <(pgrep -f "$pattern" 2>/dev/null || true)
-  if [ "${#pids[@]}" -eq 0 ]; then
-    return 0
-  fi
-  kill -INT "${pids[@]}" 2>/dev/null || true
-  sleep 1
-  kill -TERM "${pids[@]}" 2>/dev/null || true
-  sleep 1
-  kill -KILL "${pids[@]}" 2>/dev/null || true
-}
-
-signal_named_nodes() {
-  local names_regex="$1"
-  signal_processes_by_pattern "__node:=($names_regex)(\\s|$)"
-}
-
-prelaunch_safety_cleanup() {
-  rm -f "$SIM_PID_FILE"
-  signal_processes_by_pattern 'scripts/run_gazebo_sim\.sh'
-  signal_processes_by_pattern 'scripts/run_spawn_uav\.sh'
-  signal_processes_by_pattern 'scripts/run_localization\.sh'
-  signal_processes_by_pattern 'scripts/run_nav2\.sh'
-  signal_processes_by_pattern 'ros2 launch lrs_halmstad run_follow\.launch\.py'
-  signal_processes_by_pattern 'ros2 launch lrs_halmstad run_1to1_follow\.launch\.py'
-  signal_processes_by_pattern 'ros2 launch .*/run_follow\.launch\.py'
-  signal_processes_by_pattern 'ros2 launch clearpath_nav2_demos nav2\.launch\.py'
-  signal_processes_by_pattern 'ros2 launch .*/nav2_with_updates\.launch\.py'
-  signal_processes_by_pattern '/opt/ros/[^/]+/lib/nav2_'
-  signal_processes_by_pattern 'ros2 launch clearpath_nav2_demos localization\.launch\.py'
-  signal_processes_by_pattern 'ros2 launch .*/localization_with_params\.launch\.py'
-  signal_processes_by_pattern 'ros2 launch lrs_halmstad spawn_uav_1to1\.launch\.py'
-  signal_processes_by_pattern 'ros2 launch lrs_halmstad managed_clearpath_sim\.launch\.py'
-  signal_processes_by_pattern 'ros2 launch .*/managed_clearpath_sim\.launch\.py'
-  signal_processes_by_pattern '/ros_gz_bridge/(bridge_node|parameter_bridge|image_bridge)(\\s|$)'
-  signal_named_nodes 'amcl|map_server|planner_server|controller_server|collision_monitor|behavior_server|bt_navigator|waypoint_follower|velocity_smoother|smoother_server|route_server|docking_server|lifecycle_manager_localization|lifecycle_manager_navigation|ugv_nav2_driver|ugv_amcl_to_odom|ugv_amcl_to_platform_odom|ugv_amcl_to_platform_filtered_odom|ugv_platform_odom_to_tf|uav_simulator|follow_uav|follow_uav_odom|leader_detector|leader_tracker|leader_estimator|selected_target_filter|visual_target_estimator|follow_point_generator|follow_point_planner|visual_actuation_bridge|camera_tracker|clock_bridge|clock_guard|omnet_uav_pose_to_odom|omnet_tcp_bridge|omnet_metrics_bridge'
-  signal_processes_by_pattern '(^|/)UAV_UGV($| ).*-c Communication-GazeboBridge-'
-  signal_processes_by_pattern '(^|/)gz sim($| )'
-}
-
-
 write_session_state() {
   mkdir -p "$TMUX_STATE_DIR"
   local _record_cmd_str=""
@@ -771,6 +738,8 @@ write_session_state() {
     printf 'OMNET_UI=%q\n' "$OMNET_UI"
     printf 'OMNET_PROJECT=%q\n' "$OMNET_PROJECT"
     printf 'OMNET_RESULT_DIR=%q\n' "$OMNET_RESULT_DIR"
+    printf 'OMNET_LORA_SF=%q\n' "$OMNET_LORA_SF"
+    printf 'OMNET_LORA_BW=%q\n' "$OMNET_LORA_BW"
     printf 'FOLLOW_CMD_STR=%q\n' "$(shell_join "${FOLLOW_CMD[@]}")"
     printf 'RECORD_CMD_STR=%q\n' "$_record_cmd_str"
     printf 'GAZEBO_PANE_ID=%q\n' "$gazebo_pane"
@@ -809,16 +778,35 @@ else
 fi
 
 if [[ "$WORLD" == baylands* ]] && [ "$HAVE_UGV_GOAL_SEQUENCE" = "false" ]; then
-  FOLLOW_ARGS+=("nav2_goals:=$(baylands_route_yaml_path "$BAYLANDS_DEFAULT_NAV2_GOALS")")
-  NAV2_GOALS_FOR_LIDAR="$BAYLANDS_DEFAULT_NAV2_GOALS"
-  echo "[run_tmux_1to1] Baylands default Nav2 goals: nav2_goals:=$BAYLANDS_DEFAULT_NAV2_GOALS"
+  if [ -n "$GAZEBO_WAYPOINT_NAME" ]; then
+    inferred_nav2_goals="$(baylands_route_for_waypoint "$GAZEBO_WAYPOINT_NAME" 2>/dev/null || true)"
+    if [ -n "$inferred_nav2_goals" ]; then
+      FOLLOW_ARGS+=("nav2_goals:=$(baylands_route_yaml_path "$inferred_nav2_goals")")
+      NAV2_GOALS_FOR_LIDAR="$inferred_nav2_goals"
+      echo "[run_tmux_1to1] Baylands waypoint implies Nav2 goals: waypoint:=$GAZEBO_WAYPOINT_NAME nav2_goals:=$inferred_nav2_goals"
+    fi
+  fi
+  if [ -z "$NAV2_GOALS_FOR_LIDAR" ]; then
+    FOLLOW_ARGS+=("nav2_goals:=$(baylands_route_yaml_path "$BAYLANDS_DEFAULT_NAV2_GOALS")")
+    NAV2_GOALS_FOR_LIDAR="$BAYLANDS_DEFAULT_NAV2_GOALS"
+    echo "[run_tmux_1to1] Baylands default Nav2 goals: nav2_goals:=$BAYLANDS_DEFAULT_NAV2_GOALS"
+  fi
 fi
 
 if [[ "$WORLD" == baylands* ]] && [ "$HAS_GAZEBO_SPAWN_OVERRIDE" = "false" ]; then
-  GAZEBO_WAYPOINT_NAME="$BAYLANDS_DEFAULT_WAYPOINT"
+  route_start_waypoint=""
+  if [ -n "$NAV2_GOALS_FOR_LIDAR" ]; then
+    route_start_waypoint="$(baylands_first_waypoint_for_route "$NAV2_GOALS_FOR_LIDAR" 2>/dev/null || true)"
+    if [ -z "$route_start_waypoint" ]; then
+      echo "[run_tmux_1to1] Could not resolve first waypoint for nav2_goals:=$NAV2_GOALS_FOR_LIDAR" >&2
+      echo "[run_tmux_1to1] Pass waypoint:=... explicitly for this route." >&2
+      exit 2
+    fi
+  fi
+  GAZEBO_WAYPOINT_NAME="${route_start_waypoint:-$BAYLANDS_DEFAULT_WAYPOINT}"
   HAS_GAZEBO_SPAWN_OVERRIDE="true"
   GAZEBO_ARGS+=("waypoint:=$GAZEBO_WAYPOINT_NAME")
-  echo "[run_tmux_1to1] Baylands default UGV spawn waypoint: waypoint:=$GAZEBO_WAYPOINT_NAME"
+  echo "[run_tmux_1to1] Baylands UGV spawn waypoint: waypoint:=$GAZEBO_WAYPOINT_NAME"
 fi
 
 UGV_SPAWN_X=""
@@ -878,7 +866,7 @@ if [ -n "$UGV_SPAWN_X" ] && [ -n "$UGV_SPAWN_Y" ] && [ -n "$UGV_SPAWN_YAW" ]; th
   }
   eval "$UAV_SPAWN_ENV"
   SPAWN_ARGS+=("x:=$uav_x" "y:=$uav_y" "z:=$uav_z" "yaw:=$uav_yaw")
-  if [[ "$WORLD" != baylands* ]]; then
+  if [[ "$WORLD" != baylands* ]] || [ "$MODE" = "yolo" ]; then
     FOLLOW_ARGS+=(
       "uav_start_x:=$uav_x"
       "uav_start_y:=$uav_y"
@@ -888,7 +876,11 @@ if [ -n "$UGV_SPAWN_X" ] && [ -n "$UGV_SPAWN_Y" ] && [ -n "$UGV_SPAWN_YAW" ]; th
   fi
   echo "[run_tmux_1to1] Using deterministic UAV spawn from UGV spawn x=${UGV_SPAWN_X} y=${UGV_SPAWN_Y} yaw=${UGV_SPAWN_YAW}: uav_x=${uav_x} uav_y=${uav_y} uav_z=${uav_z} uav_yaw_deg=${uav_yaw_deg}"
   if [[ "$WORLD" == baylands* ]]; then
-    echo "[run_tmux_1to1] Baylands follow start will be resolved from the live UAV pose by run_1to1_follow."
+    if [ "$MODE" = "yolo" ]; then
+      echo "[run_tmux_1to1] Baylands YOLO follow will use the deterministic UAV spawn as its simulator start pose."
+    else
+      echo "[run_tmux_1to1] Baylands follow start will be resolved from the live UAV pose by run_1to1_follow."
+    fi
   fi
 fi
 
@@ -946,6 +938,7 @@ NAV2_READY_CMD="$(build_nav2_ready_cmd)"
 FOLLOW_READY_CMD="$(build_follow_ready_cmd)"
 if [ "$RECORD" = true ]; then
   RECORD_CMD=(./run.sh record_experiment "$WORLD" "mode:=$MODE" "uav_name:=$UAV_NAME" "profile:=$RECORD_PROFILE")
+  RECORD_CMD+=("omnet:=$OMNET")
   if [ -n "$RECORD_TAG" ]; then
     RECORD_CMD+=("tag:=$RECORD_TAG")
   fi
@@ -961,6 +954,12 @@ if [ "$OMNET" = true ]; then
   fi
   if [ -n "$OMNET_RESULT_DIR" ]; then
     OMNET_CMD+=("result_dir:=$OMNET_RESULT_DIR")
+  fi
+  if [ -n "$OMNET_LORA_SF" ]; then
+    OMNET_CMD+=("lora_sf:=$OMNET_LORA_SF")
+  fi
+  if [ -n "$OMNET_LORA_BW" ]; then
+    OMNET_CMD+=("lora_bw:=$OMNET_LORA_BW")
   fi
   OMNET_READY_CMD="$(build_omnet_ready_cmd)"
 fi
@@ -983,7 +982,7 @@ if tmux has-session -t "$SESSION" 2>/dev/null; then
   exit 1
 fi
 
-prelaunch_safety_cleanup
+# Do not kill pre-existing user/team processes during startup or dry-run.
 
 if [ "$DRY_RUN" = true ]; then
   echo "Session: $SESSION"
@@ -1010,6 +1009,21 @@ if [ "$DRY_RUN" = true ]; then
     echo "[record]       $RECORD_LINE"
   fi
   exit 0
+fi
+
+if [ "$MODE" = "yolo" ]; then
+  case "$YOLO_WEIGHTS_WAIT_TIMEOUT_S" in
+    ''|*[!0-9]*) echo "Invalid yolo_weights_wait_timeout_s: $YOLO_WEIGHTS_WAIT_TIMEOUT_S" >&2; exit 2 ;;
+  esac
+  weights_wait_start="$SECONDS"
+  while ! weights_check_output="$(bash "$SCRIPT_DIR/run_1to1_yolo.sh" "$WORLD" "${FOLLOW_ARGS[@]}" check_weights:=true 2>&1)"; do
+    if [ "$((SECONDS - weights_wait_start))" -ge "$YOLO_WEIGHTS_WAIT_TIMEOUT_S" ]; then
+      printf '%s\n' "$weights_check_output" >&2
+      exit 2
+    fi
+    sleep 1
+  done
+  printf '%s\n' "$weights_check_output"
 fi
 
 if [ "$LAYOUT" = "windows" ]; then

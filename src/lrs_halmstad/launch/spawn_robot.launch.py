@@ -52,7 +52,12 @@ def generate_launch_description():
     bridge_camera_arg = DeclareLaunchArgument(
         name='bridge_camera',
         default_value="false",
-        description='Bridge /<name>/<camera_name> RGB image, camera_info, and depth_image topics to ROS'
+        description='Bridge RGB and camera_info to ROS; depth is controlled by bridge_depth'
+    )
+    bridge_depth_arg = DeclareLaunchArgument(
+        name='bridge_depth',
+        default_value="true",
+        description='Bridge depth when bridge_camera is enabled; false disables depth only',
     )
     bridge_gimbal_arg = DeclareLaunchArgument(
         name='bridge_gimbal',
@@ -151,13 +156,12 @@ def generate_launch_description():
     camera_bridge = Node(
         package='ros_gz_bridge',
         executable='parameter_bridge',
+        name=[LaunchConfiguration('name'), '_camera_bridge'],
         arguments=[
             ['/', LaunchConfiguration('name'), '/', LaunchConfiguration('camera_name'),
              '/image@sensor_msgs/msg/Image[ignition.msgs.Image'],
             ['/', LaunchConfiguration('name'), '/', LaunchConfiguration('camera_name'),
              '/camera_info@sensor_msgs/msg/CameraInfo[ignition.msgs.CameraInfo'],
-            ['/', LaunchConfiguration('name'), '/', LaunchConfiguration('camera_name'),
-             '/depth_image@sensor_msgs/msg/Image[ignition.msgs.Image'],
         ],
         remappings=[
             (
@@ -171,9 +175,27 @@ def generate_launch_description():
         ])),
     )
 
+    depth_bridge = Node(
+        package='ros_gz_bridge',
+        executable='parameter_bridge',
+        name=[LaunchConfiguration('name'), '_depth_bridge'],
+        arguments=[
+            ['/', LaunchConfiguration('name'), '/', LaunchConfiguration('camera_name'),
+             '/depth_image@sensor_msgs/msg/Image[ignition.msgs.Image'],
+        ],
+        output='screen',
+        condition=IfCondition(PythonExpression([
+            "'", LaunchConfiguration('bridge_depth'),
+            "'.lower() in ('1','true','yes','on') and '",
+            LaunchConfiguration('bridge_camera'),
+            "'.lower() in ('1','true','yes','on')",
+        ])),
+    )
+
     gimbal_bridge = Node(
         package='ros_gz_bridge',
         executable='parameter_bridge',
+        name=[LaunchConfiguration('name'), '_gimbal_bridge'],
         arguments=[
             ['/model/', LaunchConfiguration('name'),
              '/joint/', LaunchConfiguration('name'),
@@ -193,6 +215,7 @@ def generate_launch_description():
     )
 
     return LaunchDescription([
+        name_arg,
         DeclareLaunchArgument('x', default_value="0.0"),
         DeclareLaunchArgument('y', default_value="0.0"),
         DeclareLaunchArgument('z', default_value="0.0"),
@@ -204,6 +227,7 @@ def generate_launch_description():
         uav_mode_arg,
         with_camera_arg,
         bridge_camera_arg,
+        bridge_depth_arg,
         bridge_gimbal_arg,
         camera_pitch_offset_deg_arg,
         camera_update_rate_arg,
@@ -211,8 +235,8 @@ def generate_launch_description():
         camera_frame_id_arg,
         model_arg,
         world_arg,        
-        name_arg,
         spawn_node,
         camera_bridge,
+        depth_bridge,
         gimbal_bridge,
     ])

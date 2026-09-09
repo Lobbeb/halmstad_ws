@@ -299,53 +299,24 @@ cleanup() {
   fi
 }
 
-signal_processes_by_pattern() {
-  local pattern="$1"
-  local pids=()
-  local pid=""
-  while IFS= read -r pid; do
-    [ -n "$pid" ] || continue
-    [ "$pid" = "$$" ] && continue
-    pids+=("$pid")
-  done < <(pgrep -f "$pattern" 2>/dev/null || true)
-  if [ "${#pids[@]}" -eq 0 ]; then
-    return 0
+prepare_task_state() {
+  local existing_pid=""
+  if [ -f "$SIM_PID_FILE" ]; then
+    existing_pid="$(cat "$SIM_PID_FILE" 2>/dev/null || true)"
+    if [[ "$existing_pid" =~ ^[0-9]+$ ]] && kill -0 "$existing_pid" 2>/dev/null; then
+      echo "[run_gazebo_sim] Another simulator helper is active (PID $existing_pid)." >&2
+      echo "[run_gazebo_sim] Stop the owning session or choose a separate checkout before starting another." >&2
+      exit 1
+    fi
   fi
-  kill -INT "${pids[@]}" 2>/dev/null || true
-  sleep 1
-  kill -TERM "${pids[@]}" 2>/dev/null || true
-  sleep 1
-  kill -KILL "${pids[@]}" 2>/dev/null || true
-}
 
-signal_named_nodes() {
-  local names_regex="$1"
-  signal_processes_by_pattern "__node:=($names_regex)(\\s|$)"
-}
-
-prelaunch_safety_cleanup() {
-  if [ -f "$CONTROLLER_RECOVERY_PID_FILE" ]; then
-    kill "$(cat "$CONTROLLER_RECOVERY_PID_FILE" 2>/dev/null || true)" 2>/dev/null || true
-  fi
-  rm -f "$SIM_PID_FILE" "$SIM_WORLD_FILE" "$CONTROLLER_RECOVERY_PID_FILE"
-  signal_processes_by_pattern 'scripts/run_gazebo_sim\.sh'
-  signal_processes_by_pattern 'scripts/run_spawn_uav\.sh'
-  signal_processes_by_pattern 'scripts/run_localization\.sh'
-  signal_processes_by_pattern 'scripts/run_nav2\.sh'
-  signal_processes_by_pattern 'ros2 launch lrs_halmstad run_follow\.launch\.py'
-  signal_processes_by_pattern 'ros2 launch lrs_halmstad run_1to1_follow\.launch\.py'
-  signal_processes_by_pattern 'ros2 launch .*/run_follow\.launch\.py'
-  signal_processes_by_pattern 'ros2 launch clearpath_nav2_demos nav2\.launch\.py'
-  signal_processes_by_pattern 'ros2 launch .*/nav2_with_updates\.launch\.py'
-  signal_processes_by_pattern '/opt/ros/[^/]+/lib/nav2_'
-  signal_processes_by_pattern 'ros2 launch clearpath_nav2_demos localization\.launch\.py'
-  signal_processes_by_pattern 'ros2 launch .*/localization_with_params\.launch\.py'
-  signal_processes_by_pattern 'ros2 launch lrs_halmstad spawn_uav_1to1\.launch\.py'
-  signal_processes_by_pattern 'ros2 launch lrs_halmstad managed_clearpath_sim\.launch\.py'
-  signal_processes_by_pattern 'ros2 launch .*/managed_clearpath_sim\.launch\.py'
-  signal_processes_by_pattern '/ros_gz_bridge/(bridge_node|parameter_bridge|image_bridge)(\\s|$)'
-  signal_named_nodes 'amcl|map_server|planner_server|controller_server|collision_monitor|behavior_server|bt_navigator|waypoint_follower|velocity_smoother|smoother_server|route_server|docking_server|lifecycle_manager_localization|lifecycle_manager_navigation|ugv_nav2_driver|ugv_amcl_to_odom|ugv_amcl_to_platform_odom|ugv_amcl_to_platform_filtered_odom|ugv_platform_odom_to_tf|uav_simulator|follow_uav|follow_uav_odom|leader_detector|leader_tracker|leader_estimator|selected_target_filter|visual_target_estimator|follow_point_generator|follow_point_planner|visual_actuation_bridge|camera_tracker|clock_bridge|clock_guard|omnet_uav_pose_to_odom|omnet_tcp_bridge|omnet_metrics_bridge'
-  signal_processes_by_pattern '(^|/)gz sim($| )'
+  # These files are stale only after the recorded owner has exited. Never kill
+  # processes discovered by name or from a stale child PID during startup.
+  rm -f \
+    "$SIM_PID_FILE" \
+    "$SIM_WORLD_FILE" \
+    "$SIM_SPAWN_WAYPOINT_FILE" \
+    "$CONTROLLER_RECOVERY_PID_FILE"
 }
 
 trap cleanup EXIT
@@ -383,7 +354,7 @@ if [ -n "$ORIG_ROS_DOMAIN_ID" ]; then
 fi
 
 mkdir -p "$STATE_DIR"
-prelaunch_safety_cleanup
+prepare_task_state
 printf '%s\n' "$$" > "$SIM_PID_FILE"
 printf '%s\n' "$WORLD" > "$SIM_WORLD_FILE"
 if [ -n "$WAYPOINT_NAME" ]; then

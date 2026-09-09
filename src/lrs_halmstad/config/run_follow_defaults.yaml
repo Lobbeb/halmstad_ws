@@ -40,6 +40,9 @@ follow_uav:
     # Anchor placement and horizontal motion.
     xy_anchor_max: 20.0              # Safety radius for the horizontal anchor target around the leader.
     follow_z_offset_m: 7.0           # Desired UAV height above leader. Horizontal distance is reduced so d_target remains the true 3D standoff.
+    # Shared-runtime slew controls; zero preserves the existing immediate target updates.
+    d_target_slew_mps: 0.0
+    follow_z_slew_mps: 0.0
     follow_speed_mps: 5.0
     follow_speed_gain: 2.0
     leader_heading_offset_deg: 0.0   # Anchor heading offset for follow_uav and follow_uav_odom.
@@ -59,6 +62,11 @@ follow_uav:
 # <<------ UAV simulator and gimbal dynamics ------ >>
 uav_simulator:
   ros__parameters:
+    # Compatibility defaults retain existing gimbal inputs/state topics.
+    pan_enable: true
+    tilt_enable: true
+    publish_gimbal_state_topics: true
+
     # Gimbal limits.
     gimbal_pitch_min_rad: -1.5708        # Minimum gimbal pitch in radians (-pi/2 = -90 deg, straight down).
     gimbal_pitch_max_rad: 0.5235         # Maximum gimbal pitch in radians (pi/4 = 45 deg up).
@@ -247,6 +255,12 @@ leader_estimator:
     depth_max_estimate_jump_m: 5.0          # Reject depth if it would jump the leader estimate by more than this; 0 = disabled.
 
     # Radio range input.
+    # Optional shared-runtime radio gates; defaults retain the existing fallback.
+    radio_fallback_enable: true
+    radio_range_warmup_s: 0.0
+    radio_range_min_samples: 1
+    radio_range_stability_window: 1
+    radio_range_stability_max_delta_m: 0.0
     radio_range_timeout_s: 0.5               # Radio range older than this is discarded; keep 0.2-1.0 s.
 
 

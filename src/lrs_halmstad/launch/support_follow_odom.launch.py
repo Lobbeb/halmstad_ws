@@ -48,6 +48,7 @@ def _support_instance(
                     'uav_mode': uav_mode,
                     'with_camera': with_camera,
                     'bridge_camera': with_camera,
+                    'bridge_depth': with_camera,  # Required by the support projector.
                     'bridge_gimbal': bridge_gimbal,
                     'camera_pitch_offset_deg': camera_pitch_offset_deg,
                     'camera_update_rate': camera_update_rate,

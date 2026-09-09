@@ -78,6 +78,34 @@ def test_support_tmux_ros_commands_use_the_same_clean_environment():
     assert "bash -lc" not in output
 
 
+def test_normal_support_startup_reaches_gazebo_without_broad_cleanup():
+    output = _dry_run(
+        [
+            "tmux_support_chain",
+            "baylands",
+            "dry_run:=true",
+            "tmux_attach:=false",
+            "gui:=false",
+            "record:=false",
+        ]
+    )
+    startup_sources = "\n".join(
+        (REPO_ROOT / "scripts" / path).read_text(encoding="utf-8")
+        for path in (
+            "run_tmux_support_chain.sh",
+            "run_tmux_1to1.sh",
+            "run_gazebo_sim.sh",
+        )
+    )
+
+    assert "./run.sh gazebo_sim baylands false" in output
+    assert "prelaunch_safety_cleanup" not in startup_sources
+    assert "prelaunch_support_cleanup" not in startup_sources
+    assert "signal_processes_by_pattern" not in startup_sources
+    assert "pgrep -f" not in startup_sources
+    assert "prepare_task_state" in startup_sources
+
+
 def test_support_observation_defaults_to_baylands_weights():
     script = (REPO_ROOT / "scripts" / "run_support_observation.sh").read_text(
         encoding="utf-8"
@@ -303,3 +331,119 @@ def test_support_hazard_record_profile_remains_image_free_and_timestamped():
     assert "/a201_0000/plan" in output
     assert "/image_raw" not in output
     assert "/depth_image" not in output
+
+
+def test_shared_operator_routes_sensor_and_detector_options():
+    output = _dry_run([
+        "tmux_support_chain", "baylands", "mode:=yolo", "dry_run:=true",
+        "record:=true", "record_profile:=support_hazard", "omnet:=true",
+        "bridge_depth:=false", "bridge_gimbal:=true", "camera_update_rate:=8",
+        "detector_latest_frame_only:=false", "radio_range_topic:=/omnet/radio_distance",
+        "lora_sf:=8", "lora_bw:=250kHz",
+    ])
+    lines = output.splitlines()
+    spawn = next(line for line in lines if line.startswith("[spawn]"))
+    follow = next(line for line in lines if line.startswith("[follow]"))
+    assert "bridge_depth:=false" in spawn and "bridge_gimbal:=true" in spawn
+    assert "camera_update_rate:=8" in spawn
+    assert "bridge_depth:=" not in follow
+    assert "detector_latest_frame_only:=false" in follow
+    assert "radio_range_topic:=/omnet/radio_distance" in follow
+    assert "profile:=support_hazard" in output
+    assert "lora_sf:=8" in output and "lora_bw:=250kHz" in output
+
+
+def test_explicit_route_selects_its_first_spawn_unless_waypoint_overridden():
+    output = _dry_run([
+        "tmux_1to1", "baylands", "nav2_goals:=parkinglot_east", "dry_run:=true",
+    ])
+    assert "waypoint:=parkinglot_east_0" in output
+    override = _dry_run([
+        "tmux_1to1", "baylands", "nav2_goals:=parkinglot_east",
+        "waypoint:=parkinglot_west_0", "dry_run:=true",
+    ])
+    assert "waypoint:=parkinglot_west_0" in override
+
+
+def test_weights_preflight_reuses_portable_model_resolution_without_ros(tmp_path):
+    models = tmp_path / "models"
+    model = models / "obb" / "mymodels" / "fixture.pt"
+    model.parent.mkdir(parents=True)
+    model.touch()
+    environment = os.environ.copy()
+    environment["LRS_HALMSTAD_MODELS_ROOT"] = str(models)
+    for value in ("fixture.pt", "obb/mymodels/fixture.pt", str(model)):
+        result = subprocess.run(
+            ["bash", str(REPO_ROOT / "scripts/run_1to1_yolo.sh"), "baylands",
+             "check_weights:=true", "weights:=" + value],
+            env=environment, cwd=REPO_ROOT, text=True, capture_output=True, check=True,
+        )
+        assert str(model) in result.stdout
+        assert "synced generated waypoint" not in result.stdout
+
+
+def test_network_recording_is_additive_to_support_evidence():
+    output = _dry_run([
+        "record_experiment", "baylands", "profile:=support_hazard",
+        "omnet:=true", "dry_run:=true",
+    ])
+    for topic in ("/coord/ugv/aerial_hazards", "/a201_0000/plan",
+                  "/omnet/packet_delivery_ratio", "/omnet/latency_s", "/omnet/jitter_s"):
+        assert topic in output
+    assert "/depth_image" not in output
+
+
+def test_spawn_defaults_and_independent_depth_gate_resolve_without_starting_nodes():
+    import importlib.util
+    from launch import LaunchContext
+    from launch.actions import DeclareLaunchArgument
+    from launch_ros.actions import Node
+
+    path = REPO_ROOT / "src/lrs_halmstad/launch/spawn_robot.launch.py"
+    spec = importlib.util.spec_from_file_location("spawn_robot_contract", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    description = module.generate_launch_description()
+    context = LaunchContext()
+    for action in description.entities:
+        if isinstance(action, DeclareLaunchArgument):
+            action.execute(context)
+    assert context.launch_configurations["name"] == "m100"
+    assert "m100" in context.launch_configurations["camera_frame_id"]
+    # Last nodes are the RGB, depth and gimbal bridges. Evaluate conditions only.
+    camera, depth, gimbal = [a for a in description.entities if isinstance(a, Node)][-3:]
+    context.launch_configurations.update(bridge_camera="true", bridge_depth="false")
+    assert camera.condition.evaluate(context)
+    assert not depth.condition.evaluate(context)
+    context.launch_configurations["bridge_depth"] = "true"
+    assert depth.condition.evaluate(context)
+    context.launch_configurations["bridge_camera"] = "false"
+    assert not depth.condition.evaluate(context)
+
+
+def test_omnet_current_options_keep_legacy_config_mapping(tmp_path):
+    project = tmp_path / "UAV_UGV"
+    project.mkdir()
+    executable = project / "UAV_UGV"
+    executable.write_text("#!/bin/sh\nexit 99\n")
+    executable.chmod(0o755)
+    (project / "omnetpp.ini").touch()
+    setenv = tmp_path / "setenv"
+    setenv.touch()
+    environment = os.environ.copy()
+    environment["OMNETPP_SETENV"] = str(setenv)
+    for network, config in (
+        ("lora", "Communication-GazeboBridge-LoRa"),
+        ("lora-simplex", "Communication-GazeboBridge-LoRa-Simplex"),
+        ("lora-duplex", "Communication-GazeboBridge-LoRa-Duplex"),
+    ):
+        result = subprocess.run(
+            ["bash", str(REPO_ROOT / "scripts/run_omnet.sh"),
+             "project:=" + str(project), "network:=" + network,
+             "lora_sf:=8", "lora_bw:=250kHz", "dry_run:=true"],
+            cwd=REPO_ROOT, env=environment, text=True, capture_output=True, check=True,
+        )
+        assert "Config: " + config + "\n" in result.stdout
+        assert "initialLoRaSF=8" in result.stdout
+        assert "initialLoRaBW=250kHz" in result.stdout
+        assert "flora/src" in result.stdout

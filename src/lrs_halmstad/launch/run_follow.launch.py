@@ -303,6 +303,42 @@ def _build_camera_tracker_node(context, *args, **kwargs):
     ]
 
 
+def _build_simulator_node(context, *args, **kwargs):
+    simulator_params = {
+        'use_sim_time': True,
+        'world': LaunchConfiguration('world'),
+        'uav_name': LaunchConfiguration('uav_name'),
+        'camera_mode': LaunchConfiguration('uav_camera_mode'),
+        'start_x': LaunchConfiguration('uav_start_x'),
+        'start_y': LaunchConfiguration('uav_start_y'),
+        'start_z': LaunchConfiguration('uav_start_z'),
+        'start_yaw_deg': LaunchConfiguration('uav_start_yaw_deg'),
+        'camera_mount_pitch_deg': LaunchConfiguration('camera_mount_pitch_deg'),
+        'camera_yaw_offset_deg': LaunchConfiguration('camera_yaw_offset_deg'),
+        'camera_pan_sign': LaunchConfiguration('camera_pan_sign'),
+    }
+    gimbal_overrides = {}
+    pan_enable = _optional_bool_from_launch(context, 'pan_enable')
+    if pan_enable is not None:
+        gimbal_overrides['pan_enable'] = pan_enable
+    tilt_enable = _optional_bool_from_launch(context, 'tilt_enable')
+    if tilt_enable is not None:
+        gimbal_overrides['tilt_enable'] = tilt_enable
+    return [
+        Node(
+            package='lrs_halmstad',
+            executable='simulator',
+            name='uav_simulator',
+            output='screen',
+            parameters=[
+                simulator_params,
+                LaunchConfiguration('params_file'),
+                gimbal_overrides,
+            ],
+        )
+    ]
+
+
 def _load_node_params_from_yaml(context, node_name: str) -> dict:
     params_file = LaunchConfiguration('params_file').perform(context).strip()
     if not params_file:
@@ -406,6 +442,9 @@ def _build_leader_estimator_node(context, *args, **kwargs):
     range_mode = _launch_str(context, 'range_mode').strip()
     if range_mode:
         estimator_params['range_mode'] = range_mode
+    radio_range_topic = _launch_str(context, 'radio_range_topic').strip()
+    if radio_range_topic:
+        estimator_params['radio_range_topic'] = radio_range_topic
     return [
         Node(
             package='lrs_halmstad',
@@ -892,6 +931,11 @@ def generate_launch_description():
         default_value='',
         description='Optional leader_estimator range source override: auto|depth|radio|const. Empty uses params_file YAML.',
     )
+    radio_range_topic_arg = DeclareLaunchArgument(
+        'radio_range_topic',
+        default_value='',
+        description='Optional leader_estimator radio range topic override. Empty uses params_file YAML.',
+    )
     target_class_name_arg = DeclareLaunchArgument('target_class_name', default_value='')
     target_class_id_arg = DeclareLaunchArgument('target_class_id', default_value='-1')
     yolo_weights_arg = DeclareLaunchArgument(
@@ -1018,28 +1062,9 @@ def generate_launch_description():
         default_value=['/', LaunchConfiguration('uav_name'), '/camera/actual/center_pose'],
     )
 
-    simulator_node = Node(
-        package='lrs_halmstad',
-        executable='simulator',
-        name='uav_simulator',
-        output='screen',
+    simulator_node = OpaqueFunction(
+        function=_build_simulator_node,
         condition=IfCondition(LaunchConfiguration('start_uav_simulator')),
-        parameters=[
-            {
-                'use_sim_time': True,
-                'world': LaunchConfiguration('world'),
-                'uav_name': LaunchConfiguration('uav_name'),
-                'camera_mode': LaunchConfiguration('uav_camera_mode'),
-                'start_x': LaunchConfiguration('uav_start_x'),
-                'start_y': LaunchConfiguration('uav_start_y'),
-                'start_z': LaunchConfiguration('uav_start_z'),
-                'start_yaw_deg': LaunchConfiguration('uav_start_yaw_deg'),
-                'camera_mount_pitch_deg': LaunchConfiguration('camera_mount_pitch_deg'),
-                'camera_yaw_offset_deg': LaunchConfiguration('camera_yaw_offset_deg'),
-                'camera_pan_sign': LaunchConfiguration('camera_pan_sign'),
-            },
-            LaunchConfiguration('params_file'),
-        ],
     )
 
     detector_runtime_params = RewrittenYaml(
@@ -1401,6 +1426,7 @@ def generate_launch_description():
         leader_depth_topic_arg,
         leader_uav_pose_topic_arg,
         range_mode_arg,
+        radio_range_topic_arg,
         target_class_name_arg,
         target_class_id_arg,
         yolo_weights_arg,

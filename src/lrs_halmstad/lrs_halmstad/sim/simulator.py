@@ -39,6 +39,10 @@ class Simulator(Node):
         yaml_param(self, "camera_pan_sign")
         yaml_param(self, "gimbal_pitch_min_rad")
         yaml_param(self, "gimbal_pitch_max_rad")
+        # Preserve legacy defaults; current shared launchers may explicitly gate gimbal IO.
+        self.declare_parameter("pan_enable", True)
+        self.declare_parameter("tilt_enable", True)
+        self.declare_parameter("publish_gimbal_state_topics", True)
         self.declare_parameter("publish_legacy_debug_topics", False)
         self.declare_parameter("set_pose_future_timeout_s", 0.5)
         yaml_param(self, "pan_rate_deg_s")
@@ -65,6 +69,9 @@ class Simulator(Node):
         self.camera_pan_sign = float(self.get_parameter("camera_pan_sign").value)
         self.gimbal_pitch_min = float(self.get_parameter("gimbal_pitch_min_rad").value)
         self.gimbal_pitch_max = float(self.get_parameter("gimbal_pitch_max_rad").value)
+        self.pan_enable = bool(self.get_parameter("pan_enable").value)
+        self.tilt_enable = bool(self.get_parameter("tilt_enable").value)
+        self.publish_gimbal_state_topics = bool(self.get_parameter("publish_gimbal_state_topics").value)
         self.publish_legacy_debug_topics = bool(self.get_parameter("publish_legacy_debug_topics").value)
         self.set_pose_future_timeout_s = max(0.0, float(self.get_parameter("set_pose_future_timeout_s").value))
         self.pan_rate_deg_s = float(self.get_parameter("pan_rate_deg_s").value)
@@ -148,8 +155,9 @@ class Simulator(Node):
         self.follow_target_tilt_pub = self.create_publisher(
             Float32, follow_target_tilt_topic, 10, callback_group=self.group
         )
-        self.follow_actual_tilt_pub = self.create_publisher(
-            Float32, follow_actual_tilt_topic, 10, callback_group=self.group
+        self.follow_actual_tilt_pub = (
+            self.create_publisher(Float32, follow_actual_tilt_topic, 10, callback_group=self.group)
+            if self.publish_gimbal_state_topics else None
         )
         self.follow_error_tilt_pub = self.create_publisher(
             Float32, follow_error_tilt_topic, 10, callback_group=self.group
@@ -157,8 +165,9 @@ class Simulator(Node):
         self.follow_target_pan_pub = self.create_publisher(
             Float32, follow_target_pan_topic, 10, callback_group=self.group
         )
-        self.follow_actual_pan_pub = self.create_publisher(
-            Float32, follow_actual_pan_topic, 10, callback_group=self.group
+        self.follow_actual_pan_pub = (
+            self.create_publisher(Float32, follow_actual_pan_topic, 10, callback_group=self.group)
+            if self.publish_gimbal_state_topics else None
         )
         self.follow_error_pan_pub = self.create_publisher(
             Float32, follow_error_pan_topic, 10, callback_group=self.group
@@ -172,11 +181,15 @@ class Simulator(Node):
         self.update_sub = self.create_subscription(
             Joy, cmd_topic, self.update_callback, 10, callback_group=self.group
         )
-        self.update_tilt_sub = self.create_subscription(
-            Float64, tilt_topic, self.update_tilt_callback, 10, callback_group=self.group
+        self.update_tilt_sub = (
+            self.create_subscription(
+                Float64, tilt_topic, self.update_tilt_callback, 10, callback_group=self.group
+            ) if self.tilt_enable else None
         )
-        self.update_pan_sub = self.create_subscription(
-            Float64, pan_topic, self.update_pan_callback, 10, callback_group=self.group
+        self.update_pan_sub = (
+            self.create_subscription(
+                Float64, pan_topic, self.update_pan_callback, 10, callback_group=self.group
+            ) if self.pan_enable else None
         )
         self.camera_target_pose_sub = self.create_subscription(
             PoseStamped, camera_target_pose_topic, self.update_target_camera_pose_callback, 10, callback_group=self.group
@@ -184,8 +197,12 @@ class Simulator(Node):
         self.camera_target_world_yaw_sub = self.create_subscription(
             Float32, camera_target_world_yaw_topic, self.update_target_camera_world_yaw_callback, 10, callback_group=self.group
         )
-        self.gimbal_pitch_pub = self.create_publisher(Float64, gimbal_pitch_topic, 10)
-        self.gimbal_yaw_pub = self.create_publisher(Float64, gimbal_yaw_topic, 10)
+        self.gimbal_pitch_pub = (
+            self.create_publisher(Float64, gimbal_pitch_topic, 10) if self.tilt_enable else None
+        )
+        self.gimbal_yaw_pub = (
+            self.create_publisher(Float64, gimbal_yaw_topic, 10) if self.pan_enable else None
+        )
 
         self.timer = self.create_timer(self.period_time, self.timer_callback, callback_group=self.group)
         self.get_logger().info(
@@ -392,10 +409,11 @@ class Simulator(Node):
             elif current_pose != self._last_set_pose:
                 self.set_pose(self.name, x, y, z, self.yaw)
                 self._last_set_pose = current_pose
-            if self.target_tilt is not None or self.target_pan is not None:
+            if self.gimbal_pitch_pub is not None and (self.target_tilt is not None or self.target_pan is not None):
                 pitchmsg = Float64()
                 pitchmsg.data = self._gimbal_pitch_cmd_rad(self.tilt)
                 self.gimbal_pitch_pub.publish(pitchmsg)
+            if self.gimbal_yaw_pub is not None and (self.target_tilt is not None or self.target_pan is not None):
                 yawmsg = Float64()
                 yawmsg.data = math.radians(self.pan)
                 self.gimbal_yaw_pub.publish(yawmsg)
@@ -437,7 +455,8 @@ class Simulator(Node):
             self.follow_target_tilt_pub.publish(target_tilt_msg)
             actual_tilt_msg = Float32()
             actual_tilt_msg.data = float(actual_tilt_deg)
-            self.follow_actual_tilt_pub.publish(actual_tilt_msg)
+            if self.follow_actual_tilt_pub is not None:
+                self.follow_actual_tilt_pub.publish(actual_tilt_msg)
             error_tilt_msg = Float32()
             error_tilt_msg.data = float(actual_tilt_deg - target_tilt_deg)
             self.follow_error_tilt_pub.publish(error_tilt_msg)
@@ -446,7 +465,8 @@ class Simulator(Node):
             self.follow_target_pan_pub.publish(target_pan_msg)
             actual_pan_msg = Float32()
             actual_pan_msg.data = float(self.pan)
-            self.follow_actual_pan_pub.publish(actual_pan_msg)
+            if self.follow_actual_pan_pub is not None:
+                self.follow_actual_pan_pub.publish(actual_pan_msg)
             error_pan_msg = Float32()
             error_pan_msg.data = float(self.pan - target_pan_deg)
             self.follow_error_pan_pub.publish(error_pan_msg)

@@ -9,6 +9,10 @@ SIM_SPAWN_WAYPOINT_FILE="$STATE_DIR/gazebo_sim.spawn_waypoint"
 BAYLANDS_DEFAULT_NAV2_GOALS="parkinglot_west"
 WORLD="baylands"
 EXTRA_ARGS=()
+CONTROL_ARGS=()
+CHECK_WEIGHTS=false
+DETECTOR_BACKEND=""
+DETECTOR_ONNX_MODEL_ARG=""
 USE_ESTIMATE="true"
 USE_OBB="true"
 USE_TRACKER="false"
@@ -46,6 +50,7 @@ DEFAULT_UAV_BODY_X_OFFSET="-7.0"
 DEFAULT_UAV_BODY_Y_OFFSET="0.0"
 DEFAULT_UAV_Z="7.0"
 UAV_NAME="dji0"
+LEADER_MODE="estimate"
 
 source "$SCRIPT_DIR/slam_state_common.sh"
 source "$SCRIPT_DIR/baylands_waypoint_common.sh"
@@ -97,6 +102,19 @@ case "$MODELS_ROOT" in
     ;;
 esac
 
+weight_exists_relative_to_roots() {
+  local rel_path="$1"
+  [[ -e "$WS_ROOT/$rel_path" || -e "$MODELS_ROOT/$rel_path" ]]
+}
+
+default_weights_rel_dir() {
+  if [ "$ARG_WEIGHTS_ROOT" = "obb" ]; then
+    echo "obb/mymodels"
+  else
+    echo "detection/mymodels"
+  fi
+}
+
 if [ -f "$SIM_WORLD_FILE" ]; then
   sim_world="$(cat "$SIM_WORLD_FILE" 2>/dev/null || true)"
   if [ -n "$sim_world" ]; then
@@ -109,12 +127,22 @@ if [ "$#" -gt 0 ] && [[ "$1" != *":="* ]] && [[ "$1" != *=* ]]; then
   shift
 fi
 
-if [[ "$WORLD" == baylands* ]]; then
+for arg in "$@"; do
+  case "$arg" in
+    check_weights:=true) CHECK_WEIGHTS=true ;;
+    check_weights:=false) CHECK_WEIGHTS=false ;;
+    check_weights:=*) echo "Use check_weights:=true or check_weights:=false" >&2; exit 2 ;;
+  esac
+done
+
+if [[ "$WORLD" == baylands* ]] && [ "$CHECK_WEIGHTS" = false ]; then
   baylands_sync_waypoints false
 fi
 
 for arg in "$@"; do
   case "$arg" in
+    check_weights:=true|check_weights:=false)
+      ;;
     camera:=*|camera_mode:=*)
       camera_mode="${arg#camera:=}"
       if [[ "$arg" == camera_mode:=* ]]; then
@@ -241,7 +269,11 @@ for arg in "$@"; do
       ;;
     detector_backend:=*)
       HAVE_DETECTOR_BACKEND="true"
+      DETECTOR_BACKEND="${arg#detector_backend:=}"
       EXTRA_ARGS+=("$arg")
+      ;;
+    detector_onnx_model:=*|onnx_model:=*)
+      DETECTOR_ONNX_MODEL_ARG="detector_onnx_model:=${arg#*:=}"
       ;;
     start_visual_actuation_bridge:=*)
       HAVE_START_VISUAL_ACTUATION_BRIDGE="true"
@@ -406,7 +438,7 @@ if [ -z "$WEIGHTS_REL" ]; then
       WEIGHTS_REL="$DEFAULT_CUSTOM_WEIGHTS"
     fi
   fi
-elif [[ "$WEIGHTS_REL" != /* ]] && [ ! -e "$WS_ROOT/models/$WEIGHTS_REL" ]; then
+elif [[ "$WEIGHTS_REL" != /* ]] && ! weight_exists_relative_to_roots "$WEIGHTS_REL"; then
   if [[ "$WEIGHTS_REL" == */* ]]; then
     if [[ "$WEIGHTS_REL" != detection/* && "$WEIGHTS_REL" != obb/* ]]; then
       if [ "$ARG_WEIGHTS_ROOT" = "obb" ]; then
@@ -420,13 +452,13 @@ elif [[ "$WEIGHTS_REL" != /* ]] && [ ! -e "$WS_ROOT/models/$WEIGHTS_REL" ]; then
       if [ -n "$MODEL_SUBDIR" ]; then
         WEIGHTS_REL="obb/$MODEL_SUBDIR/$WEIGHTS_REL"
       else
-        WEIGHTS_REL="obb/mymodels/$WEIGHTS_REL"
+        WEIGHTS_REL="$(default_weights_rel_dir)/$WEIGHTS_REL"
       fi
     else
       if [ -n "$MODEL_SUBDIR" ]; then
         WEIGHTS_REL="detection/$MODEL_SUBDIR/$WEIGHTS_REL"
       else
-        WEIGHTS_REL="detection/mymodels/$WEIGHTS_REL"
+        WEIGHTS_REL="$(default_weights_rel_dir)/$WEIGHTS_REL"
       fi
     fi
   fi
@@ -434,6 +466,8 @@ fi
 
 if [[ "$WEIGHTS_REL" = /* ]]; then
   WEIGHTS_PATH="$WEIGHTS_REL"
+elif [ -e "$WS_ROOT/$WEIGHTS_REL" ]; then
+  WEIGHTS_PATH="$WS_ROOT/$WEIGHTS_REL"
 else
   WEIGHTS_PATH="$MODELS_ROOT/$WEIGHTS_REL"
 fi
@@ -450,8 +484,26 @@ echo "[run_1to1_yolo] Using YOLO weights: $WEIGHTS_PATH"
 if [ "$HAVE_DETECTOR_BACKEND" != true ] && [ "$USE_OBB" = true ]; then
   ONNX_CANDIDATE="${WEIGHTS_PATH%.*}.onnx"
   if [ -f "$ONNX_CANDIDATE" ]; then
+    DETECTOR_BACKEND="onnx_cpu"
     EXTRA_ARGS+=("detector_backend:=onnx_cpu")
   fi
+fi
+
+case "$DETECTOR_BACKEND" in
+  onnx|onnxruntime|onnx_cpu|onnx_directml)
+    if [ -n "$DETECTOR_ONNX_MODEL_ARG" ]; then
+      EXTRA_ARGS+=("$DETECTOR_ONNX_MODEL_ARG")
+    fi
+    ;;
+  *)
+    if [ -n "$DETECTOR_ONNX_MODEL_ARG" ]; then
+      echo "[run_1to1_yolo] Ignoring $DETECTOR_ONNX_MODEL_ARG for backend '${DETECTOR_BACKEND:-ultralytics}'." >&2
+    fi
+    ;;
+esac
+
+if [ "$CHECK_WEIGHTS" = true ]; then
+  exit 0
 fi
 
 LIVE_UAV_POSE_TIMEOUT_S=5
@@ -646,7 +698,7 @@ ros2 launch lrs_halmstad run_follow.launch.py \
   external_detection_enable:=true \
   external_detection_node:="$EXTERNAL_DETECTION_NODE" \
   range_mode:="$RANGE_MODE" \
-  yolo_weights:="$WEIGHTS_REL" \
+  yolo_weights:="$WEIGHTS_PATH" \
   "${EXTRA_ARGS[@]}" \
   "${CONTROL_ARGS[@]}" \
   world:="$WORLD"
