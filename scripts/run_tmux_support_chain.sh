@@ -52,6 +52,7 @@ HAZARD_SYNTHETIC_PUBLISH_EMPTY="true"
 HAZARD_SYNTHETIC_STAMP_OFFSET_S="0.0"
 HAZARD_SYNTHETIC_SUPPORT_QUALITY="1.0"
 HAZARD_SYNTHETIC_PROVENANCE="synthetic_task4"
+HAZARD_SYNTHETIC_ACTIVATION_STATUS_TOPIC=""
 
 if [ "$#" -gt 0 ] && [[ "$1" != *":="* ]] && [[ "$1" != *=* ]]; then
   WORLD="$1"
@@ -286,6 +287,9 @@ for arg in "$@"; do
     hazard_synthetic_provenance:=*)
       HAZARD_SYNTHETIC_PROVENANCE="${arg#hazard_synthetic_provenance:=}"
       ;;
+    hazard_synthetic_activation_status_topic:=*)
+      HAZARD_SYNTHETIC_ACTIVATION_STATUS_TOPIC="${arg#hazard_synthetic_activation_status_topic:=}"
+      ;;
     support_with_camera:=*)
       case "${arg#support_with_camera:=}" in
         true|yes|1|on)
@@ -460,6 +464,7 @@ SYNTHETIC_HAZARD_ROS_COMMAND=(
   -p "stamp_offset_s:=$HAZARD_SYNTHETIC_STAMP_OFFSET_S"
   -p "support_quality:=$HAZARD_SYNTHETIC_SUPPORT_QUALITY"
   -p "provenance:=$HAZARD_SYNTHETIC_PROVENANCE"
+  -p "activation_status_topic:=$HAZARD_SYNTHETIC_ACTIVATION_STATUS_TOPIC"
 )
 SYNTHETIC_HAZARD_COMMAND=(
   /bin/bash --noprofile --norc -c "source /opt/ros/jazzy/setup.bash && source $(printf '%q' "$WS_ROOT/install/setup.bash") && exec $(shell_join "${SYNTHETIC_HAZARD_ROS_COMMAND[@]}")"

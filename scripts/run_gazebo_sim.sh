@@ -364,7 +364,7 @@ else
 fi
 
 if [ "$WORLD" = "baylands" ]; then
-  "$SCRIPT_DIR/recover_sim_controllers.sh" a201_0000 &
+  bash "$SCRIPT_DIR/recover_sim_controllers.sh" a201_0000 &
   printf '%s\n' "$!" > "$CONTROLLER_RECOVERY_PID_FILE"
 fi
 

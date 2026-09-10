@@ -6,6 +6,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from builtin_interfaces.msg import Duration, Time
+from action_msgs.msg import GoalStatus
 from geometry_msgs.msg import Point
 from lrs_halmstad.tools.support_hazard_evidence import (
     _request_costmap_snapshot,
@@ -26,15 +27,24 @@ from lrs_halmstad.tools.support_hazard_evidence import (
     path_hazard_metrics,
     PlannerEvidenceCollector,
     PlanRecord,
+    PoseRecord,
+    RequestedGoalRecord,
     relevant_costmap_delta,
+    RuntimeEvidenceCollector,
+    RuntimeEvidenceNode,
+    TransformRecord,
+    MissionStatusRecord,
     segment_crosses_lethal_cost,
     settled_baseline_selection,
+    summarize_runtime_evidence,
     UGV_TOPIC,
     write_evidence,
     write_planner_evidence,
+    write_runtime_evidence,
 )
 from lrs_halmstad_interfaces.msg import AerialHazard, AerialHazardArray
 from nav2_msgs.msg import Costmap, CostmapUpdate
+from rosgraph_msgs.msg import Clock
 from std_msgs.msg import Header
 from vision_msgs.msg import Detection3D, ObjectHypothesisWithPose
 
@@ -133,7 +143,7 @@ def test_confirmation_flow_source_retention_selection_and_covariance():
         )
     )
 
-    assert summary['status'] == 'pass'
+    assert summary['status'] == 'pass', summary['failures']
     assert summary['typed_flow_complete'] is True
     assert summary['selected_source_latest'] == 'dji1'
     assert summary['confirmation_promotion_seen'] is True
@@ -306,6 +316,45 @@ def test_costmap_full_and_update_are_distinguished_and_reconstructed():
     assert segment_crosses_lethal_cost([(0.0, 2.5), (5.0, 2.5)], collector.costmaps[1])
 
 
+def test_runtime_costmap_capture_crops_large_grid_and_maps_global_updates():
+    geometry = {
+        'center_x': 50.5, 'center_y': 50.5, 'yaw': 0.0,
+        'effective_size_x': 2.0, 'effective_size_y': 2.0,
+    }
+    collector = RuntimeEvidenceCollector(
+        crop_geometry=geometry, crop_margin_m=1.0,
+    )
+    full = Costmap()
+    full.metadata.resolution = 1.0
+    full.metadata.size_x = 100
+    full.metadata.size_y = 100
+    full.data = [0] * 10_000
+    collector.add_full_costmap(full, 10)
+    baseline = collector.costmaps[-1]
+    collector.add_costmap_update(
+        CostmapUpdate(x=50, y=50, size_x=1, size_y=1, data=[254]), 20
+    )
+
+    assert baseline.size_x == 5
+    assert baseline.size_y == 5
+    assert len(baseline.data) == 25
+    delta = relevant_costmap_delta(baseline, collector.costmaps[-1], geometry)
+    assert delta['lethal_cells'] == 1
+    assert collector.costmaps[-1].source_kind == 'update_hazard_crop'
+
+
+def test_runtime_evidence_uses_explicit_nonzero_simulation_clock():
+    fake_node = SimpleNamespace(_runtime_sim_time_ns=0)
+    clock = Clock(clock=_time(12_345_000_000))
+
+    RuntimeEvidenceNode._on_runtime_clock(fake_node, clock)
+
+    assert RuntimeEvidenceNode._evidence_now_ns(fake_node) == 12_345_000_000
+    collector = RuntimeEvidenceCollector()
+    collector.add_full_costmap(Costmap(), 0)
+    assert not collector.costmaps
+
+
 def test_costmap_delta_distinguishes_lethal_core_and_graded_inflation_halo():
     baseline = GridSnapshot(1, 'full', 1.0, 7, 7, 0.0, 0.0, bytes([0] * 49))
     data = bytearray([0] * 49)
@@ -462,6 +511,13 @@ global_costmap:
       inflation_layer:
         inflation_radius: 1.25
         cost_scaling_factor: 3.5
+controller_server:
+  ros__parameters:
+    general_goal_checker:
+      xy_goal_tolerance: 0.75
+      yaw_goal_tolerance: 1.25
+      plugin: nav2_controller::SimpleGoalChecker
+      stateful: true
 """)
 
     loaded = load_nav2_inflation_config(config)
@@ -471,6 +527,10 @@ global_costmap:
     assert loaded['inflation_radius_m'] == 1.25
     assert loaded['cost_scaling_factor'] == 3.5
     assert loaded['aerial_min_confidence'] == 0.35
+    assert loaded['goal_checker_xy_tolerance_m'] == 0.75
+    assert loaded['goal_checker_yaw_tolerance_rad'] == 1.25
+    assert loaded['goal_checker_plugin'] == 'nav2_controller::SimpleGoalChecker'
+    assert loaded['goal_checker_stateful'] is True
 
 
 def test_baylands_global_inflation_is_derived_from_the_actual_config():
@@ -481,6 +541,11 @@ def test_baylands_global_inflation_is_derived_from_the_actual_config():
     assert loaded['inflation_radius_m'] == 0.95
     assert loaded['cost_scaling_factor'] == 3.0
     assert loaded['aerial_covariance_sigma_scale'] == 2.0
+    assert loaded['global_costmap_rolling_window'] is False
+    assert loaded['global_costmap_resolution_m'] == 0.2
+    assert loaded['goal_checker_xy_tolerance_m'] == 1.0
+    assert loaded['goal_checker_yaw_tolerance_rad'] == 2.5
+    assert loaded['goal_checker_stateful'] is True
 
 
 def test_planner_cli_keeps_nav2_config_separate_from_ros_params_file():
@@ -494,6 +559,21 @@ def test_planner_cli_keeps_nav2_config_separate_from_ros_params_file():
 
     assert parsed.nav2_config == Path('/tmp/nav2.yaml')
     assert ros_args == ['--ros-args', '--params-file', '/tmp/ros.yaml']
+
+
+def test_runtime_cli_keeps_full_mission_inputs_separate_from_ros_args():
+    parser = build_parser()
+    parsed, ros_args = parser.parse_known_args([
+        'runtime-live', '--scenario', 'valid', '--map', '/tmp/map.yaml',
+        '--nav2-config', '/tmp/nav2.yaml', '--baseline-evidence', '/tmp/baseline',
+        '--start-x', '0', '--start-y', '5', '--goal-x', '0', '--goal-y', '-5',
+        '--hazard-x', '0', '--hazard-y', '0', '--output', '/tmp/runtime',
+        '--ros-args', '-p', 'use_sim_time:=true',
+    ])
+
+    assert parsed.scenario == 'valid'
+    assert parsed.baseline_evidence == Path('/tmp/baseline')
+    assert ros_args == ['--ros-args', '-p', 'use_sim_time:=true']
 
 
 def test_baseline_repeatability_requires_all_results_and_stable_geometry():
@@ -582,3 +662,181 @@ def test_planner_writer_creates_structured_plans_timelines_and_overlay(tmp_path)
     assert 'snapshot_kind' in (tmp_path / 'hazard_timeline.csv').read_text()
     assert 'affected_cells' in (tmp_path / 'costmap_timeline.csv').read_text()
     assert '<svg' in (tmp_path / 'planner_overlay.svg').read_text()
+
+
+def _runtime_grid(received_ns, *, marked=False):
+    size = 12
+    values = [0] * (size * size)
+    if marked:
+        for row in range(size):
+            for column in range(size):
+                x = -6.0 + (column + 0.5)
+                y = -6.0 + (row + 0.5)
+                if abs(x) <= 2.0 and abs(y) <= 2.0:
+                    values[row * size + column] = 254
+                elif abs(x) <= 3.0 and abs(y) <= 3.0:
+                    values[row * size + column] = 120
+    return GridSnapshot(
+        received_ns, 'full', 1.0, size, size, -6.0, -6.0, bytes(values)
+    )
+
+
+def _runtime_collector(*, clearing=False):
+    collector = RuntimeEvidenceCollector()
+    collector.costmaps.extend([
+        _runtime_grid(200_000_000),
+        _runtime_grid(500_000_000),
+        _runtime_grid(3 * SECOND, marked=True),
+    ])
+    if clearing:
+        collector.costmaps.append(_runtime_grid(6 * SECOND))
+    collector.costmap_full_count = len(collector.costmaps)
+    collector.costmap_count = len(collector.costmaps)
+    collector.status_events.extend([
+        MissionStatusRecord(1 * SECOND, 'goal-1', GoalStatus.STATUS_ACCEPTED),
+        MissionStatusRecord(1_100_000_000, 'goal-1', GoalStatus.STATUS_EXECUTING),
+        MissionStatusRecord(10 * SECOND, 'goal-1', GoalStatus.STATUS_SUCCEEDED),
+    ])
+    collector.requested_goals.append(RequestedGoalRecord(
+        900_000_000, 0, 'map', 0.0, -5.0, 0.0
+    ))
+    collector.transforms.append(TransformRecord(
+        9_900_000_000, 9_900_000_000, 'map', 'base_link',
+        0.0, -5.0, 0.0,
+    ))
+    collector.automatic_plans.extend([
+        PlanRecord('automatic_0001', 1_500_000_000, 1_500_000_000, 0.0, 0, '',
+                   ((0.0, 5.0), (0.0, -5.0))),
+        PlanRecord('automatic_0002', 4 * SECOND, 4 * SECOND, 0.0, 0, '',
+                   ((0.0, 5.0), (3.0, 2.5), (3.0, -2.5), (0.0, -5.0))),
+        PlanRecord('automatic_0003', 7 * SECOND, 7 * SECOND, 0.0, 0, '',
+                   ((3.0, -1.0), (0.0, -5.0))),
+    ])
+    collector.plan_topic_count = len(collector.automatic_plans)
+    collector.poses.extend([
+        PoseRecord(1 * SECOND, 0.0, 5.0, 0.0),
+        PoseRecord(3 * SECOND, 3.0, 2.5, 0.0),
+        PoseRecord(6 * SECOND, 3.0, -2.5, 0.0),
+        PoseRecord(10 * SECOND, 0.0, -5.0, 0.0),
+    ])
+    hazard = _hazard(
+        track_id='runtime-hazard', source_uavs=['dji1'],
+        state=AerialHazard.CONFIRMED, x=0.0, stamp_ns=2 * SECOND,
+    )
+    hazard.detection.bbox.center.position.y = 0.0
+    hazard.detection.results[0].pose.pose.position.y = 0.0
+    hazard.detection.bbox.size.x = 2.0
+    hazard.detection.bbox.size.y = 2.0
+    message = _array(hazard, stamp_ns=2_100_000_000)
+    for topic in (DJI1_TOPIC, DJI0_TOPIC, UGV_TOPIC):
+        collector.add(topic, copy.deepcopy(message), 2_200_000_000)
+    if clearing:
+        empty = _array(stamp_ns=5_500_000_000)
+        for topic in (DJI1_TOPIC, DJI0_TOPIC, UGV_TOPIC):
+            collector.add(topic, copy.deepcopy(empty), 5_500_000_000)
+    return collector
+
+
+def test_runtime_summary_requires_passive_replan_motion_and_clearing(tmp_path):
+    collector = _runtime_collector(clearing=True)
+    nav2_config = load_nav2_inflation_config(
+        REPO_ROOT / 'src/lrs_halmstad/config/nav2_baylands_large_map.yaml'
+    )
+    baseline_bundle = {
+        'root': '/tmp/baseline',
+        'summary': {'status': 'pass'},
+        'plans': [{'label': 'baseline', 'crosses_covariance_footprint': True}],
+        'trajectory': [(0.0, 5.0), (0.0, -5.0)],
+    }
+    summary, trajectory = summarize_runtime_evidence(
+        collector,
+        scenario='clearing',
+        start=(0.0, 5.0, 0.0),
+        goal=(0.0, -5.0, 0.0),
+        geometry={
+            'center_x': 0.0, 'center_y': 0.0, 'yaw': 0.0,
+            'nominal_size_x': 2.0, 'nominal_size_y': 2.0,
+            'variance_x': 0.25, 'variance_y': 0.25,
+            'covariance_sigma_scale': 2.0,
+            'effective_size_x': 4.0, 'effective_size_y': 4.0,
+        },
+        nav2_config=nav2_config,
+        map_path=REPO_ROOT / 'maps/baylands.yaml',
+        layer_enabled=True,
+        baseline_bundle=baseline_bundle,
+        minimum_path_change_m=0.5,
+        minimum_trajectory_change_m=0.75,
+        maximum_plan_tracking_error_m=2.0,
+        goal_tolerance_m=1.0,
+        yaw_goal_tolerance_rad=2.5,
+        runtime_goal_checker={
+            'goal_checker_plugins': ['general_goal_checker'],
+            'plugin': 'nav2_controller::SimpleGoalChecker',
+            'xy_goal_tolerance_m': 1.0,
+            'yaw_goal_tolerance_rad': 2.5,
+            'stateful': True,
+            'source': 'test',
+        },
+    )
+
+    assert summary['status'] == 'pass', summary['failures']
+    assert summary['configuration']['manual_planner_requests_issued_by_evidence'] == 0
+    assert summary['planner']['hazard_active']['crosses_lethal_costmap_cell'] is False
+    assert summary['costmap']['first_mark_delta']['hazard_footprint_lethal_cells'] > 0
+    assert summary['costmap']['first_mark_delta']['inflation_halo_nonzero_cells'] > 0
+    assert summary['costmap']['clearing']['observed_mechanism'] == 'explicit_empty_snapshot'
+    assert summary['mission']['terminal_status'] == 'SUCCEEDED'
+    assert summary['mission']['success_pose_source'] == 'tf_map_to_base_link'
+    assert summary['mission']['pose_at_succeeded']['xy_error_m'] == 0.0
+    assert summary['mission']['runtime_goal_checker']['stateful'] is True
+    assert summary['configuration']['requested_action_goal']['matches_configured_goal'] is True
+    assert summary['trajectory']['crosses_covariance_footprint'] is False
+    assert len(trajectory) == 4
+    write_runtime_evidence(tmp_path, summary, collector, trajectory)
+    for filename in (
+        'summary.json', 'plans.json', 'hazard_timeline.csv',
+        'costmap_timeline.csv', 'mission_timeline.csv', 'trajectory.csv',
+        'planner_overlay.svg', 'runtime_overlay.svg',
+    ):
+        assert (tmp_path / filename).is_file()
+
+
+def test_runtime_summary_cannot_pass_without_terminal_mission_evidence():
+    collector = _runtime_collector()
+    collector.status_events.pop()
+    nav2_config = load_nav2_inflation_config(
+        REPO_ROOT / 'src/lrs_halmstad/config/nav2_baylands_large_map.yaml'
+    )
+    summary, _ = summarize_runtime_evidence(
+        collector,
+        scenario='valid', start=(0.0, 5.0, 0.0), goal=(0.0, -5.0, 0.0),
+        geometry={
+            'center_x': 0.0, 'center_y': 0.0, 'yaw': 0.0,
+            'nominal_size_x': 2.0, 'nominal_size_y': 2.0,
+            'variance_x': 0.25, 'variance_y': 0.25,
+            'covariance_sigma_scale': 2.0,
+            'effective_size_x': 4.0, 'effective_size_y': 4.0,
+        },
+        nav2_config=nav2_config, map_path=REPO_ROOT / 'maps/baylands.yaml',
+        layer_enabled=True,
+        baseline_bundle={
+            'root': '/tmp/baseline', 'summary': {'status': 'pass'},
+            'plans': [{'label': 'baseline', 'crosses_covariance_footprint': True}],
+            'trajectory': [(0.0, 5.0), (0.0, -5.0)],
+        },
+        minimum_path_change_m=0.5, minimum_trajectory_change_m=0.75,
+        maximum_plan_tracking_error_m=2.0,
+        goal_tolerance_m=1.0,
+        yaw_goal_tolerance_rad=2.5,
+        runtime_goal_checker={
+            'goal_checker_plugins': ['general_goal_checker'],
+            'plugin': 'nav2_controller::SimpleGoalChecker',
+            'xy_goal_tolerance_m': 1.0,
+            'yaw_goal_tolerance_rad': 2.5,
+            'stateful': True,
+            'source': 'test',
+        },
+    )
+
+    assert summary['status'] == 'fail'
+    assert 'navigate_to_pose_goal_not_succeeded' in summary['failures']

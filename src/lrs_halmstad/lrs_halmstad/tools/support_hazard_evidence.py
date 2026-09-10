@@ -19,19 +19,24 @@ import time
 from typing import Any, Iterable
 import xml.etree.ElementTree as ET
 
-from geometry_msgs.msg import PoseStamped
+from action_msgs.msg import GoalStatus, GoalStatusArray
+from geometry_msgs.msg import PoseStamped, PoseWithCovarianceStamped
 from lrs_halmstad_interfaces.msg import AerialHazard, AerialHazardArray
 from nav2_msgs.action import ComputePathToPose
+from nav2_msgs.action._navigate_to_pose import NavigateToPose_FeedbackMessage
 from nav2_msgs.msg import Costmap, CostmapUpdate
 from nav2_msgs.srv import GetCostmap
 from nav_msgs.msg import Path as NavPath
+from rcl_interfaces.msg import ParameterType
 import rclpy
 from rclpy.action import ActionClient
 from rclpy.node import Node
 from rclpy.parameter import Parameter
 from rclpy.parameter_client import AsyncParameterClient
 from rclpy.qos import DurabilityPolicy, HistoryPolicy, QoSProfile, ReliabilityPolicy
+from rosgraph_msgs.msg import Clock
 from rclpy.serialization import deserialize_message
+from tf2_msgs.msg import TFMessage
 import yaml
 
 
@@ -48,6 +53,15 @@ STATE_NAMES = {
     AerialHazard.TENTATIVE: 'TENTATIVE',
     AerialHazard.CONFIRMED: 'CONFIRMED',
     AerialHazard.CONFLICT: 'CONFLICT',
+}
+GOAL_STATUS_NAMES = {
+    GoalStatus.STATUS_UNKNOWN: 'UNKNOWN',
+    GoalStatus.STATUS_ACCEPTED: 'ACCEPTED',
+    GoalStatus.STATUS_EXECUTING: 'EXECUTING',
+    GoalStatus.STATUS_CANCELING: 'CANCELING',
+    GoalStatus.STATUS_SUCCEEDED: 'SUCCEEDED',
+    GoalStatus.STATUS_CANCELED: 'CANCELED',
+    GoalStatus.STATUS_ABORTED: 'ABORTED',
 }
 FREE_SPACE = 0
 LETHAL_OBSTACLE = 254
@@ -132,6 +146,56 @@ class PlanRecord:
     error_code: int
     error_message: str
     points: tuple[tuple[float, float], ...]
+
+
+@dataclass(frozen=True)
+class PoseRecord:
+    received_ns: int
+    x: float
+    y: float
+    yaw: float
+    source_stamp_ns: int = 0
+    frame_id: str = ''
+    child_frame_id: str = ''
+    source: str = 'amcl_pose'
+
+
+@dataclass(frozen=True)
+class FeedbackRecord:
+    received_ns: int
+    goal_id: str
+    pose: PoseRecord
+    distance_remaining_m: float
+    number_of_recoveries: int
+
+
+@dataclass(frozen=True)
+class TransformRecord:
+    received_ns: int
+    source_stamp_ns: int
+    parent_frame: str
+    child_frame: str
+    x: float
+    y: float
+    yaw: float
+    is_static: bool = False
+
+
+@dataclass(frozen=True)
+class RequestedGoalRecord:
+    received_ns: int
+    source_stamp_ns: int
+    frame_id: str
+    x: float
+    y: float
+    yaw: float
+
+
+@dataclass(frozen=True)
+class MissionStatusRecord:
+    received_ns: int
+    goal_id: str
+    status: int
 
 
 def effective_hazard_geometry(
@@ -275,6 +339,24 @@ def load_nav2_inflation_config(path: Path) -> dict[str, Any]:
     aerial = parameters.get('aerial_support_layer')
     if not isinstance(aerial, dict):
         raise ValueError(f'global_costmap aerial_support_layer not found in {resolved}')
+    controller_parameters = None
+    for candidate in candidates:
+        try:
+            controller_parameters = candidate['controller_server']['ros__parameters']
+        except (KeyError, TypeError):
+            continue
+        break
+    if not isinstance(controller_parameters, dict):
+        raise ValueError(f'controller_server ROS parameters not found in {resolved}')
+    goal_checker = controller_parameters.get('general_goal_checker')
+    required_goal_checker = ('plugin', 'xy_goal_tolerance', 'yaw_goal_tolerance', 'stateful')
+    if not isinstance(goal_checker, dict) or any(
+        key not in goal_checker for key in required_goal_checker
+    ):
+        raise ValueError(f'general_goal_checker configuration incomplete in {resolved}')
+    rolling_value = parameters.get('rolling_window', False)
+    if isinstance(rolling_value, str):
+        rolling_value = rolling_value.strip().lower() in ('true', 'yes', '1', 'on')
     return {
         'source_yaml': str(resolved),
         'source_sha256': hashlib.sha256(resolved.read_bytes()).hexdigest(),
@@ -283,6 +365,14 @@ def load_nav2_inflation_config(path: Path) -> dict[str, Any]:
         'aerial_min_confidence': float(aerial['min_confidence']),
         'aerial_max_observation_age_s': float(aerial['max_observation_age_s']),
         'aerial_covariance_sigma_scale': float(aerial['covariance_sigma_scale']),
+        'global_costmap_rolling_window': bool(rolling_value),
+        'global_costmap_resolution_m': (
+            float(parameters['resolution']) if 'resolution' in parameters else None
+        ),
+        'goal_checker_xy_tolerance_m': float(goal_checker['xy_goal_tolerance']),
+        'goal_checker_yaw_tolerance_rad': float(goal_checker['yaw_goal_tolerance']),
+        'goal_checker_plugin': str(goal_checker['plugin']),
+        'goal_checker_stateful': bool(goal_checker['stateful']),
     }
 
 
@@ -301,6 +391,59 @@ def discrete_hausdorff_distance(
         )
 
     return max(directed(a, b), directed(b, a))
+
+
+def directed_path_distance(
+    source: Iterable[tuple[float, float]], target: Iterable[tuple[float, float]]
+) -> float | None:
+    source_points = list(source)
+    target_points = list(target)
+    if not source_points or not target_points:
+        return None
+    return max(
+        min(math.hypot(px - qx, py - qy) for qx, qy in target_points)
+        for px, py in source_points
+    )
+
+
+def stationary_periods(
+    poses: Iterable[PoseRecord],
+    *,
+    speed_threshold_mps: float = 0.05,
+    minimum_duration_s: float = 0.5,
+) -> list[dict[str, Any]]:
+    records = list(poses)
+    periods: list[dict[str, Any]] = []
+    period_start_ns = None
+    period_end_ns = None
+    for first, second in zip(records, records[1:]):
+        elapsed_s = (second.received_ns - first.received_ns) * 1.0e-9
+        if elapsed_s <= 0.0:
+            continue
+        speed = math.hypot(second.x - first.x, second.y - first.y) / elapsed_s
+        if speed <= speed_threshold_mps:
+            if period_start_ns is None:
+                period_start_ns = first.received_ns
+            period_end_ns = second.received_ns
+        elif period_start_ns is not None and period_end_ns is not None:
+            duration_s = (period_end_ns - period_start_ns) * 1.0e-9
+            if duration_s >= minimum_duration_s:
+                periods.append({
+                    'start_ns': period_start_ns,
+                    'end_ns': period_end_ns,
+                    'duration_s': duration_s,
+                })
+            period_start_ns = None
+            period_end_ns = None
+    if period_start_ns is not None and period_end_ns is not None:
+        duration_s = (period_end_ns - period_start_ns) * 1.0e-9
+        if duration_s >= minimum_duration_s:
+            periods.append({
+                'start_ns': period_start_ns,
+                'end_ns': period_end_ns,
+                'duration_s': duration_s,
+            })
+    return periods
 
 
 def costmap_value(snapshot: GridSnapshot, x: float, y: float) -> int | None:
@@ -1068,6 +1211,346 @@ class PlannerEvidenceCollector(EvidenceCollector):
         return rows
 
 
+class RuntimeEvidenceCollector(PlannerEvidenceCollector):
+    """Bound full-runtime mission, trajectory, plan, hazard, and costmap evidence."""
+
+    def __init__(
+        self,
+        *,
+        max_samples_per_topic: int = 5000,
+        max_costmaps: int = 900,
+        max_poses: int = 30000,
+        max_plans: int = 2000,
+        max_status_events: int = 2000,
+        crop_geometry: dict[str, float] | None = None,
+        crop_margin_m: float = 1.0,
+    ) -> None:
+        super().__init__(
+            max_samples_per_topic=max_samples_per_topic,
+            max_costmaps=max_costmaps,
+        )
+        self.poses: deque[PoseRecord] = deque(maxlen=max_poses)
+        self.feedback: deque[FeedbackRecord] = deque(maxlen=max_poses)
+        self.transforms: deque[TransformRecord] = deque(maxlen=max_poses * 4)
+        self.requested_goals: deque[RequestedGoalRecord] = deque(maxlen=100)
+        self.automatic_plans: deque[PlanRecord] = deque(maxlen=max_plans)
+        self.status_events: deque[MissionStatusRecord] = deque(
+            maxlen=max_status_events
+        )
+        self._last_status_by_goal: dict[str, int] = {}
+        self.pose_dropped_count = 0
+        self.feedback_dropped_count = 0
+        self.transform_dropped_count = 0
+        self.requested_goal_dropped_count = 0
+        self.plan_dropped_count = 0
+        self.status_dropped_count = 0
+        self.crop_geometry = crop_geometry
+        self.crop_margin_m = max(0.0, float(crop_margin_m))
+        self._crop_source_x = 0
+        self._crop_source_y = 0
+        self._source_size_x = 0
+        self._source_size_y = 0
+
+    def add(self, topic: str, message: AerialHazardArray, received_ns: int) -> None:
+        if received_ns > 0:
+            super().add(topic, message, received_ns)
+
+    def add_full_costmap(
+        self, message: Costmap, received_ns: int, *, source_kind: str = 'full'
+    ) -> None:
+        """Keep only the fixed hazard-region crop from large runtime costmaps."""
+        if received_ns <= 0:
+            return
+        if self.crop_geometry is None:
+            super().add_full_costmap(message, received_ns, source_kind=source_kind)
+            return
+        metadata = message.metadata
+        source_size_x = int(metadata.size_x)
+        source_size_y = int(metadata.size_y)
+        expected = source_size_x * source_size_y
+        resolution = float(metadata.resolution)
+        if len(message.data) != expected or expected == 0 or resolution <= 0.0:
+            return
+        geometry = self.crop_geometry
+        yaw = float(geometry.get('yaw', 0.0))
+        half_x = 0.5 * float(geometry['effective_size_x'])
+        half_y = 0.5 * float(geometry['effective_size_y'])
+        extent_x = abs(math.cos(yaw)) * half_x + abs(math.sin(yaw)) * half_y
+        extent_y = abs(math.sin(yaw)) * half_x + abs(math.cos(yaw)) * half_y
+        extent_x += self.crop_margin_m
+        extent_y += self.crop_margin_m
+        source_origin_x = float(metadata.origin.position.x)
+        source_origin_y = float(metadata.origin.position.y)
+        min_x = int(math.floor(
+            (float(geometry['center_x']) - extent_x - source_origin_x) / resolution
+        ))
+        max_x = int(math.ceil(
+            (float(geometry['center_x']) + extent_x - source_origin_x) / resolution
+        ))
+        min_y = int(math.floor(
+            (float(geometry['center_y']) - extent_y - source_origin_y) / resolution
+        ))
+        max_y = int(math.ceil(
+            (float(geometry['center_y']) + extent_y - source_origin_y) / resolution
+        ))
+        min_x = max(0, min(source_size_x, min_x))
+        max_x = max(0, min(source_size_x, max_x))
+        min_y = max(0, min(source_size_y, min_y))
+        max_y = max(0, min(source_size_y, max_y))
+        crop_size_x = max_x - min_x
+        crop_size_y = max_y - min_y
+        if crop_size_x <= 0 or crop_size_y <= 0:
+            return
+        cropped = bytearray(crop_size_x * crop_size_y)
+        source = bytes(message.data)
+        for row in range(crop_size_y):
+            source_start = (min_y + row) * source_size_x + min_x
+            target_start = row * crop_size_x
+            cropped[target_start:target_start + crop_size_x] = source[
+                source_start:source_start + crop_size_x
+            ]
+        self._crop_source_x = min_x
+        self._crop_source_y = min_y
+        self._source_size_x = source_size_x
+        self._source_size_y = source_size_y
+        self.costmap_count += 1
+        self.costmap_full_count += 1
+        self.costmaps.append(GridSnapshot(
+            received_ns=int(received_ns),
+            source_kind=f'{source_kind}_hazard_crop',
+            resolution=resolution,
+            size_x=crop_size_x,
+            size_y=crop_size_y,
+            origin_x=source_origin_x + min_x * resolution,
+            origin_y=source_origin_y + min_y * resolution,
+            data=bytes(cropped),
+        ))
+
+    def add_costmap_update(self, message: CostmapUpdate, received_ns: int) -> None:
+        if received_ns <= 0:
+            return
+        if self.crop_geometry is None:
+            super().add_costmap_update(message, received_ns)
+            return
+        if not self.costmaps:
+            return
+        previous = self.costmaps[-1]
+        update_x = int(message.x)
+        update_y = int(message.y)
+        update_width = int(message.size_x)
+        update_height = int(message.size_y)
+        if update_width * update_height != len(message.data):
+            return
+        if (
+            update_x < 0 or update_y < 0
+            or update_x + update_width > self._source_size_x
+            or update_y + update_height > self._source_size_y
+        ):
+            return
+        left = max(update_x, self._crop_source_x)
+        right = min(update_x + update_width, self._crop_source_x + previous.size_x)
+        bottom = max(update_y, self._crop_source_y)
+        top = min(update_y + update_height, self._crop_source_y + previous.size_y)
+        if left >= right or bottom >= top:
+            return
+        data = bytearray(previous.data)
+        update_data = bytes(message.data)
+        width = right - left
+        for source_row in range(bottom, top):
+            update_start = (
+                (source_row - update_y) * update_width + left - update_x
+            )
+            target_start = (
+                (source_row - self._crop_source_y) * previous.size_x
+                + left - self._crop_source_x
+            )
+            data[target_start:target_start + width] = update_data[
+                update_start:update_start + width
+            ]
+        self.costmap_count += 1
+        self.costmap_update_count += 1
+        self.costmaps.append(GridSnapshot(
+            received_ns=int(received_ns),
+            source_kind='update_hazard_crop',
+            resolution=previous.resolution,
+            size_x=previous.size_x,
+            size_y=previous.size_y,
+            origin_x=previous.origin_x,
+            origin_y=previous.origin_y,
+            data=bytes(data),
+        ))
+
+    def add_pose(self, message: PoseWithCovarianceStamped, received_ns: int) -> None:
+        if received_ns <= 0:
+            return
+        if len(self.poses) == self.poses.maxlen:
+            self.pose_dropped_count += 1
+        orientation = message.pose.pose.orientation
+        yaw = math.atan2(
+            2.0 * (orientation.w * orientation.z + orientation.x * orientation.y),
+            1.0 - 2.0 * (orientation.y * orientation.y + orientation.z * orientation.z),
+        )
+        self.poses.append(PoseRecord(
+            received_ns=int(received_ns),
+            x=float(message.pose.pose.position.x),
+            y=float(message.pose.pose.position.y),
+            yaw=float(yaw),
+            source_stamp_ns=stamp_ns(message.header.stamp),
+            frame_id=str(message.header.frame_id),
+            child_frame_id='base_link',
+            source='amcl_pose',
+        ))
+
+    def add_feedback(
+        self, message: NavigateToPose_FeedbackMessage, received_ns: int
+    ) -> None:
+        if received_ns <= 0:
+            return
+        if len(self.feedback) == self.feedback.maxlen:
+            self.feedback_dropped_count += 1
+        current = message.feedback.current_pose
+        orientation = current.pose.orientation
+        yaw = math.atan2(
+            2.0 * (orientation.w * orientation.z + orientation.x * orientation.y),
+            1.0 - 2.0 * (orientation.y * orientation.y + orientation.z * orientation.z),
+        )
+        self.feedback.append(FeedbackRecord(
+            received_ns=int(received_ns),
+            goal_id=bytes(message.goal_id.uuid).hex(),
+            pose=PoseRecord(
+                received_ns=int(received_ns),
+                x=float(current.pose.position.x),
+                y=float(current.pose.position.y),
+                yaw=float(yaw),
+                source_stamp_ns=stamp_ns(current.header.stamp),
+                frame_id=str(current.header.frame_id),
+                child_frame_id='base_link',
+                source='navigate_to_pose_feedback',
+            ),
+            distance_remaining_m=float(message.feedback.distance_remaining),
+            number_of_recoveries=int(message.feedback.number_of_recoveries),
+        ))
+
+    def add_requested_route(self, message: NavPath, received_ns: int) -> None:
+        if received_ns <= 0 or not message.poses:
+            return
+        if len(self.requested_goals) == self.requested_goals.maxlen:
+            self.requested_goal_dropped_count += 1
+        pose = message.poses[-1]
+        orientation = pose.pose.orientation
+        yaw = math.atan2(
+            2.0 * (orientation.w * orientation.z + orientation.x * orientation.y),
+            1.0 - 2.0 * (orientation.y * orientation.y + orientation.z * orientation.z),
+        )
+        self.requested_goals.append(RequestedGoalRecord(
+            received_ns=int(received_ns),
+            source_stamp_ns=stamp_ns(pose.header.stamp),
+            frame_id=str(pose.header.frame_id or message.header.frame_id),
+            x=float(pose.pose.position.x),
+            y=float(pose.pose.position.y),
+            yaw=float(yaw),
+        ))
+
+    def add_tf(self, message: TFMessage, received_ns: int, *, is_static: bool) -> None:
+        if received_ns <= 0:
+            return
+        for item in message.transforms:
+            parent = str(item.header.frame_id).strip('/')
+            child = str(item.child_frame_id).strip('/')
+            if (parent, child) not in {
+                ('map', 'odom'), ('odom', 'base_link'), ('map', 'base_link')
+            }:
+                continue
+            if len(self.transforms) == self.transforms.maxlen:
+                self.transform_dropped_count += 1
+            rotation = item.transform.rotation
+            yaw = math.atan2(
+                2.0 * (rotation.w * rotation.z + rotation.x * rotation.y),
+                1.0 - 2.0 * (rotation.y * rotation.y + rotation.z * rotation.z),
+            )
+            self.transforms.append(TransformRecord(
+                received_ns=int(received_ns),
+                source_stamp_ns=stamp_ns(item.header.stamp),
+                parent_frame=parent,
+                child_frame=child,
+                x=float(item.transform.translation.x),
+                y=float(item.transform.translation.y),
+                yaw=float(yaw),
+                is_static=bool(is_static),
+            ))
+
+    def add_automatic_plan(self, message: NavPath, received_ns: int) -> None:
+        if received_ns <= 0:
+            return
+        self.add_plan_topic_message()
+        if len(self.automatic_plans) == self.automatic_plans.maxlen:
+            self.plan_dropped_count += 1
+        points = tuple(
+            (float(item.pose.position.x), float(item.pose.position.y))
+            for item in message.poses
+        )
+        self.automatic_plans.append(PlanRecord(
+            label=f'automatic_{self.plan_topic_count:04d}',
+            requested_ns=int(received_ns),
+            received_ns=int(received_ns),
+            planning_time_s=0.0,
+            error_code=0 if points else 1,
+            error_message='' if points else 'empty plan topic message',
+            points=points,
+        ))
+
+    def add_status(self, message: GoalStatusArray, received_ns: int) -> None:
+        if received_ns <= 0:
+            return
+        for item in message.status_list:
+            goal_id = bytes(item.goal_info.goal_id.uuid).hex()
+            status = int(item.status)
+            if self._last_status_by_goal.get(goal_id) == status:
+                continue
+            self._last_status_by_goal[goal_id] = status
+            if len(self.status_events) == self.status_events.maxlen:
+                self.status_dropped_count += 1
+            self.status_events.append(MissionStatusRecord(
+                received_ns=int(received_ns),
+                goal_id=goal_id,
+                status=status,
+            ))
+
+    def selected_mission(self) -> dict[str, Any]:
+        events = sorted(self.status_events, key=lambda item: item.received_ns)
+        live = (GoalStatus.STATUS_ACCEPTED, GoalStatus.STATUS_EXECUTING)
+        goal_id = next((item.goal_id for item in events if item.status in live), '')
+        selected = [item for item in events if item.goal_id == goal_id]
+        start_ns = next(
+            (item.received_ns for item in selected if item.status in live), None
+        )
+        terminal_states = (
+            GoalStatus.STATUS_SUCCEEDED,
+            GoalStatus.STATUS_CANCELED,
+            GoalStatus.STATUS_ABORTED,
+        )
+        terminal = next(
+            (item for item in reversed(selected) if item.status in terminal_states), None
+        )
+        return {
+            'goal_id': goal_id,
+            'start_ns': start_ns,
+            'completion_ns': terminal.received_ns if terminal else None,
+            'terminal_status': (
+                GOAL_STATUS_NAMES.get(terminal.status, str(terminal.status))
+                if terminal else None
+            ),
+            'succeeded': bool(terminal and terminal.status == GoalStatus.STATUS_SUCCEEDED),
+            'transitions': [
+                {
+                    'received_ns': item.received_ns,
+                    'status': GOAL_STATUS_NAMES.get(item.status, str(item.status)),
+                }
+                for item in selected
+            ],
+        }
+
+
 def plan_record_dict(
     record: PlanRecord,
     *,
@@ -1327,12 +1810,15 @@ class LiveEvidenceNode(Node):
                 lambda message, topic=topic: self.collector.add(
                     topic,
                     message,
-                    int(self.get_clock().now().nanoseconds),
+                    self._evidence_now_ns(),
                 ),
                 qos,
             )
             for topic in HAZARD_TOPICS
         ]
+
+    def _evidence_now_ns(self) -> int:
+        return int(self.get_clock().now().nanoseconds)
 
 
 class PlannerEvidenceNode(LiveEvidenceNode):
@@ -1383,6 +1869,151 @@ class PlannerEvidenceNode(LiveEvidenceNode):
         self.costmap_client = self.create_client(
             GetCostmap, f'{prefix}/global_costmap/get_costmap'
         )
+
+
+class RuntimeEvidenceNode(LiveEvidenceNode):
+    """Passively observe one full NavigateToPose experiment."""
+
+    def __init__(self, collector: RuntimeEvidenceCollector, namespace: str) -> None:
+        self._runtime_sim_time_ns = 0
+        super().__init__(collector)
+        self.collector = collector
+        prefix = '/' + namespace.strip('/')
+        clock_qos = QoSProfile(
+            history=HistoryPolicy.KEEP_LAST,
+            depth=1,
+            reliability=ReliabilityPolicy.BEST_EFFORT,
+            durability=DurabilityPolicy.VOLATILE,
+        )
+        full_qos = QoSProfile(
+            history=HistoryPolicy.KEEP_LAST,
+            depth=2,
+            reliability=ReliabilityPolicy.RELIABLE,
+            durability=DurabilityPolicy.TRANSIENT_LOCAL,
+        )
+        stream_qos = QoSProfile(
+            history=HistoryPolicy.KEEP_LAST,
+            depth=50,
+            reliability=ReliabilityPolicy.RELIABLE,
+            durability=DurabilityPolicy.VOLATILE,
+        )
+        tf_qos = QoSProfile(
+            history=HistoryPolicy.KEEP_LAST,
+            depth=100,
+            reliability=ReliabilityPolicy.BEST_EFFORT,
+            durability=DurabilityPolicy.VOLATILE,
+        )
+        self._runtime_subscriptions = [
+            self.create_subscription(
+                Clock,
+                '/clock',
+                self._on_runtime_clock,
+                clock_qos,
+            ),
+            self.create_subscription(
+                Costmap,
+                f'{prefix}/global_costmap/costmap_raw',
+                lambda message: collector.add_full_costmap(
+                    message, self._evidence_now_ns()
+                ),
+                full_qos,
+            ),
+            self.create_subscription(
+                CostmapUpdate,
+                f'{prefix}/global_costmap/costmap_raw_updates',
+                lambda message: collector.add_costmap_update(
+                    message, self._evidence_now_ns()
+                ),
+                stream_qos,
+            ),
+            self.create_subscription(
+                NavPath,
+                f'{prefix}/plan',
+                lambda message: collector.add_automatic_plan(
+                    message, self._evidence_now_ns()
+                ),
+                stream_qos,
+            ),
+            self.create_subscription(
+                NavPath,
+                f'{prefix}/planned_path',
+                lambda message: collector.add_requested_route(
+                    message, self._evidence_now_ns()
+                ),
+                stream_qos,
+            ),
+            self.create_subscription(
+                PoseWithCovarianceStamped,
+                f'{prefix}/amcl_pose',
+                lambda message: collector.add_pose(
+                    message, self._evidence_now_ns()
+                ),
+                stream_qos,
+            ),
+            self.create_subscription(
+                GoalStatusArray,
+                f'{prefix}/navigate_to_pose/_action/status',
+                lambda message: collector.add_status(
+                    message, self._evidence_now_ns()
+                ),
+                stream_qos,
+            ),
+            self.create_subscription(
+                NavigateToPose_FeedbackMessage,
+                f'{prefix}/navigate_to_pose/_action/feedback',
+                lambda message: collector.add_feedback(
+                    message, self._evidence_now_ns()
+                ),
+                stream_qos,
+            ),
+            self.create_subscription(
+                TFMessage,
+                f'{prefix}/tf',
+                lambda message: collector.add_tf(
+                    message, self._evidence_now_ns(), is_static=False
+                ),
+                tf_qos,
+            ),
+            self.create_subscription(
+                TFMessage,
+                f'{prefix}/tf_static',
+                lambda message: collector.add_tf(
+                    message, self._evidence_now_ns(), is_static=True
+                ),
+                full_qos,
+            ),
+            self.create_subscription(
+                TFMessage,
+                '/tf',
+                lambda message: collector.add_tf(
+                    message, self._evidence_now_ns(), is_static=False
+                ),
+                tf_qos,
+            ),
+            self.create_subscription(
+                TFMessage,
+                '/tf_static',
+                lambda message: collector.add_tf(
+                    message, self._evidence_now_ns(), is_static=True
+                ),
+                full_qos,
+            ),
+        ]
+        self.costmap_client = self.create_client(
+            GetCostmap, f'{prefix}/global_costmap/get_costmap'
+        )
+        self.layer_parameters = AsyncParameterClient(
+            self, f'{prefix}/global_costmap/global_costmap'
+        )
+        self.controller_parameters = AsyncParameterClient(
+            self, f'{prefix}/controller_server'
+        )
+
+    def _on_runtime_clock(self, message: Clock) -> None:
+        self._runtime_sim_time_ns = stamp_ns(message.clock)
+
+    def _evidence_now_ns(self) -> int:
+        return self._runtime_sim_time_ns
 
 
 def _spin_until(node: Node, predicate, deadline: float) -> bool:
@@ -1463,6 +2094,58 @@ def _set_aerial_layer(node: PlannerEvidenceNode, enabled: bool, timeout_s: float
     return bool(results) and all(result.successful for result in results)
 
 
+def _get_aerial_layer_enabled(
+    node: RuntimeEvidenceNode, timeout_s: float
+) -> bool | None:
+    if not node.layer_parameters.wait_for_services(timeout_sec=timeout_s):
+        return None
+    future = node.layer_parameters.get_parameters(['aerial_support_layer.enabled'])
+    if not _spin_until(node, future.done, time.monotonic() + timeout_s):
+        return None
+    response = future.result()
+    values = response.values if response is not None else ()
+    if not values:
+        return None
+    return bool(values[0].bool_value)
+
+
+def _get_runtime_goal_checker(
+    node: RuntimeEvidenceNode, timeout_s: float
+) -> dict[str, Any] | None:
+    if not node.controller_parameters.wait_for_services(timeout_sec=timeout_s):
+        return None
+    names = [
+        'goal_checker_plugins',
+        'general_goal_checker.plugin',
+        'general_goal_checker.xy_goal_tolerance',
+        'general_goal_checker.yaw_goal_tolerance',
+        'general_goal_checker.stateful',
+    ]
+    future = node.controller_parameters.get_parameters(names)
+    if not _spin_until(node, future.done, time.monotonic() + timeout_s):
+        return None
+    response = future.result()
+    values = response.values if response is not None else ()
+    if len(values) != len(names):
+        return None
+    if (
+        values[0].type != ParameterType.PARAMETER_STRING_ARRAY
+        or values[1].type != ParameterType.PARAMETER_STRING
+        or values[2].type != ParameterType.PARAMETER_DOUBLE
+        or values[3].type != ParameterType.PARAMETER_DOUBLE
+        or values[4].type != ParameterType.PARAMETER_BOOL
+    ):
+        return None
+    return {
+        'goal_checker_plugins': list(values[0].string_array_value),
+        'plugin': str(values[1].string_value),
+        'xy_goal_tolerance_m': float(values[2].double_value),
+        'yaw_goal_tolerance_rad': float(values[3].double_value),
+        'stateful': bool(values[4].bool_value),
+        'source': 'controller_server runtime parameters',
+    }
+
+
 def _request_costmap_snapshot(node: PlannerEvidenceNode, timeout_s: float) -> bool:
     if not node.costmap_client.wait_for_service(timeout_sec=timeout_s):
         return False
@@ -1472,9 +2155,16 @@ def _request_costmap_snapshot(node: PlannerEvidenceNode, timeout_s: float) -> bo
     response = future.result()
     if response is None:
         return False
+    received_ns = (
+        node._evidence_now_ns()
+        if hasattr(node, '_evidence_now_ns')
+        else int(node.get_clock().now().nanoseconds)
+    )
+    if isinstance(node.collector, RuntimeEvidenceCollector) and received_ns <= 0:
+        return False
     node.collector.add_full_costmap(
         response.map,
-        int(node.get_clock().now().nanoseconds),
+        received_ns,
         source_kind='service',
     )
     return True
@@ -2054,6 +2744,925 @@ def _run_planner_live(args: argparse.Namespace, ros_args: list[str]) -> int:
     return 0 if summary['status'] == 'pass' else 1
 
 
+def _path_for_snapshot(
+    snapshots: Iterable[GridSnapshot], received_ns: int
+) -> GridSnapshot | None:
+    ordered = sorted(snapshots, key=lambda item: item.received_ns)
+    earlier = [item for item in ordered if item.received_ns <= received_ns]
+    if earlier:
+        return earlier[-1]
+    return ordered[0] if ordered else None
+
+
+def _runtime_baseline_bundle(path: Path | None) -> dict[str, Any] | None:
+    if path is None:
+        return None
+    root = path.expanduser().resolve()
+    summary_path = root / 'summary.json'
+    plans_path = root / 'plans.json'
+    trajectory_path = root / 'trajectory.csv'
+    if not summary_path.is_file() or not plans_path.is_file() or not trajectory_path.is_file():
+        raise FileNotFoundError(
+            f'baseline evidence must contain summary.json, plans.json, and trajectory.csv: {root}'
+        )
+    summary = json.loads(summary_path.read_text(encoding='utf-8'))
+    plans = json.loads(plans_path.read_text(encoding='utf-8'))
+    with trajectory_path.open(newline='', encoding='utf-8') as stream:
+        trajectory = [
+            (float(row['x']), float(row['y']))
+            for row in csv.DictReader(stream)
+        ]
+    return {
+        'root': str(root),
+        'summary': summary,
+        'plans': plans,
+        'trajectory': trajectory,
+    }
+
+
+def _runtime_costmap_analysis(
+    collector: RuntimeEvidenceCollector,
+    geometry: dict[str, float],
+    inflation_radius_m: float,
+) -> dict[str, Any]:
+    snapshots = sorted(collector.costmaps, key=lambda item: item.received_ns)
+    first_hazard_ns = min(
+        (
+            sample.received_ns
+            for sample in collector.samples[UGV_TOPIC]
+            if sample.message.hazards
+        ),
+        default=None,
+    )
+    baseline_candidates = [
+        item for item in snapshots
+        if first_hazard_ns is None or item.received_ns < first_hazard_ns
+    ]
+    baseline, settling = settled_baseline_selection(
+        baseline_candidates,
+        geometry,
+        inflation_radius_m,
+        required_consecutive=2,
+    )
+    first_mark = None
+    first_mark_delta = None
+    first_clear = None
+    if baseline is not None and first_hazard_ns is not None:
+        for snapshot in snapshots:
+            if snapshot.received_ns < first_hazard_ns:
+                continue
+            delta = relevant_costmap_delta(
+                baseline, snapshot, geometry, inflation_radius_m
+            )
+            if (
+                delta['comparable']
+                and delta.get('hazard_footprint_lethal_cells', 0) > 0
+            ):
+                first_mark = snapshot
+                first_mark_delta = delta
+                break
+        if first_mark is not None:
+            for snapshot in snapshots:
+                if snapshot.received_ns <= first_mark.received_ns:
+                    continue
+                delta = relevant_costmap_delta(
+                    baseline, snapshot, geometry, inflation_radius_m
+                )
+                if delta['comparable'] and delta['affected_cells'] == 0:
+                    first_clear = snapshot
+                    break
+    return {
+        'baseline': baseline,
+        'baseline_settling': settling,
+        'first_hazard_ns': first_hazard_ns,
+        'first_mark': first_mark,
+        'first_mark_delta': first_mark_delta,
+        'first_clear': first_clear,
+        'snapshots': snapshots,
+    }
+
+
+def _runtime_plan_dicts(
+    collector: RuntimeEvidenceCollector,
+    *,
+    mission: dict[str, Any],
+    costmaps: dict[str, Any],
+    geometry: dict[str, float],
+    inflation_geometry: dict[str, float],
+    minimum_path_change_m: float,
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    start_ns = mission.get('start_ns')
+    completion_ns = mission.get('completion_ns')
+    records = [
+        item for item in collector.automatic_plans
+        if start_ns is not None
+        and item.received_ns >= start_ns
+        and (completion_ns is None or item.received_ns <= completion_ns)
+        and item.points
+    ]
+    mark = costmaps['first_mark']
+    clear = costmaps['first_clear']
+    if mark is None:
+        pre_hazard = records[0] if records else None
+    else:
+        before = [item for item in records if item.received_ns < mark.received_ns]
+        pre_hazard = before[-1] if before else None
+    changed = None
+    changed_distance = None
+    if mark is not None and pre_hazard is not None:
+        for item in records:
+            if item.received_ns <= mark.received_ns:
+                continue
+            distance = discrete_hausdorff_distance(pre_hazard.points, item.points)
+            if distance is not None and distance >= minimum_path_change_m:
+                changed = item
+                changed_distance = distance
+                break
+    post_clear = None
+    if clear is not None:
+        post_clear = next(
+            (item for item in records if item.received_ns > clear.received_ns), None
+        )
+
+    labelled: list[tuple[str, PlanRecord]] = []
+    if pre_hazard is not None:
+        labelled.append(('baseline', pre_hazard))
+    if changed is not None:
+        labelled.append(('hazard_active', changed))
+    if post_clear is not None:
+        labelled.append(('post_clear', post_clear))
+    selected_ids = {id(record) for _, record in labelled}
+    for record in records:
+        if id(record) not in selected_ids:
+            labelled.append((record.label, record))
+
+    plans = []
+    for label, record in labelled:
+        relabelled = PlanRecord(
+            label, record.requested_ns, record.received_ns,
+            record.planning_time_s, record.error_code, record.error_message,
+            record.points,
+        )
+        plans.append(plan_record_dict(
+            relabelled,
+            geometry=geometry,
+            inflation_geometry=inflation_geometry,
+            costmap=_path_for_snapshot(costmaps['snapshots'], record.received_ns),
+            baseline_costmap=costmaps['baseline'],
+        ))
+    selected = {
+        'pre_hazard': next((item for item in plans if item['label'] == 'baseline'), None),
+        'hazard_active': next(
+            (item for item in plans if item['label'] == 'hazard_active'), None
+        ),
+        'post_clear': next(
+            (item for item in plans if item['label'] == 'post_clear'), None
+        ),
+        'material_change_m': changed_distance,
+        'automatic_plan_count_during_goal': len(records),
+    }
+    return plans, selected
+
+
+def _compose_planar_pose(
+    first: tuple[float, float, float], second: tuple[float, float, float]
+) -> tuple[float, float, float]:
+    """Compose parent->middle and middle->child planar transforms."""
+    x0, y0, yaw0 = first
+    x1, y1, yaw1 = second
+    return (
+        x0 + math.cos(yaw0) * x1 - math.sin(yaw0) * y1,
+        y0 + math.sin(yaw0) * x1 + math.cos(yaw0) * y1,
+        math.atan2(math.sin(yaw0 + yaw1), math.cos(yaw0 + yaw1)),
+    )
+
+
+def _inverse_planar_pose(
+    transform: tuple[float, float, float]
+) -> tuple[float, float, float]:
+    x, y, yaw = transform
+    inverse_yaw = -yaw
+    return (
+        -(math.cos(inverse_yaw) * x - math.sin(inverse_yaw) * y),
+        -(math.sin(inverse_yaw) * x + math.cos(inverse_yaw) * y),
+        inverse_yaw,
+    )
+
+
+def resolve_planar_tf_pose(
+    transforms: Iterable[TransformRecord],
+    *,
+    parent_frame: str,
+    child_frame: str,
+    at_received_ns: int,
+) -> dict[str, Any] | None:
+    """Resolve a frame pose from the latest TF samples received by a time."""
+    selected: dict[tuple[str, str], TransformRecord] = {}
+    for item in transforms:
+        if not item.is_static and item.received_ns > at_received_ns:
+            continue
+        key = (item.parent_frame, item.child_frame)
+        previous = selected.get(key)
+        if previous is None or item.received_ns >= previous.received_ns:
+            selected[key] = item
+
+    graph: dict[str, list[tuple[str, tuple[float, float, float], TransformRecord]]] = {}
+    for item in selected.values():
+        value = (item.x, item.y, item.yaw)
+        graph.setdefault(item.parent_frame, []).append((item.child_frame, value, item))
+        graph.setdefault(item.child_frame, []).append((
+            item.parent_frame, _inverse_planar_pose(value), item
+        ))
+
+    start = parent_frame.strip('/')
+    target = child_frame.strip('/')
+    queue = deque([(start, (0.0, 0.0, 0.0), tuple())])
+    visited = {start}
+    while queue:
+        frame, accumulated, path = queue.popleft()
+        if frame == target:
+            dynamic = [item for item in path if not item.is_static]
+            newest_receipt = max((item.received_ns for item in dynamic), default=None)
+            oldest_receipt = min((item.received_ns for item in dynamic), default=None)
+            return {
+                'x': accumulated[0],
+                'y': accumulated[1],
+                'yaw': accumulated[2],
+                'frame_id': start,
+                'child_frame_id': target,
+                'comparison_received_ns': int(at_received_ns),
+                'newest_dynamic_tf_received_ns': newest_receipt,
+                'oldest_dynamic_tf_received_ns': oldest_receipt,
+                'tf_age_s': (
+                    (at_received_ns - oldest_receipt) * 1.0e-9
+                    if oldest_receipt is not None else None
+                ),
+                'transform_chain': [
+                    {
+                        'parent_frame': item.parent_frame,
+                        'child_frame': item.child_frame,
+                        'source_stamp_ns': item.source_stamp_ns,
+                        'received_ns': item.received_ns,
+                        'static': item.is_static,
+                    }
+                    for item in path
+                ],
+            }
+        for adjacent, transform, record in graph.get(frame, ()):
+            if adjacent in visited:
+                continue
+            visited.add(adjacent)
+            queue.append((
+                adjacent,
+                _compose_planar_pose(accumulated, transform),
+                path + (record,),
+            ))
+    return None
+
+
+def _pose_evaluation(
+    pose: dict[str, Any] | PoseRecord | None,
+    goal: tuple[float, float, float],
+) -> dict[str, Any] | None:
+    if pose is None:
+        return None
+    if isinstance(pose, PoseRecord):
+        result = {
+            'x': pose.x,
+            'y': pose.y,
+            'yaw': pose.yaw,
+            'frame_id': pose.frame_id,
+            'child_frame_id': pose.child_frame_id,
+            'received_ns': pose.received_ns,
+            'source_stamp_ns': pose.source_stamp_ns,
+            'source': pose.source,
+        }
+    else:
+        result = dict(pose)
+    result['xy_error_m'] = math.hypot(result['x'] - goal[0], result['y'] - goal[1])
+    result['yaw_error_rad'] = abs(math.atan2(
+        math.sin(result['yaw'] - goal[2]), math.cos(result['yaw'] - goal[2])
+    ))
+    return result
+
+
+def summarize_runtime_evidence(
+    collector: RuntimeEvidenceCollector,
+    *,
+    scenario: str,
+    start: tuple[float, float, float],
+    goal: tuple[float, float, float],
+    geometry: dict[str, float],
+    nav2_config: dict[str, Any],
+    map_path: Path,
+    layer_enabled: bool | None,
+    baseline_bundle: dict[str, Any] | None,
+    minimum_path_change_m: float,
+    minimum_trajectory_change_m: float,
+    maximum_plan_tracking_error_m: float,
+    goal_tolerance_m: float,
+    yaw_goal_tolerance_rad: float | None = None,
+    runtime_goal_checker: dict[str, Any] | None = None,
+) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    inflation_radius_m = float(nav2_config['inflation_radius_m'])
+    inflation_geometry = expanded_hazard_geometry(geometry, inflation_radius_m)
+    mission = collector.selected_mission()
+    costmaps = _runtime_costmap_analysis(
+        collector, geometry, inflation_radius_m
+    )
+    plans, selected_plans = _runtime_plan_dicts(
+        collector,
+        mission=mission,
+        costmaps=costmaps,
+        geometry=geometry,
+        inflation_geometry=inflation_geometry,
+        minimum_path_change_m=minimum_path_change_m,
+    )
+    start_ns = mission.get('start_ns')
+    completion_ns = mission.get('completion_ns')
+    poses = [
+        item for item in collector.poses
+        if start_ns is not None
+        and item.received_ns >= start_ns
+        and (completion_ns is None or item.received_ns <= completion_ns)
+    ]
+    trajectory = [(item.x, item.y) for item in poses]
+    trajectory_geometry = path_hazard_metrics(trajectory, geometry)
+    trajectory_inflation = path_hazard_metrics(trajectory, inflation_geometry)
+    driven_distance_m = path_length(trajectory)
+    amcl_at_success = poses[-1] if poses else None
+    later_amcl = next(
+        (item for item in reversed(collector.poses)
+         if completion_ns is not None and item.received_ns >= completion_ns),
+        amcl_at_success,
+    )
+    feedback_at_success = next(
+        (item for item in reversed(collector.feedback)
+         if item.goal_id == mission.get('goal_id')
+         and completion_ns is not None and item.received_ns <= completion_ns),
+        None,
+    )
+    tf_at_success = (
+        resolve_planar_tf_pose(
+            collector.transforms,
+            parent_frame='map', child_frame='base_link',
+            at_received_ns=completion_ns,
+        ) if completion_ns is not None else None
+    )
+    tf_goal_pose = _pose_evaluation(tf_at_success, goal)
+    feedback_goal_pose = _pose_evaluation(
+        feedback_at_success.pose if feedback_at_success else None, goal
+    )
+    amcl_goal_pose = _pose_evaluation(amcl_at_success, goal)
+    later_amcl_goal_pose = _pose_evaluation(later_amcl, goal)
+    success_pose = tf_goal_pose or feedback_goal_pose
+    final_goal_distance_m = success_pose['xy_error_m'] if success_pose else None
+    requested_goal = next(
+        (item for item in reversed(collector.requested_goals)
+         if start_ns is None or item.received_ns <= start_ns),
+        collector.requested_goals[-1] if collector.requested_goals else None,
+    )
+    requested_goal_matches_configuration = bool(
+        requested_goal
+        and requested_goal.frame_id.strip('/') == 'map'
+        and math.hypot(requested_goal.x - goal[0], requested_goal.y - goal[1]) <= 1.0e-6
+        and abs(math.atan2(
+            math.sin(requested_goal.yaw - goal[2]),
+            math.cos(requested_goal.yaw - goal[2]),
+        )) <= 1.0e-6
+    )
+    baseline_trajectory = baseline_bundle['trajectory'] if baseline_bundle else []
+    baseline_trajectory_geometry = path_hazard_metrics(
+        baseline_trajectory, geometry
+    ) if baseline_trajectory else None
+    trajectory_change_m = discrete_hausdorff_distance(
+        baseline_trajectory, trajectory
+    ) if baseline_trajectory and trajectory else None
+    first_mark = costmaps['first_mark']
+    changed_plan = selected_plans['hazard_active']
+    post_replan_poses = [
+        item for item in poses
+        if changed_plan is not None and item.received_ns >= changed_plan['result_ns']
+    ]
+    post_mark_plan_points = [
+        tuple(point)
+        for plan in plans
+        if first_mark is not None and plan['result_ns'] >= first_mark.received_ns
+        for point in plan['points']
+    ]
+    plan_tracking_error_m = directed_path_distance(
+        ((item.x, item.y) for item in post_replan_poses),
+        post_mark_plan_points,
+    )
+    baseline_plans = baseline_bundle['plans'] if baseline_bundle else []
+    baseline_reference_plan = next(
+        (item for item in baseline_plans if item.get('label') == 'baseline'),
+        baseline_plans[0] if baseline_plans else None,
+    )
+
+    typed = collector.summarize(EvidenceExpectations(
+        expected_state=(
+            None if scenario == 'baseline' else AerialHazard.CONFIRMED
+        ),
+        expected_sources=(() if scenario == 'baseline' else ('dji1',)),
+        expected_selected_source=(None if scenario == 'baseline' else 'dji1'),
+        minimum_hazard_count=(0 if scenario == 'baseline' else 1),
+        require_typed_flow=(scenario != 'baseline'),
+        require_forwarding=(scenario != 'baseline'),
+        require_covariance_match=(scenario != 'baseline'),
+        max_age_s=float(nav2_config['aerial_max_observation_age_s']),
+    ))
+    first_clear = costmaps['first_clear']
+    mark_delta = costmaps['first_mark_delta'] or {}
+    failures: list[str] = []
+    if not mission['goal_id']:
+        failures.append('navigate_to_pose_goal_not_observed')
+    if mission.get('start_ns') is not None and mission['start_ns'] <= 0:
+        failures.append('invalid_runtime_timestamp')
+    if mission.get('completion_ns') is not None and mission['completion_ns'] <= 0:
+        failures.append('invalid_runtime_timestamp')
+    if not mission['succeeded']:
+        failures.append('navigate_to_pose_goal_not_succeeded')
+    if requested_goal is None:
+        failures.append('requested_action_goal_not_observed')
+    elif not requested_goal_matches_configuration:
+        failures.append('requested_action_goal_mismatch')
+    if runtime_goal_checker is None:
+        failures.append('runtime_goal_checker_parameters_unavailable')
+    elif (
+        'general_goal_checker' not in runtime_goal_checker.get('goal_checker_plugins', ())
+        or runtime_goal_checker.get('stateful') != nav2_config['goal_checker_stateful']
+        or runtime_goal_checker.get('plugin') != nav2_config['goal_checker_plugin']
+        or runtime_goal_checker.get('xy_goal_tolerance_m') != goal_tolerance_m
+        or runtime_goal_checker.get('yaw_goal_tolerance_rad') != yaw_goal_tolerance_rad
+    ):
+        failures.append('runtime_goal_checker_parameter_mismatch')
+    if len(trajectory) < 2:
+        failures.append('ugv_trajectory_missing')
+    if final_goal_distance_m is None or final_goal_distance_m > goal_tolerance_m:
+        failures.append('ugv_final_pose_outside_goal_tolerance')
+    if (
+        success_pose is None
+        or success_pose.get('frame_id', '').strip('/') != 'map'
+        or success_pose.get('child_frame_id', '').strip('/') != 'base_link'
+    ):
+        failures.append('frame_correct_success_pose_missing')
+    if (
+        yaw_goal_tolerance_rad is None
+        or success_pose is None
+        or success_pose['yaw_error_rad'] > yaw_goal_tolerance_rad
+    ):
+        failures.append('ugv_final_yaw_outside_goal_tolerance')
+    if selected_plans['automatic_plan_count_during_goal'] < 1:
+        failures.append('active_mission_plan_not_observed')
+    if costmaps['baseline'] is None:
+        failures.append('stable_pre_hazard_costmap_missing')
+    if any((
+        collector.pose_dropped_count,
+        collector.plan_dropped_count,
+        collector.status_dropped_count,
+        *collector.dropped_counts.values(),
+    )):
+        failures.append('bounded_evidence_limit_exceeded')
+
+    expected_layer = scenario != 'baseline'
+    if layer_enabled is None:
+        failures.append('aerial_layer_runtime_parameter_unavailable')
+    elif layer_enabled != expected_layer:
+        failures.append('aerial_layer_runtime_parameter_mismatch')
+
+    if scenario == 'baseline':
+        if _has_nonempty(collector, UGV_TOPIC):
+            failures.append('baseline_received_operational_hazard')
+        baseline_plan = selected_plans['pre_hazard']
+        if baseline_plan is None or not baseline_plan['crosses_covariance_footprint']:
+            failures.append('baseline_plan_misses_candidate_hazard')
+        if not trajectory_geometry['crosses_effective_hazard']:
+            failures.append('baseline_trajectory_misses_candidate_hazard')
+    else:
+        failures.extend(f'hazard_flow:{item}' for item in typed['failures'])
+        if baseline_bundle is None:
+            failures.append('baseline_runtime_evidence_missing')
+        elif baseline_bundle['summary'].get('status') != 'pass':
+            failures.append('baseline_runtime_evidence_not_passed')
+        if first_mark is None:
+            failures.append('aerial_costmap_mark_not_observed')
+        if mark_delta.get('hazard_footprint_lethal_cells', 0) < 1:
+            failures.append('lethal_hazard_core_not_observed')
+        if mark_delta.get('inflation_halo_nonzero_cells', 0) < 1:
+            failures.append('graded_inflation_halo_not_observed')
+        pre_hazard = selected_plans['pre_hazard']
+        active = selected_plans['hazard_active']
+        if pre_hazard is None:
+            failures.append('pre_hazard_active_goal_plan_missing')
+        elif not pre_hazard['crosses_covariance_footprint']:
+            failures.append('pre_hazard_plan_misses_effective_hazard')
+        if active is None:
+            failures.append('automatic_post_mark_replan_not_observed')
+        elif active['crosses_lethal_costmap_cell'] is not False:
+            failures.append('automatic_replan_crosses_lethal_cost')
+        if trajectory_geometry['crosses_effective_hazard']:
+            failures.append('ugv_trajectory_crosses_effective_hazard')
+        if baseline_reference_plan is None or not baseline_reference_plan.get(
+            'crosses_covariance_footprint', False
+        ):
+            failures.append('baseline_reference_plan_not_hazard_relevant')
+        if (
+            baseline_trajectory_geometry is None
+            or not baseline_trajectory_geometry['crosses_effective_hazard']
+        ):
+            failures.append('baseline_reference_trajectory_not_hazard_relevant')
+        if (
+            trajectory_change_m is None
+            or trajectory_change_m < minimum_trajectory_change_m
+        ):
+            failures.append('ugv_trajectory_did_not_materially_deviate')
+        if (
+            plan_tracking_error_m is None
+            or plan_tracking_error_m > maximum_plan_tracking_error_m
+        ):
+            failures.append('ugv_trajectory_did_not_follow_replanned_corridor')
+        if scenario == 'clearing':
+            clearing = _clearing_mechanism(
+                collector,
+                first_clear.received_ns if first_clear else None,
+                float(nav2_config['aerial_max_observation_age_s']),
+            )
+            if first_clear is None:
+                failures.append('aerial_costmap_clear_not_observed')
+            if not clearing['explicit_empty_snapshot_seen']:
+                failures.append('source_empty_clearing_not_observed')
+            if (
+                first_clear is None
+                or completion_ns is None
+                or first_clear.received_ns >= completion_ns
+            ):
+                failures.append('navigation_did_not_continue_after_clear')
+            if selected_plans['post_clear'] is None:
+                failures.append('post_clear_active_goal_plan_missing')
+        else:
+            clearing = _clearing_mechanism(
+                collector,
+                first_clear.received_ns if first_clear else None,
+                float(nav2_config['aerial_max_observation_age_s']),
+            )
+    if scenario == 'baseline':
+        clearing = _clearing_mechanism(
+            collector, None, float(nav2_config['aerial_max_observation_age_s'])
+        )
+
+    mark_ns = first_mark.received_ns if first_mark else None
+    replanning_latency_s = (
+        (changed_plan['result_ns'] - mark_ns) * 1.0e-9
+        if changed_plan is not None and mark_ns is not None else None
+    )
+    map_resolved = map_path.expanduser().resolve()
+    map_values = _simple_map_yaml(map_resolved)
+    map_image = Path(str(map_values['image']).strip('"\''))
+    if not map_image.is_absolute():
+        map_image = map_resolved.parent / map_image
+    map_image = map_image.resolve()
+    stationary = stationary_periods(poses)
+    summary = {
+        'schema_version': 4,
+        'status': 'pass' if not failures else 'fail',
+        'scenario': scenario,
+        'validated_scope': 'full_baylands_navigate_to_pose_runtime',
+        'time_model': 'explicit_best_effort_simulation_clock_with_wall_time_timeout',
+        'configuration': {
+            'start': {'x': start[0], 'y': start[1], 'yaw': start[2]},
+            'goal': {'x': goal[0], 'y': goal[1], 'yaw': goal[2]},
+            'requested_action_goal': (
+                {
+                    'x': requested_goal.x,
+                    'y': requested_goal.y,
+                    'yaw': requested_goal.yaw,
+                    'frame_id': requested_goal.frame_id,
+                    'source_stamp_ns': requested_goal.source_stamp_ns,
+                    'received_ns': requested_goal.received_ns,
+                    'source': 'ugv_nav2_driver planned_path',
+                    'matches_configured_goal': requested_goal_matches_configuration,
+                }
+                if requested_goal else None
+            ),
+            'map_yaml': str(map_resolved),
+            'map_sha256': hashlib.sha256(map_resolved.read_bytes()).hexdigest(),
+            'map_image': str(map_image),
+            'map_image_sha256': hashlib.sha256(map_image.read_bytes()).hexdigest(),
+            'nav2': nav2_config,
+            'aerial_layer_enabled_requested': expected_layer,
+            'aerial_layer_enabled_observed': layer_enabled,
+            'manual_planner_requests_issued_by_evidence': 0,
+            'costmap_capture': {
+                'scope': 'hazard_region_crop',
+                'margin_beyond_covariance_footprint_m': inflation_radius_m + 1.0,
+                'reason': 'bound memory while retaining core, inflation, and clearing evidence',
+            },
+        },
+        'hazard_geometry': {
+            **geometry,
+            'covariance_expansion_model': 'nominal + 2*sigma on each side',
+            'inflation_radius_m': inflation_radius_m,
+            'inflation_expanded_size_x': inflation_geometry['effective_size_x'],
+            'inflation_expanded_size_y': inflation_geometry['effective_size_y'],
+        },
+        'mission': {
+            **mission,
+            'duration_s': (
+                (completion_ns - start_ns) * 1.0e-9
+                if start_ns is not None and completion_ns is not None else None
+            ),
+            'final_goal_distance_m': final_goal_distance_m,
+            'goal_tolerance_m': goal_tolerance_m,
+            'yaw_goal_tolerance_rad': yaw_goal_tolerance_rad,
+            'success_pose_source': (
+                'tf_map_to_base_link' if tf_goal_pose else
+                ('navigate_to_pose_feedback' if feedback_goal_pose else None)
+            ),
+            'pose_at_succeeded': success_pose,
+            'tf_pose_at_succeeded': tf_goal_pose,
+            'feedback_pose_at_or_before_succeeded': feedback_goal_pose,
+            'feedback_distance_remaining_m': (
+                feedback_at_success.distance_remaining_m
+                if feedback_at_success else None
+            ),
+            'feedback_number_of_recoveries': (
+                feedback_at_success.number_of_recoveries
+                if feedback_at_success else None
+            ),
+            'amcl_pose_at_or_before_succeeded': amcl_goal_pose,
+            'later_amcl_pose': later_amcl_goal_pose,
+            'comparison_frame': 'map',
+            'compared_child_frame': 'base_link',
+            'runtime_goal_checker': runtime_goal_checker,
+            'stateful_goal_checker_semantics': (
+                'XY satisfaction is latched before yaw completion; XY is not rechecked'
+                if runtime_goal_checker and runtime_goal_checker.get('stateful') else
+                'XY and yaw are checked together'
+            ),
+        },
+        'hazard_flow': typed,
+        'costmap': {
+            'full_message_count': collector.costmap_full_count,
+            'update_message_count': collector.costmap_update_count,
+            'stable_baseline': costmaps['baseline_settling'],
+            'first_hazard_ns': costmaps['first_hazard_ns'],
+            'first_mark_ns': mark_ns,
+            'first_mark_latency_s': (
+                (mark_ns - costmaps['first_hazard_ns']) * 1.0e-9
+                if mark_ns is not None and costmaps['first_hazard_ns'] is not None
+                else None
+            ),
+            'first_mark_delta': mark_delta,
+            'first_clear_ns': first_clear.received_ns if first_clear else None,
+            'clearing_latency_s': (
+                (first_clear.received_ns - mark_ns) * 1.0e-9
+                if first_clear is not None and mark_ns is not None else None
+            ),
+            'restored_to_pre_hazard_in_analysis_region': first_clear is not None,
+            'preservation_scope': (
+                'exact pre-hazard cell values across the covariance footprint, '
+                'inflation radius, and one-metre margin'
+            ),
+            'clearing': clearing,
+        },
+        'planner': {
+            'evidence_source': 'passive /plan subscription during active NavigateToPose',
+            'manual_compute_path_requests': 0,
+            'automatic_mission_replanning': {
+                'observed': (
+                    changed_plan is not None
+                    and mark_ns is not None
+                    and start_ns is not None
+                    and changed_plan['result_ns'] >= mark_ns >= start_ns
+                    and (
+                        completion_ns is None
+                        or changed_plan['result_ns'] <= completion_ns
+                    )
+                ),
+                'basis': (
+                    'materially changed passive /plan output after the aerial mark '
+                    'while the same NavigateToPose goal remained active; the evidence '
+                    'process issued zero ComputePath requests'
+                ),
+                'goal_id': mission['goal_id'],
+            },
+            'plans': plans,
+            **selected_plans,
+            'replanning_latency_from_first_mark_s': replanning_latency_s,
+        },
+        'trajectory': {
+            'pose_count': len(trajectory),
+            'driven_distance_m': driven_distance_m,
+            'minimum_distance_to_covariance_footprint_m': trajectory_geometry[
+                'minimum_distance_to_effective_hazard_m'
+            ],
+            'crosses_covariance_footprint': trajectory_geometry[
+                'crosses_effective_hazard'
+            ],
+            'minimum_distance_to_inflation_region_m': trajectory_inflation[
+                'minimum_distance_to_effective_hazard_m'
+            ],
+            'crosses_inflation_region': trajectory_inflation['crosses_effective_hazard'],
+            'hausdorff_distance_from_baseline_m': trajectory_change_m,
+            'maximum_distance_to_post_mark_plan_history_m': plan_tracking_error_m,
+            'maximum_plan_tracking_error_m': maximum_plan_tracking_error_m,
+            'stationary_periods': stationary,
+            'stationary_total_s': sum(item['duration_s'] for item in stationary),
+            'baseline_evidence': baseline_bundle['root'] if baseline_bundle else None,
+        },
+        'dropped_evidence': {
+            'poses': collector.pose_dropped_count,
+            'feedback': collector.feedback_dropped_count,
+            'transforms': collector.transform_dropped_count,
+            'requested_goals': collector.requested_goal_dropped_count,
+            'plans': collector.plan_dropped_count,
+            'statuses': collector.status_dropped_count,
+            'hazards': dict(collector.dropped_counts),
+        },
+        'failures': failures,
+        'limitations': [
+            'Synthetic hazards substitute for the deferred support-UAV detector.',
+            'A passing run establishes one configured Baylands mission, not general safety.',
+            'No perception accuracy or EiraX rolling-costmap behavior is inferred.',
+        ],
+    }
+    trajectory_rows = [
+        {
+            'received_ns': item.received_ns,
+            'time_from_mission_start_s': (
+                (item.received_ns - start_ns) * 1.0e-9 if start_ns is not None else None
+            ),
+            'x': item.x,
+            'y': item.y,
+            'yaw': item.yaw,
+        }
+        for item in poses
+    ]
+    return summary, trajectory_rows
+
+
+def write_runtime_evidence(
+    output_dir: Path,
+    summary: dict[str, Any],
+    collector: RuntimeEvidenceCollector,
+    trajectory_rows: list[dict[str, Any]],
+) -> None:
+    geometry = summary['hazard_geometry']
+    baseline_snapshot = _runtime_costmap_analysis(
+        collector, geometry, float(geometry['inflation_radius_m'])
+    )['baseline']
+    if baseline_snapshot is None:
+        costmap_rows = []
+    else:
+        costmap_rows = _costmap_rows(
+            [
+                (f'snapshot_{index:04d}', snapshot)
+                for index, snapshot in enumerate(collector.costmaps, start=1)
+            ],
+            baseline_snapshot,
+            geometry,
+            float(geometry['inflation_radius_m']),
+        )
+    write_planner_evidence(
+        output_dir,
+        summary,
+        collector.hazard_rows(
+            covariance_sigma_scale=float(
+                summary['configuration']['nav2']['aerial_covariance_sigma_scale']
+            )
+        ),
+        costmap_rows,
+    )
+    with (output_dir / 'trajectory.csv').open('w', newline='', encoding='utf-8') as stream:
+        fields = ('received_ns', 'time_from_mission_start_s', 'x', 'y', 'yaw')
+        writer = csv.DictWriter(stream, fieldnames=fields)
+        writer.writeheader()
+        writer.writerows(trajectory_rows)
+    mission_rows = [
+        {
+            'received_ns': item.received_ns,
+            'goal_id': item.goal_id,
+            'status': GOAL_STATUS_NAMES.get(item.status, str(item.status)),
+        }
+        for item in collector.status_events
+    ]
+    with (output_dir / 'mission_timeline.csv').open(
+        'w', newline='', encoding='utf-8'
+    ) as stream:
+        writer = csv.DictWriter(
+            stream, fieldnames=('received_ns', 'goal_id', 'status')
+        )
+        writer.writeheader()
+        writer.writerows(mission_rows)
+    overlay_plans = list(summary['planner']['plans'])
+    overlay_plans.append({
+        'label': 'ugv_trajectory',
+        'points': [[row['x'], row['y']] for row in trajectory_rows],
+    })
+    (output_dir / 'runtime_overlay.svg').write_text(
+        _planner_overlay_svg(overlay_plans, geometry), encoding='utf-8'
+    )
+
+
+def _run_runtime_live(args: argparse.Namespace, ros_args: list[str]) -> int:
+    if args.scenario not in ('baseline', 'valid', 'clearing'):
+        raise ValueError('runtime scenario must be baseline, valid, or clearing')
+    nav2_config = load_nav2_inflation_config(args.nav2_config)
+    if nav2_config['global_costmap_rolling_window']:
+        raise ValueError(
+            'runtime profile requires the fixed Baylands global costmap; rolling grid correction is pending'
+        )
+    baseline_bundle = _runtime_baseline_bundle(
+        args.baseline_evidence if args.scenario != 'baseline' else None
+    )
+    uncertainty_x = args.covariance_sigma_scale * math.sqrt(args.variance_x)
+    uncertainty_y = args.covariance_sigma_scale * math.sqrt(args.variance_y)
+    geometry = {
+        'center_x': float(args.hazard_x),
+        'center_y': float(args.hazard_y),
+        'yaw': float(args.hazard_yaw),
+        'nominal_size_x': float(args.hazard_size_x),
+        'nominal_size_y': float(args.hazard_size_y),
+        'variance_x': float(args.variance_x),
+        'variance_y': float(args.variance_y),
+        'covariance_sigma_scale': float(args.covariance_sigma_scale),
+        'effective_size_x': float(args.hazard_size_x) + 2.0 * uncertainty_x,
+        'effective_size_y': float(args.hazard_size_y) + 2.0 * uncertainty_y,
+    }
+    collector = RuntimeEvidenceCollector(
+        max_samples_per_topic=args.max_samples_per_topic,
+        max_costmaps=args.max_costmaps,
+        max_poses=args.max_poses,
+        max_plans=args.max_plans,
+        crop_geometry=geometry,
+        crop_margin_m=float(nav2_config['inflation_radius_m']) + 1.0,
+    )
+    rclpy.init(args=ros_args)
+    node = RuntimeEvidenceNode(collector, args.namespace)
+    layer_enabled = None
+    runtime_goal_checker = None
+    try:
+        service_deadline = time.monotonic() + min(180.0, args.timeout_s)
+        while time.monotonic() < service_deadline and rclpy.ok():
+            if _request_costmap_snapshot(node, 1.0):
+                break
+            rclpy.spin_once(node, timeout_sec=0.1)
+        layer_enabled = _get_aerial_layer_enabled(node, 10.0)
+        runtime_goal_checker = _get_runtime_goal_checker(node, 10.0)
+        deadline = time.monotonic() + args.timeout_s
+        terminal_seen_at = None
+        while time.monotonic() < deadline and rclpy.ok():
+            rclpy.spin_once(node, timeout_sec=0.1)
+            mission = collector.selected_mission()
+            if mission['completion_ns'] is not None and terminal_seen_at is None:
+                terminal_seen_at = time.monotonic()
+            if (
+                terminal_seen_at is not None
+                and time.monotonic() - terminal_seen_at >= args.post_terminal_s
+            ):
+                break
+        summary, trajectory_rows = summarize_runtime_evidence(
+            collector,
+            scenario=args.scenario,
+            start=(args.start_x, args.start_y, args.start_yaw),
+            goal=(args.goal_x, args.goal_y, args.goal_yaw),
+            geometry=geometry,
+            nav2_config=nav2_config,
+            map_path=args.map,
+            layer_enabled=layer_enabled,
+            baseline_bundle=baseline_bundle,
+            minimum_path_change_m=args.minimum_path_change_m,
+            minimum_trajectory_change_m=args.minimum_trajectory_change_m,
+            maximum_plan_tracking_error_m=args.maximum_plan_tracking_error_m,
+            goal_tolerance_m=(
+                args.goal_tolerance_m
+                if args.goal_tolerance_m is not None
+                else float(
+                    runtime_goal_checker['xy_goal_tolerance_m']
+                    if runtime_goal_checker is not None
+                    else nav2_config['goal_checker_xy_tolerance_m']
+                )
+            ),
+            yaw_goal_tolerance_rad=float(
+                runtime_goal_checker['yaw_goal_tolerance_rad']
+                if runtime_goal_checker is not None
+                else nav2_config['goal_checker_yaw_tolerance_rad']
+            ),
+            runtime_goal_checker=runtime_goal_checker,
+        )
+        if collector.selected_mission()['completion_ns'] is None:
+            summary['failures'].append('runtime_timeout_before_terminal_status')
+            summary['status'] = 'fail'
+        write_runtime_evidence(args.output, summary, collector, trajectory_rows)
+        print(json.dumps(summary, indent=2, sort_keys=True))
+        return 0 if summary['status'] == 'pass' else 1
+    finally:
+        node.destroy_node()
+        if rclpy.ok():
+            rclpy.shutdown()
+
+
 @dataclass(frozen=True)
 class OfflineMap:
     width: int
@@ -2463,6 +4072,43 @@ def build_parser() -> argparse.ArgumentParser:
     planner.add_argument('--baseline-stable-snapshots', type=int, default=2)
     planner.add_argument('--max-samples-per-topic', type=int, default=5000)
     planner.add_argument('--output', type=Path, required=True)
+    runtime = subparsers.add_parser(
+        'runtime-live',
+        help='Passively capture one full Baylands NavigateToPose mission.',
+    )
+    runtime.add_argument('--scenario', choices=('baseline', 'valid', 'clearing'), required=True)
+    runtime.add_argument('--namespace', default='a201_0000')
+    runtime.add_argument('--map', type=Path, required=True)
+    runtime.add_argument('--nav2-config', type=Path, required=True)
+    runtime.add_argument('--baseline-evidence', type=Path)
+    runtime.add_argument('--start-x', type=float, required=True)
+    runtime.add_argument('--start-y', type=float, required=True)
+    runtime.add_argument('--start-yaw', type=float, default=0.0)
+    runtime.add_argument('--goal-x', type=float, required=True)
+    runtime.add_argument('--goal-y', type=float, required=True)
+    runtime.add_argument('--goal-yaw', type=float, default=0.0)
+    runtime.add_argument('--hazard-x', type=float, required=True)
+    runtime.add_argument('--hazard-y', type=float, required=True)
+    runtime.add_argument('--hazard-yaw', type=float, default=0.0)
+    runtime.add_argument('--hazard-size-x', type=float, default=2.0)
+    runtime.add_argument('--hazard-size-y', type=float, default=2.0)
+    runtime.add_argument('--variance-x', type=float, default=0.25)
+    runtime.add_argument('--variance-y', type=float, default=0.25)
+    runtime.add_argument('--covariance-sigma-scale', type=float, default=2.0)
+    runtime.add_argument('--minimum-path-change-m', type=float, default=0.5)
+    runtime.add_argument('--minimum-trajectory-change-m', type=float, default=0.75)
+    runtime.add_argument('--maximum-plan-tracking-error-m', type=float, default=2.0)
+    runtime.add_argument(
+        '--goal-tolerance-m', type=float,
+        help='Override the controller YAML general_goal_checker XY tolerance.',
+    )
+    runtime.add_argument('--timeout-s', type=float, default=300.0)
+    runtime.add_argument('--post-terminal-s', type=float, default=3.0)
+    runtime.add_argument('--max-samples-per-topic', type=int, default=5000)
+    runtime.add_argument('--max-costmaps', type=int, default=900)
+    runtime.add_argument('--max-poses', type=int, default=30000)
+    runtime.add_argument('--max-plans', type=int, default=2000)
+    runtime.add_argument('--output', type=Path, required=True)
     map_check = subparsers.add_parser(
         'map-check', help='Check the fixed Baylands candidate without ROS runtime.'
     )
@@ -2494,6 +4140,8 @@ def main(args=None) -> None:
             status = _run_bag(parsed)
         elif parsed.mode == 'planner-live':
             status = _run_planner_live(parsed, ros_args)
+        elif parsed.mode == 'runtime-live':
+            status = _run_runtime_live(parsed, ros_args)
         else:
             status = _run_map_check(parsed)
     except (FileExistsError, FileNotFoundError, ValueError) as exc:

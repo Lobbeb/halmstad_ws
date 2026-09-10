@@ -106,6 +106,16 @@ planner-only suite under `evidence/support_planner_corrected_v5/` passes. This
 closes the bounded typed-flow, costmap, planner-response, negative-control, and
 clearing gates only; full NavigateToPose motion and goal completion remain pending.
 
+The first full Baylands runtime experiment is prepared through
+`./run.sh support_chain_full_runtime scenario:=baseline|valid|clearing`. It
+reuses the existing three-UAV support tmux stack and Nav2 waypoint driver,
+records the expanded `support_hazard` profile, and passively analyzes the active
+NavigateToPose mission. The synthetic dji1 source waits for an active goal;
+typed dji2 fusion and the aerial layer retain their normal disabled defaults
+outside this explicit profile. See `src/lrs_halmstad/README.md` for the ordered
+operator commands, task-owned stop commands, evidence files, and pass criteria.
+Full-runtime results remain pending the user-run Gazebo experiments.
+
 The first bounded headless Task 5 live run produced detector records with `valid:false` and no dji1 typed hazard because no explicit downward dji1 camera pitch was commanded and the UGV was outside the image; it was not a model, projector, fusion, or source-selection failure. The validated profile fixes the dji1-only camera scanner at `-60.0` degrees. That bounded retry produced non-empty typed hazards at dji1, dji0, and the UGV, selected dji1, preserved source covariance, and preserved dji0-to-UGV forwarding. This validates the live typed contract under the corrected camera orientation only; it does not establish detector accuracy, general environmental hazard perception, closed-loop navigation success, full SLAM, quantitative safety improvement, or UAV repositioning. Deterministic synthetic/replayed Task 6/7 checks remain the Task 8 pass basis.
 
 The rest of this README contains older reference material and may be stale compared with the two files above.

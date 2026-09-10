@@ -142,6 +142,88 @@ The fixed Baylands global costmap has no rolling window, so the known generic
 rolling-grid origin portability issue is outside this harness. Correct and test
 that plugin behavior before adapting the layer to a downstream rolling costmap.
 
+## Track A: full Baylands NavigateToPose runtime
+
+This user-run profile extends the existing Baylands tmux, localization, Nav2,
+three-UAV follow, typed-hazard, recorder, and evidence paths. It does not launch
+a second controller or send planner requests. `ugv_nav2_driver` sends one
+NavigateToPose goal and Nav2 remains the only autonomous UGV motion authority.
+The evidence process only subscribes to the action status, AMCL pose, `/plan`,
+global costmap, and typed hazard topics.
+
+The fixed experiment uses these map-frame values:
+
+- spawn/localization waypoint: `parkinglot_west_1`;
+- expected start: `(-71.3997951799, 205.6352521525)`, yaw `-1.6133110777` rad;
+- one goal: `parkinglot_west_2`, `(-72.5315961094, 185.3861158210)`, yaw `0.0066198909` rad;
+- synthetic confirmed dji1 hazard: `(-72.0, 195.5)`, nominal `2.0 x 2.0` m;
+- covariance: `0.25 m^2` on X/Y with `2 sigma`, producing a `4.0 x 4.0` m footprint;
+- global inflation: `0.95` m from the real Nav2 YAML, producing a `5.9 x 5.9` m analysis region.
+
+The 2026-09-09 offline recheck against the current `maps/baylands.yaml` and
+`nav2_baylands_large_map.yaml` passes: the baseline path crosses the effective
+footprint, the blocked path avoids it with 1.1 m clearance, and the paths differ
+by 2.4 m Hausdorff distance. The global costmap is fixed (`rolling_window` is
+absent/false); only the local costmap rolls. The generic rolling-grid origin fix
+therefore remains downstream EiraX work and is not part of this experiment.
+
+Build and source the workspace, then run the scenarios in order. Each output
+root is protected against overwrite. After the evidence pane prints its summary,
+stop that exact task-owned session before starting the next scenario.
+Use `Ctrl-b w` in tmux to select `track_a_evidence`; the pane remains visible
+after the bounded analyzer exits, without leaving its ROS process running.
+
+```bash
+./run.sh support_chain_full_runtime scenario:=baseline
+./stop.sh tmux_support_chain baylands session:=halmstad-baylands-track-a-baseline
+
+./run.sh support_chain_full_runtime scenario:=valid
+./stop.sh tmux_support_chain baylands session:=halmstad-baylands-track-a-valid
+
+./run.sh support_chain_full_runtime scenario:=clearing
+./stop.sh tmux_support_chain baylands session:=halmstad-baylands-track-a-clearing
+```
+
+The profile delays the mission start for 30 seconds so recording, support nodes,
+and passive analysis can subscribe first. `valid` and `clearing` enable fusion,
+forwarding, and `AerialSupportLayer` explicitly. All three UAVs are present, but
+typed dji2 fusion remains disabled. The synthetic dji1 source activates one
+second after NavigateToPose reports an accepted/executing goal. `valid` keeps
+the hazard active for the mission; `clearing` publishes it for four seconds and
+then publishes empty arrays. The real support-UAV detector remains deferred and
+is not an input to these runs.
+
+Each scenario writes under `evidence/support_runtime/<scenario>/`:
+
+- `analysis/summary.json`, `plans.json`, `hazard_timeline.csv`,
+  `costmap_timeline.csv`, `mission_timeline.csv`, `trajectory.csv`,
+  `planner_overlay.svg`, and `runtime_overlay.svg`;
+- `recording/` with the no-image support rosbag, metadata, and topic manifest;
+- `logs/` with session-scoped tmux pane output.
+
+To bound analyzer memory on the 4250 x 4250 Baylands map, each structured
+costmap sample stores a cell-aligned crop covering the covariance footprint,
+inflation radius, and one additional metre. The rosbag retains the configured
+raw global costmap and update topics for later review.
+
+Baseline PASS requires a successful action result, motion to the goal, a
+hazard-relevant baseline plan and trajectory, no operational hazard, and the
+layer observed disabled. Valid PASS additionally requires exact dji1 -> dji0 ->
+UGV propagation, lethal core plus graded halo, a materially changed `/plan`
+published after the mark while the same goal is active, no lethal-plan crossing,
+an actual trajectory that leaves the baseline corridor, follows post-mark plan
+history, avoids the covariance footprint, and reaches the goal. Clearing PASS
+adds an explicit empty-source clear, disappearance of aerial costs, another plan
+while the goal is still active, continued motion, and successful completion.
+
+`/plan` is observed passively and the summary records zero manual planner
+requests. Replanning evidence requires a materially changed plan after the
+aerial mark while the same NavigateToPose goal remains active; topic presence
+alone cannot pass. In this bounded profile, that timing plus the absence of an
+evidence-side ComputePath request supports attribution to Nav2 mission
+replanning. It remains synthetic-input evidence and does not establish detector
+accuracy, general safety, EiraX behavior, or broader Baylands coverage.
+
 ## Task 4: interactive synthetic hazard validation
 
 This is an operator-run simulation workflow. It does not establish runtime success until its evidence has been reviewed. The existing C1-C4 behavior remains unchanged because both the typed chain and the aerial layer default to disabled.

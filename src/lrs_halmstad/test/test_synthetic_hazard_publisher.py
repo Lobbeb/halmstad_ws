@@ -6,7 +6,9 @@ from lrs_halmstad.tools.synthetic_hazard_publisher import (
     DEFAULT_COVARIANCE,
     activity_state,
     build_hazard,
+    goal_statuses_are_active,
 )
+from action_msgs.msg import GoalStatus
 from lrs_halmstad_interfaces.msg import AerialHazard
 
 
@@ -85,3 +87,14 @@ def test_stale_observation_timestamp_can_be_constructed_deterministically():
 
     assert hazard.first_seen == Time(sec=8, nanosec=0)
     assert hazard.last_seen == Time(sec=8, nanosec=0)
+
+
+def test_goal_activation_accepts_only_live_nav2_states():
+    assert goal_statuses_are_active([GoalStatus.STATUS_ACCEPTED])
+    assert goal_statuses_are_active([GoalStatus.STATUS_EXECUTING])
+    assert not goal_statuses_are_active([])
+    assert not goal_statuses_are_active([
+        GoalStatus.STATUS_SUCCEEDED,
+        GoalStatus.STATUS_ABORTED,
+        GoalStatus.STATUS_CANCELED,
+    ])

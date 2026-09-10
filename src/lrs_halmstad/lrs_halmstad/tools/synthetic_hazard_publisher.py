@@ -7,6 +7,7 @@ import sys
 from typing import Sequence
 
 import rclpy
+from action_msgs.msg import GoalStatus, GoalStatusArray
 from builtin_interfaces.msg import Duration, Time
 from geometry_msgs.msg import Quaternion
 from rclpy.executors import ExternalShutdownException
@@ -95,6 +96,12 @@ def activity_state(now_ns: int, start_ns: int, active_duration_s: float) -> str:
         return "active"
     duration_ns = int(round(active_duration_s * 1_000_000_000.0))
     return "active" if now_ns - start_ns < duration_ns else "expired"
+
+
+def goal_statuses_are_active(statuses: Sequence[int]) -> bool:
+    """Return whether a NavigateToPose status array contains a live goal."""
+    active_states = (GoalStatus.STATUS_ACCEPTED, GoalStatus.STATUS_EXECUTING)
+    return any(int(status) in active_states for status in statuses)
 
 
 def build_hazard(
@@ -198,6 +205,7 @@ class SyntheticHazardPublisher(Node):
         self.declare_parameter("stamp_offset_s", 0.0)
         self.declare_parameter("support_quality", 1.0)
         self.declare_parameter("provenance", "synthetic")
+        self.declare_parameter("activation_status_topic", "")
 
         self.topic = str(self.get_parameter("topic").value).strip() or DEFAULT_TOPIC
         self.source_uav = str(self.get_parameter("source_uav").value).strip()
@@ -225,6 +233,9 @@ class SyntheticHazardPublisher(Node):
         self.stamp_offset_s = float(self.get_parameter("stamp_offset_s").value)
         self.support_quality = float(self.get_parameter("support_quality").value)
         self.provenance = str(self.get_parameter("provenance").value)
+        self.activation_status_topic = str(
+            self.get_parameter("activation_status_topic").value
+        ).strip()
 
         if not math.isfinite(publish_rate_hz) or publish_rate_hz <= 0.0:
             raise ValueError("publish_rate_hz must be finite and greater than zero")
@@ -239,8 +250,30 @@ class SyntheticHazardPublisher(Node):
 
         self._start_ns: int | None = None
         self._first_seen_ns: int | None = None
+        self._activation_subscription = None
+        if self.activation_status_topic:
+            if not self.activation_status_topic.startswith("/"):
+                raise ValueError("activation_status_topic must be an absolute ROS topic")
+            self._activation_subscription = self.create_subscription(
+                GoalStatusArray,
+                self.activation_status_topic,
+                self._on_goal_status,
+                10,
+            )
         self.publisher = self.create_publisher(AerialHazardArray, self.topic, 10)
         self.create_timer(1.0 / publish_rate_hz, self._on_timer)
+
+    def _on_goal_status(self, message: GoalStatusArray) -> None:
+        if self._start_ns is not None:
+            return
+        if not goal_statuses_are_active(status.status for status in message.status_list):
+            return
+        now_ns = int(self.get_clock().now().nanoseconds)
+        self._start_ns = now_ns + int(round(self.start_delay_s * 1_000_000_000.0))
+        self.get_logger().info(
+            f"Activated by active Nav2 goal on {self.activation_status_topic}; "
+            f"hazard starts after {self.start_delay_s:.2f}s"
+        )
 
     def _on_timer(self) -> None:
         now_ns = int(self.get_clock().now().nanoseconds)
@@ -248,8 +281,10 @@ class SyntheticHazardPublisher(Node):
         if observation_ns < 0:
             self.get_logger().warn("synthetic hazard stamp offset precedes simulation epoch; skipping publication")
             return
-        if self._start_ns is None:
+        if self._start_ns is None and not self.activation_status_topic:
             self._start_ns = now_ns + int(round(self.start_delay_s * 1_000_000_000.0))
+        if self._start_ns is None:
+            return
 
         state = activity_state(now_ns, self._start_ns, self.active_duration_s)
         if state == "inactive":

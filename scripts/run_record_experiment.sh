@@ -186,12 +186,22 @@ if [ "$PROFILE" = "support_hazard" ]; then
     "/coord/dji0/aerial_hazards"
     "/coord/ugv/aerial_hazards"
     "/a201_0000/global_costmap/costmap_raw"
+    "/a201_0000/global_costmap/costmap_raw_updates"
     "/a201_0000/plan"
+    "/a201_0000/local_plan"
+    "/a201_0000/planned_path"
     "/a201_0000/amcl_pose"
+    "/a201_0000/platform/odom/filtered"
+    "/a201_0000/platform/cmd_vel"
     "/a201_0000/navigate_to_pose/_action/status"
+    "/a201_0000/navigate_to_pose/_action/feedback"
+    "/a201_0000/behavior_tree_log"
     "/dji1/pose"
     "/dji1/camera0/actual/center_pose"
     "/tf"
+    "/tf_static"
+    "/a201_0000/tf"
+    "/a201_0000/tf_static"
   )
 fi
 
@@ -245,6 +255,9 @@ fi
 
 invocation="$(shell_join "$0" "${ORIGINAL_ARGS[@]}")"
 RECORD_ARGS=(ros2 bag record -o "$BAG_DIR")
+if [ "$PROFILE" = "support_hazard" ]; then
+  RECORD_ARGS+=(--include-hidden-topics)
+fi
 if [ -n "$RECORD_IGNORE_REGEX" ] && [ "$RECORD_IGNORE_REGEX" != "none" ]; then
   RECORD_ARGS+=(--exclude-regex "$RECORD_IGNORE_REGEX")
 fi

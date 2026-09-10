@@ -105,6 +105,7 @@ def test_normal_support_startup_reaches_gazebo_without_broad_cleanup():
     assert "signal_processes_by_pattern" not in startup_sources
     assert "pgrep -f" not in startup_sources
     assert "prepare_task_state" in startup_sources
+    assert 'bash "$SCRIPT_DIR/recover_sim_controllers.sh" a201_0000 &' in startup_sources
 
 
 def test_support_planner_validation_is_wall_time_planner_only_and_opt_in():
@@ -393,8 +394,56 @@ def test_support_hazard_record_profile_remains_image_free_and_timestamped():
     assert "/coord/ugv/aerial_hazards" in output
     assert "/a201_0000/global_costmap/costmap_raw" in output
     assert "/a201_0000/plan" in output
+    assert "/a201_0000/global_costmap/costmap_raw_updates" in output
+    assert "/a201_0000/navigate_to_pose/_action/feedback" in output
+    assert "--include-hidden-topics" in output
+    assert "/a201_0000/planned_path" in output
+    assert "/a201_0000/tf" in output
+    assert "/a201_0000/tf_static" in output
+    assert "/a201_0000/platform/odom/filtered" in output
+    assert "/tf_static" in output
     assert "/image_raw" not in output
     assert "/depth_image" not in output
+
+
+def test_full_runtime_profile_is_fixed_passive_and_three_uav():
+    baseline = _dry_run([
+        "support_chain_full_runtime", "scenario:=baseline",
+        "output:=/tmp/full-runtime-baseline", "gui:=false",
+        "tmux_attach:=false", "dry_run:=true",
+    ])
+    valid = _dry_run([
+        "support_chain_full_runtime", "scenario:=valid",
+        "output:=/tmp/full-runtime-valid", "gui:=false",
+        "tmux_attach:=false", "dry_run:=true",
+    ])
+    clearing = _dry_run([
+        "support_chain_full_runtime", "scenario:=clearing",
+        "output:=/tmp/full-runtime-clearing", "gui:=false",
+        "tmux_attach:=false", "dry_run:=true",
+    ])
+
+    for output in (baseline, valid, clearing):
+        assert "Mode: follow" in output
+        assert "waypoint:=parkinglot_west_1" in output
+        assert "ugv_goal_sequence_csv:=-72.53159610937462" in output
+        assert "dji2_enable:=true" in output
+        assert "hazard_fusion_dji2_enable:=true" not in output
+        assert "support_hazard_evidence runtime-live" in output
+        assert "manual" not in next(
+            line for line in output.splitlines() if line.startswith("[runtime_evidence]")
+        )
+        assert "follow=30" in output
+        assert "record=0" in output
+        assert "prelaunch_safety_cleanup" not in output
+        assert "pkill" not in output
+
+    assert "aerial_support_layer_enable:=true" not in baseline
+    assert "hazard_synthetic_enable:=true" not in baseline
+    assert "aerial_support_layer_enable:=true" in valid
+    assert "activation_status_topic:=/a201_0000/navigate_to_pose/_action/status" in valid
+    assert "active_duration_s:=0.0" in valid
+    assert "active_duration_s:=4.0" in clearing
 
 
 def test_shared_operator_routes_sensor_and_detector_options():
