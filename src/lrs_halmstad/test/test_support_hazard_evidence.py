@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import copy
 import json
+import math
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -20,6 +21,7 @@ from lrs_halmstad.tools.support_hazard_evidence import (
     effective_hazard_geometry,
     EvidenceCollector,
     EvidenceExpectations,
+    FeedbackRecord,
     GridSnapshot,
     load_nav2_inflation_config,
     nav2_cost_class,
@@ -30,6 +32,7 @@ from lrs_halmstad.tools.support_hazard_evidence import (
     PoseRecord,
     RequestedGoalRecord,
     relevant_costmap_delta,
+    resolve_planar_tf_pose,
     RuntimeEvidenceCollector,
     RuntimeEvidenceNode,
     TransformRecord,
@@ -681,6 +684,167 @@ def _runtime_grid(received_ns, *, marked=False):
     )
 
 
+def _tf(
+    received_ns,
+    source_stamp_ns,
+    parent,
+    child,
+    x,
+    y=0.0,
+    yaw=0.0,
+    *,
+    is_static=False,
+):
+    return TransformRecord(
+        received_ns, source_stamp_ns, parent, child, x, y, yaw, is_static
+    )
+
+
+def test_common_time_tf_resolver_uses_exact_same_timestamp_chain():
+    result = resolve_planar_tf_pose(
+        [
+            _tf(9 * SECOND, 10 * SECOND, 'map', 'odom', 2.0),
+            _tf(9 * SECOND, 10 * SECOND, 'odom', 'base_link', 3.0),
+        ],
+        parent_frame='map', child_frame='base_link', at_received_ns=10 * SECOND,
+    )
+
+    assert result['status'] == 'resolved'
+    assert result['common_time_ns'] == 10 * SECOND
+    assert result['x'] == 5.0
+    assert [item['method'] for item in result['transform_chain']] == ['exact', 'exact']
+
+
+def test_common_time_tf_resolver_interpolates_future_stamped_map_to_odom():
+    result = resolve_planar_tf_pose(
+        [
+            _tf(9 * SECOND, 9 * SECOND, 'map', 'odom', 0.0),
+            _tf(9_500_000_000, 11 * SECOND, 'map', 'odom', 2.0),
+            _tf(9_900_000_000, 10 * SECOND, 'odom', 'base_link', 10.0),
+        ],
+        parent_frame='map', child_frame='base_link', at_received_ns=10 * SECOND,
+    )
+
+    assert result['status'] == 'resolved'
+    assert result['common_time_ns'] == 10 * SECOND
+    assert result['x'] == 11.0
+    assert result['transform_chain'][0]['method'] == 'interpolated'
+    assert result['transform_chain'][0]['upper_source_stamp_ns'] == 11 * SECOND
+    assert result['transform_chain'][1]['method'] == 'exact'
+
+
+def test_common_time_tf_resolver_handles_mismatched_overlapping_histories():
+    result = resolve_planar_tf_pose(
+        [
+            _tf(8 * SECOND, 8 * SECOND, 'map', 'odom', 0.0),
+            _tf(9 * SECOND, 10 * SECOND, 'map', 'odom', 2.0),
+            _tf(9 * SECOND, 9 * SECOND, 'odom', 'base_link', 10.0),
+            _tf(9_500_000_000, 11 * SECOND, 'odom', 'base_link', 12.0),
+        ],
+        parent_frame='map', child_frame='base_link', at_received_ns=10 * SECOND,
+    )
+
+    assert result['status'] == 'resolved'
+    assert result['common_time_ns'] == 10 * SECOND
+    assert result['x'] == 13.0
+    assert [item['method'] for item in result['transform_chain']] == [
+        'exact', 'interpolated'
+    ]
+
+
+def test_common_time_tf_resolver_interpolates_all_bracketing_samples():
+    result = resolve_planar_tf_pose(
+        [
+            _tf(8 * SECOND, 8 * SECOND, 'map', 'odom', 0.0),
+            _tf(8_500_000_000, 10 * SECOND, 'map', 'odom', 2.0),
+            _tf(8 * SECOND, 8 * SECOND, 'odom', 'base_link', 2.0),
+            _tf(8_500_000_000, 10 * SECOND, 'odom', 'base_link', 4.0),
+        ],
+        parent_frame='map', child_frame='base_link', at_received_ns=9 * SECOND,
+    )
+
+    assert result['status'] == 'resolved'
+    assert result['common_time_ns'] == 9 * SECOND
+    assert result['x'] == 4.0
+    assert all(item['method'] == 'interpolated' for item in result['transform_chain'])
+
+
+def test_common_time_tf_resolver_rejects_histories_without_common_time():
+    result = resolve_planar_tf_pose(
+        [
+            _tf(8 * SECOND, 8 * SECOND, 'map', 'odom', 1.0),
+            _tf(9 * SECOND, 9 * SECOND, 'odom', 'base_link', 2.0),
+        ],
+        parent_frame='map', child_frame='base_link', at_received_ns=10 * SECOND,
+    )
+
+    assert result['status'] == 'unavailable'
+    assert result['failure_reason'] == 'no_common_tf_time'
+
+
+def test_common_time_tf_resolver_rejects_stale_and_wide_interpolation():
+    stale = resolve_planar_tf_pose(
+        [_tf(8 * SECOND, 8 * SECOND, 'map', 'base_link', 1.0)],
+        parent_frame='map', child_frame='base_link', at_received_ns=10 * SECOND,
+    )
+    wide = resolve_planar_tf_pose(
+        [
+            _tf(8 * SECOND, 8 * SECOND, 'map', 'odom', 0.0),
+            _tf(9 * SECOND, 12 * SECOND, 'map', 'odom', 4.0),
+            _tf(9 * SECOND, 10 * SECOND, 'odom', 'base_link', 1.0),
+        ],
+        parent_frame='map', child_frame='base_link', at_received_ns=10 * SECOND,
+    )
+
+    assert stale['status'] == 'unavailable'
+    assert stale['failure_reason'] == 'common_tf_time_too_old'
+    assert wide['status'] == 'unavailable'
+    assert wide['failure_reason'] == 'interpolation_gap_too_large'
+
+
+def test_common_time_tf_resolver_interpolates_yaw_across_wraparound():
+    result = resolve_planar_tf_pose(
+        [
+            _tf(8 * SECOND, 8 * SECOND, 'map', 'base_link', 0.0,
+                yaw=math.radians(179.0)),
+            _tf(8_500_000_000, 10 * SECOND, 'map', 'base_link', 0.0,
+                yaw=math.radians(-179.0)),
+        ],
+        parent_frame='map', child_frame='base_link', at_received_ns=9 * SECOND,
+    )
+
+    assert result['status'] == 'resolved'
+    assert math.isclose(abs(result['yaw']), math.pi, abs_tol=1.0e-12)
+
+
+def test_common_time_tf_resolver_excludes_samples_received_after_success():
+    result = resolve_planar_tf_pose(
+        [
+            _tf(9_900_000_000, 9_900_000_000, 'map', 'base_link', 1.0),
+            _tf(10_100_000_000, 10 * SECOND, 'map', 'base_link', 99.0),
+        ],
+        parent_frame='map', child_frame='base_link', at_received_ns=10 * SECOND,
+    )
+
+    assert result['status'] == 'resolved'
+    assert result['x'] == 1.0
+    assert result['newest_used_tf_received_ns'] == 9_900_000_000
+
+
+def test_common_time_tf_resolver_rejects_zero_success_or_dynamic_stamp():
+    invalid_success = resolve_planar_tf_pose(
+        [], parent_frame='map', child_frame='base_link', at_received_ns=0,
+    )
+    invalid_stamp = resolve_planar_tf_pose(
+        [_tf(SECOND, 0, 'map', 'base_link', 1.0)],
+        parent_frame='map', child_frame='base_link', at_received_ns=2 * SECOND,
+    )
+
+    assert invalid_success['failure_reason'] == 'invalid_action_success_timestamp'
+    assert invalid_stamp['failure_reason'] == 'no_transform_chain_available_at_success'
+    assert invalid_stamp['invalid_dynamic_stamp_count'] == 1
+
+
 def _runtime_collector(*, clearing=False):
     collector = RuntimeEvidenceCollector()
     collector.costmaps.extend([
@@ -717,7 +881,36 @@ def _runtime_collector(*, clearing=False):
         PoseRecord(1 * SECOND, 0.0, 5.0, 0.0),
         PoseRecord(3 * SECOND, 3.0, 2.5, 0.0),
         PoseRecord(6 * SECOND, 3.0, -2.5, 0.0),
-        PoseRecord(10 * SECOND, 0.0, -5.0, 0.0),
+        PoseRecord(
+            10 * SECOND, 0.0, -5.0, 0.0, 9_950_000_000,
+            'map', 'base_link', 'amcl_pose',
+        ),
+        PoseRecord(
+            11 * SECOND, 1.0, -5.0, 0.0, 10_950_000_000,
+            'map', 'base_link', 'amcl_pose',
+        ),
+    ])
+    collector.feedback.extend([
+        FeedbackRecord(
+            8 * SECOND,
+            'goal-1',
+            PoseRecord(
+                8 * SECOND, 0.0, -4.5, 0.0, 7_950_000_000,
+                'map', 'base_link', 'navigate_to_pose_feedback',
+            ),
+            0.5,
+            0,
+        ),
+        FeedbackRecord(
+            9_800_000_000,
+            'goal-1',
+            PoseRecord(
+                9_800_000_000, 1.2, -4.8, 0.0, 9_750_000_000,
+                'map', 'base_link', 'navigate_to_pose_feedback',
+            ),
+            1.3,
+            0,
+        ),
     ])
     hazard = _hazard(
         track_id='runtime-hazard', source_uavs=['dji1'],
@@ -786,10 +979,27 @@ def test_runtime_summary_requires_passive_replan_motion_and_clearing(tmp_path):
     assert summary['costmap']['first_mark_delta']['inflation_halo_nonzero_cells'] > 0
     assert summary['costmap']['clearing']['observed_mechanism'] == 'explicit_empty_snapshot'
     assert summary['mission']['terminal_status'] == 'SUCCEEDED'
-    assert summary['mission']['success_pose_source'] == 'tf_map_to_base_link'
-    assert summary['mission']['pose_at_succeeded']['xy_error_m'] == 0.0
+    assert summary['mission']['action_success_received_ns'] == 10 * SECOND
+    assert summary['mission']['tf_resolution_at_action_success']['status'] == 'resolved'
+    assert summary['mission']['tf_pose_at_common_time']['xy_error_m'] == 0.0
+    assert math.isclose(
+        summary['mission']['action_feedback_pose_at_or_before_success']['xy_error_m'],
+        math.hypot(1.2, 0.2),
+    )
+    feedback_xy = summary['mission']['stateful_xy_diagnostics']['action_feedback']
+    assert feedback_xy['first_pose_within_xy_tolerance']['xy_error_m'] == 0.5
+    assert feedback_xy['later_pose_outside_xy_tolerance'] is True
+    assert math.isclose(feedback_xy['maximum_later_xy_error_m'], math.hypot(1.2, 0.2))
+    assert summary['mission']['amcl_pose_at_or_before_success']['xy_error_m'] == 0.0
+    assert summary['mission']['later_shutdown_amcl_pose']['xy_error_m'] == 1.0
     assert summary['mission']['runtime_goal_checker']['stateful'] is True
     assert summary['configuration']['requested_action_goal']['matches_configured_goal'] is True
+    assert summary['configuration']['requested_action_goal'][
+        'xy_error_to_configured_goal_m'
+    ] == 0.0
+    assert summary['configuration']['requested_action_goal'][
+        'yaw_error_to_configured_goal_rad'
+    ] == 0.0
     assert summary['trajectory']['crosses_covariance_footprint'] is False
     assert len(trajectory) == 4
     write_runtime_evidence(tmp_path, summary, collector, trajectory)

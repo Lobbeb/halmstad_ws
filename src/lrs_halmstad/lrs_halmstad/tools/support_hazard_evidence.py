@@ -66,6 +66,8 @@ GOAL_STATUS_NAMES = {
 FREE_SPACE = 0
 LETHAL_OBSTACLE = 254
 NO_INFORMATION = 255
+DEFAULT_MAX_SUCCESS_TF_AGE_S = 1.0
+DEFAULT_MAX_TF_INTERPOLATION_GAP_S = 2.0
 
 
 def stamp_ns(stamp) -> int:
@@ -2955,74 +2957,280 @@ def resolve_planar_tf_pose(
     parent_frame: str,
     child_frame: str,
     at_received_ns: int,
-) -> dict[str, Any] | None:
-    """Resolve a frame pose from the latest TF samples received by a time."""
-    selected: dict[tuple[str, str], TransformRecord] = {}
-    for item in transforms:
-        if not item.is_static and item.received_ns > at_received_ns:
-            continue
-        key = (item.parent_frame, item.child_frame)
-        previous = selected.get(key)
-        if previous is None or item.received_ns >= previous.received_ns:
-            selected[key] = item
-
-    graph: dict[str, list[tuple[str, tuple[float, float, float], TransformRecord]]] = {}
-    for item in selected.values():
-        value = (item.x, item.y, item.yaw)
-        graph.setdefault(item.parent_frame, []).append((item.child_frame, value, item))
-        graph.setdefault(item.child_frame, []).append((
-            item.parent_frame, _inverse_planar_pose(value), item
-        ))
-
+    max_age_s: float = DEFAULT_MAX_SUCCESS_TF_AGE_S,
+    max_interpolation_gap_s: float = DEFAULT_MAX_TF_INTERPOLATION_GAP_S,
+) -> dict[str, Any]:
+    """Resolve one planar TF chain at a bounded common source timestamp."""
     start = parent_frame.strip('/')
     target = child_frame.strip('/')
-    queue = deque([(start, (0.0, 0.0, 0.0), tuple())])
-    visited = {start}
+    base_result = {
+        'status': 'unavailable',
+        'frame_id': start,
+        'child_frame_id': target,
+        'action_success_received_ns': int(at_received_ns),
+        'max_tf_age_s': float(max_age_s),
+        'max_interpolation_gap_s': float(max_interpolation_gap_s),
+    }
+    if at_received_ns <= 0:
+        return {**base_result, 'failure_reason': 'invalid_action_success_timestamp'}
+    if not math.isfinite(max_age_s) or max_age_s < 0.0:
+        raise ValueError('max_age_s must be finite and non-negative')
+    if not math.isfinite(max_interpolation_gap_s) or max_interpolation_gap_s < 0.0:
+        raise ValueError('max_interpolation_gap_s must be finite and non-negative')
+
+    dynamic_by_stamp: dict[
+        tuple[str, str], dict[int, TransformRecord]
+    ] = {}
+    static_by_edge: dict[tuple[str, str], TransformRecord] = {}
+    invalid_dynamic_stamp_count = 0
+    for item in transforms:
+        if item.received_ns <= 0 or item.received_ns > at_received_ns:
+            continue
+        key = (item.parent_frame.strip('/'), item.child_frame.strip('/'))
+        if not all(key):
+            continue
+        if item.is_static:
+            previous = static_by_edge.get(key)
+            if previous is None or item.received_ns >= previous.received_ns:
+                static_by_edge[key] = item
+            continue
+        if item.source_stamp_ns <= 0:
+            invalid_dynamic_stamp_count += 1
+            continue
+        by_stamp = dynamic_by_stamp.setdefault(key, {})
+        previous = by_stamp.get(item.source_stamp_ns)
+        if previous is None or item.received_ns >= previous.received_ns:
+            by_stamp[item.source_stamp_ns] = item
+
+    dynamic = {
+        key: sorted(records.values(), key=lambda item: item.source_stamp_ns)
+        for key, records in dynamic_by_stamp.items()
+    }
+    edges = sorted(set(dynamic) | set(static_by_edge))
+    graph: dict[str, list[tuple[str, tuple[str, str], bool]]] = {}
+    for key in edges:
+        parent, child = key
+        graph.setdefault(parent, []).append((child, key, False))
+        graph.setdefault(child, []).append((parent, key, True))
+
+    frame_count = len({frame for edge in edges for frame in edge})
+    queue = deque([(start, (), (start,))])
+    paths: list[tuple[tuple[str, tuple[str, str], bool], ...]] = []
     while queue:
-        frame, accumulated, path = queue.popleft()
+        frame, path, visited = queue.popleft()
         if frame == target:
-            dynamic = [item for item in path if not item.is_static]
-            newest_receipt = max((item.received_ns for item in dynamic), default=None)
-            oldest_receipt = min((item.received_ns for item in dynamic), default=None)
-            return {
-                'x': accumulated[0],
-                'y': accumulated[1],
-                'yaw': accumulated[2],
-                'frame_id': start,
-                'child_frame_id': target,
-                'comparison_received_ns': int(at_received_ns),
-                'newest_dynamic_tf_received_ns': newest_receipt,
-                'oldest_dynamic_tf_received_ns': oldest_receipt,
-                'tf_age_s': (
-                    (at_received_ns - oldest_receipt) * 1.0e-9
-                    if oldest_receipt is not None else None
-                ),
-                'transform_chain': [
-                    {
-                        'parent_frame': item.parent_frame,
-                        'child_frame': item.child_frame,
-                        'source_stamp_ns': item.source_stamp_ns,
-                        'received_ns': item.received_ns,
-                        'static': item.is_static,
-                    }
-                    for item in path
-                ],
-            }
-        for adjacent, transform, record in graph.get(frame, ()):
+            paths.append(path)
+            continue
+        if len(visited) > frame_count:
+            continue
+        for adjacent, key, inverse in graph.get(frame, ()):
             if adjacent in visited:
                 continue
-            visited.add(adjacent)
-            queue.append((
-                adjacent,
-                _compose_planar_pose(accumulated, transform),
-                path + (record,),
-            ))
-    return None
+            queue.append((adjacent, path + ((adjacent, key, inverse),), visited + (adjacent,)))
+
+    if not paths:
+        return {
+            **base_result,
+            'failure_reason': 'no_transform_chain_available_at_success',
+            'invalid_dynamic_stamp_count': invalid_dynamic_stamp_count,
+        }
+
+    max_age_ns = int(round(max_age_s * 1.0e9))
+    max_gap_ns = int(round(max_interpolation_gap_s * 1.0e9))
+    candidates: list[dict[str, Any]] = []
+    rejected_paths: list[dict[str, Any]] = []
+    for path in paths:
+        frame_path = [start] + [item[0] for item in path]
+        dynamic_histories = [dynamic[key] for _, key, _ in path if key in dynamic]
+        if dynamic_histories:
+            earliest_common_ns = max(history[0].source_stamp_ns for history in dynamic_histories)
+            latest_common_ns = min(
+                at_received_ns,
+                *(history[-1].source_stamp_ns for history in dynamic_histories),
+            )
+        else:
+            earliest_common_ns = at_received_ns
+            latest_common_ns = at_received_ns
+        if latest_common_ns < earliest_common_ns:
+            rejected_paths.append({
+                'frame_path': frame_path,
+                'reason': 'no_common_tf_time',
+                'earliest_common_ns': earliest_common_ns,
+                'latest_common_ns': latest_common_ns,
+            })
+            continue
+        common_time_ns = latest_common_ns
+        age_ns = at_received_ns - common_time_ns
+        if age_ns > max_age_ns:
+            rejected_paths.append({
+                'frame_path': frame_path,
+                'reason': 'common_tf_time_too_old',
+                'common_time_ns': common_time_ns,
+                'age_s': age_ns * 1.0e-9,
+            })
+            continue
+
+        accumulated = (0.0, 0.0, 0.0)
+        chain: list[dict[str, Any]] = []
+        used_records: list[TransformRecord] = []
+        rejection: dict[str, Any] | None = None
+        current_frame = start
+        for adjacent, key, inverse in path:
+            if key in static_by_edge and key not in dynamic:
+                record = static_by_edge[key]
+                value = (record.x, record.y, record.yaw)
+                used_records.append(record)
+                detail = {
+                    'parent_frame': key[0],
+                    'child_frame': key[1],
+                    'traversal_parent_frame': current_frame,
+                    'traversal_child_frame': adjacent,
+                    'method': 'static',
+                    'source_stamp_ns': record.source_stamp_ns,
+                    'received_ns': record.received_ns,
+                    'static': True,
+                }
+            else:
+                history = dynamic[key]
+                exact = next(
+                    (item for item in history if item.source_stamp_ns == common_time_ns),
+                    None,
+                )
+                if exact is not None:
+                    value = (exact.x, exact.y, exact.yaw)
+                    used_records.append(exact)
+                    detail = {
+                        'parent_frame': key[0],
+                        'child_frame': key[1],
+                        'traversal_parent_frame': current_frame,
+                        'traversal_child_frame': adjacent,
+                        'method': 'exact',
+                        'source_stamp_ns': exact.source_stamp_ns,
+                        'received_ns': exact.received_ns,
+                        'static': False,
+                    }
+                else:
+                    lower = next(
+                        (item for item in reversed(history)
+                         if item.source_stamp_ns < common_time_ns),
+                        None,
+                    )
+                    upper = next(
+                        (item for item in history
+                         if item.source_stamp_ns > common_time_ns),
+                        None,
+                    )
+                    if lower is None or upper is None:
+                        rejection = {
+                            'frame_path': frame_path,
+                            'reason': 'common_tf_time_not_bracketed',
+                            'edge': list(key),
+                            'common_time_ns': common_time_ns,
+                        }
+                        break
+                    gap_ns = upper.source_stamp_ns - lower.source_stamp_ns
+                    if gap_ns > max_gap_ns:
+                        rejection = {
+                            'frame_path': frame_path,
+                            'reason': 'interpolation_gap_too_large',
+                            'edge': list(key),
+                            'gap_s': gap_ns * 1.0e-9,
+                        }
+                        break
+                    fraction = (
+                        (common_time_ns - lower.source_stamp_ns) / gap_ns
+                    )
+                    yaw_delta = math.atan2(
+                        math.sin(upper.yaw - lower.yaw),
+                        math.cos(upper.yaw - lower.yaw),
+                    )
+                    value = (
+                        lower.x + fraction * (upper.x - lower.x),
+                        lower.y + fraction * (upper.y - lower.y),
+                        math.atan2(
+                            math.sin(lower.yaw + fraction * yaw_delta),
+                            math.cos(lower.yaw + fraction * yaw_delta),
+                        ),
+                    )
+                    used_records.extend((lower, upper))
+                    detail = {
+                        'parent_frame': key[0],
+                        'child_frame': key[1],
+                        'traversal_parent_frame': current_frame,
+                        'traversal_child_frame': adjacent,
+                        'method': 'interpolated',
+                        'source_stamp_ns': common_time_ns,
+                        'lower_source_stamp_ns': lower.source_stamp_ns,
+                        'lower_received_ns': lower.received_ns,
+                        'upper_source_stamp_ns': upper.source_stamp_ns,
+                        'upper_received_ns': upper.received_ns,
+                        'interpolation_fraction': fraction,
+                        'static': False,
+                    }
+            if inverse:
+                value = _inverse_planar_pose(value)
+            accumulated = _compose_planar_pose(accumulated, value)
+            chain.append(detail)
+            current_frame = adjacent
+        if rejection is not None:
+            rejected_paths.append(rejection)
+            continue
+
+        candidates.append({
+            **base_result,
+            'status': 'resolved',
+            'x': accumulated[0],
+            'y': accumulated[1],
+            'yaw': accumulated[2],
+            'common_time_ns': common_time_ns,
+            'common_time_offset_from_success_s': (
+                common_time_ns - at_received_ns
+            ) * 1.0e-9,
+            'tf_age_s': age_ns * 1.0e-9,
+            'interpolation_used': any(
+                item['method'] == 'interpolated' for item in chain
+            ),
+            'newest_used_tf_received_ns': max(
+                (item.received_ns for item in used_records), default=None
+            ),
+            'oldest_used_tf_received_ns': min(
+                (item.received_ns for item in used_records), default=None
+            ),
+            'transform_chain': chain,
+            'temporal_policy': (
+                'latest common source timestamp not after action success; '
+                'exact samples or bounded interpolation only'
+            ),
+            'invalid_dynamic_stamp_count': invalid_dynamic_stamp_count,
+        })
+
+    if not candidates:
+        reasons = {item['reason'] for item in rejected_paths}
+        failure_reason = (
+            next(iter(reasons)) if len(reasons) == 1
+            else 'no_defensible_common_tf_time'
+        )
+        return {
+            **base_result,
+            'failure_reason': failure_reason,
+            'invalid_dynamic_stamp_count': invalid_dynamic_stamp_count,
+            'rejected_paths': rejected_paths,
+        }
+    return max(
+        candidates,
+        key=lambda item: (
+            item['common_time_ns'],
+            -len(item['transform_chain']),
+            not item['interpolation_used'],
+        ),
+    )
 
 
 def _pose_evaluation(
     pose: dict[str, Any] | PoseRecord | None,
     goal: tuple[float, float, float],
+    *,
+    action_success_received_ns: int | None = None,
 ) -> dict[str, Any] | None:
     if pose is None:
         return None
@@ -3043,7 +3251,52 @@ def _pose_evaluation(
     result['yaw_error_rad'] = abs(math.atan2(
         math.sin(result['yaw'] - goal[2]), math.cos(result['yaw'] - goal[2])
     ))
+    if action_success_received_ns is not None:
+        received_ns = result.get('received_ns')
+        source_stamp_ns = result.get('source_stamp_ns')
+        result['received_time_offset_from_action_success_s'] = (
+            (received_ns - action_success_received_ns) * 1.0e-9
+            if received_ns is not None else None
+        )
+        result['source_stamp_offset_from_action_success_s'] = (
+            (source_stamp_ns - action_success_received_ns) * 1.0e-9
+            if source_stamp_ns is not None and source_stamp_ns > 0 else None
+        )
     return result
+
+
+def _xy_tolerance_history_diagnostics(
+    poses: Iterable[dict[str, Any] | None],
+    tolerance_m: float,
+) -> dict[str, Any]:
+    observed = [pose for pose in poses if pose is not None]
+    first_index = next(
+        (
+            index for index, pose in enumerate(observed)
+            if pose['xy_error_m'] <= tolerance_m
+        ),
+        None,
+    )
+    if first_index is None:
+        return {
+            'observed_pose_count': len(observed),
+            'first_pose_within_xy_tolerance': None,
+            'later_pose_count': 0,
+            'maximum_later_xy_error_m': None,
+            'later_pose_outside_xy_tolerance': False,
+        }
+    later = observed[first_index + 1:]
+    return {
+        'observed_pose_count': len(observed),
+        'first_pose_within_xy_tolerance': observed[first_index],
+        'later_pose_count': len(later),
+        'maximum_later_xy_error_m': max(
+            (pose['xy_error_m'] for pose in later), default=None
+        ),
+        'later_pose_outside_xy_tolerance': any(
+            pose['xy_error_m'] > tolerance_m for pose in later
+        ),
+    }
 
 
 def summarize_runtime_evidence(
@@ -3080,6 +3333,7 @@ def summarize_runtime_evidence(
     )
     start_ns = mission.get('start_ns')
     completion_ns = mission.get('completion_ns')
+    action_success_ns = completion_ns if mission.get('succeeded') else None
     poses = [
         item for item in collector.poses
         if start_ns is not None
@@ -3090,7 +3344,7 @@ def summarize_runtime_evidence(
     trajectory_geometry = path_hazard_metrics(trajectory, geometry)
     trajectory_inflation = path_hazard_metrics(trajectory, inflation_geometry)
     driven_distance_m = path_length(trajectory)
-    amcl_at_success = poses[-1] if poses else None
+    amcl_at_success = max(poses, key=lambda item: item.received_ns) if poses else None
     later_amcl = next(
         (item for item in reversed(collector.poses)
          if completion_ns is not None and item.received_ns >= completion_ns),
@@ -3102,34 +3356,89 @@ def summarize_runtime_evidence(
          and completion_ns is not None and item.received_ns <= completion_ns),
         None,
     )
-    tf_at_success = (
+    tf_resolution_at_success = (
         resolve_planar_tf_pose(
             collector.transforms,
             parent_frame='map', child_frame='base_link',
-            at_received_ns=completion_ns,
-        ) if completion_ns is not None else None
+            at_received_ns=action_success_ns,
+        ) if action_success_ns is not None else None
+    )
+    tf_at_success = (
+        tf_resolution_at_success
+        if tf_resolution_at_success
+        and tf_resolution_at_success.get('status') == 'resolved'
+        else None
     )
     tf_goal_pose = _pose_evaluation(tf_at_success, goal)
     feedback_goal_pose = _pose_evaluation(
-        feedback_at_success.pose if feedback_at_success else None, goal
+        feedback_at_success.pose if feedback_at_success else None,
+        goal,
+        action_success_received_ns=action_success_ns,
     )
-    amcl_goal_pose = _pose_evaluation(amcl_at_success, goal)
-    later_amcl_goal_pose = _pose_evaluation(later_amcl, goal)
-    success_pose = tf_goal_pose or feedback_goal_pose
-    final_goal_distance_m = success_pose['xy_error_m'] if success_pose else None
+    amcl_goal_pose = _pose_evaluation(
+        amcl_at_success,
+        goal,
+        action_success_received_ns=action_success_ns,
+    )
+    later_amcl_goal_pose = _pose_evaluation(
+        later_amcl,
+        goal,
+        action_success_received_ns=action_success_ns,
+    )
+    feedback_history = [
+        _pose_evaluation(
+            item.pose,
+            goal,
+            action_success_received_ns=action_success_ns,
+        )
+        for item in sorted(collector.feedback, key=lambda item: item.received_ns)
+        if item.goal_id == mission.get('goal_id')
+        and start_ns is not None
+        and item.received_ns >= start_ns
+        and (completion_ns is None or item.received_ns <= completion_ns)
+    ]
+    amcl_history = [
+        _pose_evaluation(
+            item,
+            goal,
+            action_success_received_ns=action_success_ns,
+        )
+        for item in poses
+    ]
+    stateful_xy_diagnostics = {
+        'interpretation_limit': (
+            'Observed samples can show an enter-then-drift pattern but do not expose '
+            'the SimpleGoalChecker internal XY latch.'
+        ),
+        'action_feedback': _xy_tolerance_history_diagnostics(
+            feedback_history, goal_tolerance_m
+        ),
+        'amcl': _xy_tolerance_history_diagnostics(
+            amcl_history, goal_tolerance_m
+        ),
+    }
+    tf_goal_distance_m = tf_goal_pose['xy_error_m'] if tf_goal_pose else None
     requested_goal = next(
         (item for item in reversed(collector.requested_goals)
          if start_ns is None or item.received_ns <= start_ns),
         collector.requested_goals[-1] if collector.requested_goals else None,
     )
+    requested_goal_xy_error_m = (
+        math.hypot(requested_goal.x - goal[0], requested_goal.y - goal[1])
+        if requested_goal else None
+    )
+    requested_goal_yaw_error_rad = (
+        abs(math.atan2(
+            math.sin(requested_goal.yaw - goal[2]),
+            math.cos(requested_goal.yaw - goal[2]),
+        ))
+        if requested_goal else None
+    )
     requested_goal_matches_configuration = bool(
         requested_goal
         and requested_goal.frame_id.strip('/') == 'map'
-        and math.hypot(requested_goal.x - goal[0], requested_goal.y - goal[1]) <= 1.0e-6
-        and abs(math.atan2(
-            math.sin(requested_goal.yaw - goal[2]),
-            math.cos(requested_goal.yaw - goal[2]),
-        )) <= 1.0e-6
+        and requested_goal_xy_error_m <= 1.0e-6
+        and requested_goal_yaw_error_rad <= 1.0e-6
     )
     baseline_trajectory = baseline_bundle['trajectory'] if baseline_bundle else []
     baseline_trajectory_geometry = path_hazard_metrics(
@@ -3199,20 +3508,22 @@ def summarize_runtime_evidence(
         failures.append('runtime_goal_checker_parameter_mismatch')
     if len(trajectory) < 2:
         failures.append('ugv_trajectory_missing')
-    if final_goal_distance_m is None or final_goal_distance_m > goal_tolerance_m:
-        failures.append('ugv_final_pose_outside_goal_tolerance')
+    if tf_goal_distance_m is None:
+        failures.append('success_time_tf_pose_unavailable')
+    elif tf_goal_distance_m > goal_tolerance_m:
+        failures.append('success_time_tf_pose_outside_goal_tolerance')
     if (
-        success_pose is None
-        or success_pose.get('frame_id', '').strip('/') != 'map'
-        or success_pose.get('child_frame_id', '').strip('/') != 'base_link'
+        tf_goal_pose is None
+        or tf_goal_pose.get('frame_id', '').strip('/') != 'map'
+        or tf_goal_pose.get('child_frame_id', '').strip('/') != 'base_link'
     ):
         failures.append('frame_correct_success_pose_missing')
     if (
         yaw_goal_tolerance_rad is None
-        or success_pose is None
-        or success_pose['yaw_error_rad'] > yaw_goal_tolerance_rad
+        or tf_goal_pose is None
+        or tf_goal_pose['yaw_error_rad'] > yaw_goal_tolerance_rad
     ):
-        failures.append('ugv_final_yaw_outside_goal_tolerance')
+        failures.append('success_time_tf_yaw_outside_goal_tolerance')
     if selected_plans['automatic_plan_count_during_goal'] < 1:
         failures.append('active_mission_plan_not_observed')
     if costmaps['baseline'] is None:
@@ -3324,7 +3635,7 @@ def summarize_runtime_evidence(
     map_image = map_image.resolve()
     stationary = stationary_periods(poses)
     summary = {
-        'schema_version': 4,
+        'schema_version': 5,
         'status': 'pass' if not failures else 'fail',
         'scenario': scenario,
         'validated_scope': 'full_baylands_navigate_to_pose_runtime',
@@ -3341,6 +3652,8 @@ def summarize_runtime_evidence(
                     'source_stamp_ns': requested_goal.source_stamp_ns,
                     'received_ns': requested_goal.received_ns,
                     'source': 'ugv_nav2_driver planned_path',
+                    'xy_error_to_configured_goal_m': requested_goal_xy_error_m,
+                    'yaw_error_to_configured_goal_rad': requested_goal_yaw_error_rad,
                     'matches_configured_goal': requested_goal_matches_configuration,
                 }
                 if requested_goal else None
@@ -3368,20 +3681,16 @@ def summarize_runtime_evidence(
         },
         'mission': {
             **mission,
+            'action_success_received_ns': action_success_ns,
             'duration_s': (
                 (completion_ns - start_ns) * 1.0e-9
                 if start_ns is not None and completion_ns is not None else None
             ),
-            'final_goal_distance_m': final_goal_distance_m,
             'goal_tolerance_m': goal_tolerance_m,
             'yaw_goal_tolerance_rad': yaw_goal_tolerance_rad,
-            'success_pose_source': (
-                'tf_map_to_base_link' if tf_goal_pose else
-                ('navigate_to_pose_feedback' if feedback_goal_pose else None)
-            ),
-            'pose_at_succeeded': success_pose,
-            'tf_pose_at_succeeded': tf_goal_pose,
-            'feedback_pose_at_or_before_succeeded': feedback_goal_pose,
+            'tf_resolution_at_action_success': tf_resolution_at_success,
+            'tf_pose_at_common_time': tf_goal_pose,
+            'action_feedback_pose_at_or_before_success': feedback_goal_pose,
             'feedback_distance_remaining_m': (
                 feedback_at_success.distance_remaining_m
                 if feedback_at_success else None
@@ -3390,15 +3699,21 @@ def summarize_runtime_evidence(
                 feedback_at_success.number_of_recoveries
                 if feedback_at_success else None
             ),
-            'amcl_pose_at_or_before_succeeded': amcl_goal_pose,
-            'later_amcl_pose': later_amcl_goal_pose,
+            'amcl_pose_at_or_before_success': amcl_goal_pose,
+            'later_shutdown_amcl_pose': later_amcl_goal_pose,
             'comparison_frame': 'map',
             'compared_child_frame': 'base_link',
             'runtime_goal_checker': runtime_goal_checker,
+            'stateful_xy_diagnostics': stateful_xy_diagnostics,
             'stateful_goal_checker_semantics': (
-                'XY satisfaction is latched before yaw completion; XY is not rechecked'
+                'Once XY first passes, XY remains latched and is not rechecked '
+                'while yaw is evaluated until the goal checker is reset'
                 if runtime_goal_checker and runtime_goal_checker.get('stateful') else
                 'XY and yaw are checked together'
+            ),
+            'goal_checker_interpretation_limit': (
+                'Static semantics do not prove this run legitimately reached the goal; '
+                'compare TF, feedback, and AMCL timing around the success transition.'
             ),
         },
         'hazard_flow': typed,
