@@ -1,4 +1,9 @@
 # lrs_halmstad
+Canonical roadmap and current status:
+[`../../descriptions/MASTER_IMPLEMENTATION_PLAN.md`](../../descriptions/MASTER_IMPLEMENTATION_PLAN.md).
+Current Track A runtime is Baylands. Warehouse sections are legacy/reference
+unless required for backwards compatibility.
+
 Shared-runtime compatibility notes:
 
 - Independent bridge_depth and bridge_gimbal controls retain existing enabled
@@ -11,8 +16,7 @@ Shared-runtime compatibility notes:
   the legacy lora mapping is preserved.
 - Model preflight: ./run.sh 1to1_yolo baylands weights:=<path> check_weights:=true.
 
-See [the Phase 1 record](../../William/Replanning_&detection_markdowns/03_STATUS_AND_DECISIONS.md#phase-1-selective-shared-runtime-reconciliation)
-for exact scope and unverified runtime gates.
+See the canonical master plan above for phase status and validation gates.
 
 
 Reference for the current 1-to-1 Gazebo/ROS 2 workflow.

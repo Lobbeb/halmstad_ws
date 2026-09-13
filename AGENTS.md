@@ -3,6 +3,12 @@
 ## Scope and session start
 
 - `halmstad_ws` is the active development repository.
+- At the start of a fresh session, read in order:
+  1. `AGENTS.md`;
+  2. `descriptions/MASTER_IMPLEMENTATION_PLAN.md`;
+  3. the current phase-specific handoff, when present.
+- `descriptions/MASTER_IMPLEMENTATION_PLAN.md` is the canonical project
+  roadmap and status source.
 - EiraX is the downstream UGV integration target for Basuedo. Unless a task explicitly authorizes EiraX changes, active development remains in `halmstad_ws`.
 - Cross-repository inspection or changes require explicit task scope.
 - Read each target repository's instructions before working there.
@@ -87,11 +93,6 @@
 - Typed interfaces: `src/lrs_halmstad_interfaces`; costmap plugin: `src/lrs_halmstad_nav_plugins`.
 - Configuration: `src/lrs_halmstad/config`; saved maps and waypoint CSVs: `maps/`.
 - Waypoint YAMLs: `src/lrs_halmstad/config/baylands_waypoints/`.
-- Planning directory: `William/Replanning_&detection_markdowns/`.
-  - `00_MASTER_ROADMAP.md`: workstream scope and gates.
-  - `02_UGV_REPLANNING_VALIDATION.md`: Track A methodology and evidence requirements.
-  - `01_OBJECT_DETECTION_WORKFLOW.md`: Track B methodology when authorized.
-  - `03_STATUS_AND_DECISIONS.md`: progress, decisions and unresolved questions.
-  - `05_RESUME_HANDOFF.md`: resumption context; consult closure reports when present.
-- Detailed guides/handoffs: repository-relative `descriptions/` when present.
+- Canonical roadmap/status: `descriptions/MASTER_IMPLEMENTATION_PLAN.md`.
+- Current phase details: tracked handoffs under `descriptions/` when present.
 - Resolve documentation paths against the current checkout; report stale or missing links.

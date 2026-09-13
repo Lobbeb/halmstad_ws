@@ -1,19 +1,27 @@
 # Halmstad ROS 2 + Gazebo Testbed — Workspace Snapshot
-Phase 1 shared-runtime reconciliation is checkpointed. See
-[the reconciliation record](William/Replanning_&detection_markdowns/03_STATUS_AND_DECISIONS.md#phase-1-selective-shared-runtime-reconciliation)
-for changes, preserved defaults and remaining Baylands runtime gates.
+Canonical roadmap and current status:
+[`descriptions/MASTER_IMPLEMENTATION_PLAN.md`](descriptions/MASTER_IMPLEMENTATION_PLAN.md).
+Current Track A runtime is Baylands; warehouse workflows below are
+legacy/reference unless needed for compatibility. The next gate is the ordered
+authoritative desktop `baseline -> valid -> clearing` run, not more laptop
+implementation.
+
+Shared-runtime reconciliation is checkpointed. See Phase 0 in the canonical
+master plan for its status and preserved boundaries.
 Normal tmux/Gazebo startup does not kill matching ROS, Nav2, Gazebo or tmux
 processes. The Gazebo wrapper refuses to replace a live recorded simulator
 helper, and exit cleanup remains limited to its own PID record and child.
-The lightweight Track A planner harness and evidence analyzer are implemented;
-their ROS runtime scenarios still require the operator run described below.
+The lightweight Track A planner suite passes. Full-runtime evidence tooling is
+implemented; authoritative desktop Baylands runtime remains pending.
 
 Current source of truth
 -----------------------
 - `AGENTS.md`
+- `descriptions/MASTER_IMPLEMENTATION_PLAN.md`
+- `descriptions/TRACK_A_FULL_RUNTIME_WIP_HANDOFF.md`
 - `src/lrs_halmstad/README.md`
 
-Current tested baseline:
+Legacy warehouse tested baseline:
 1. `./run.sh gazebo_sim warehouse`
 2. `./run.sh spawn_uav warehouse uav_name:=dji0`
 3. `./run.sh localization warehouse`
@@ -114,7 +122,8 @@ NavigateToPose mission. The synthetic dji1 source waits for an active goal;
 typed dji2 fusion and the aerial layer retain their normal disabled defaults
 outside this explicit profile. See `src/lrs_halmstad/README.md` for the ordered
 operator commands, task-owned stop commands, evidence files, and pass criteria.
-Full-runtime results remain pending the user-run Gazebo experiments.
+Full-runtime implementation is complete; authoritative desktop Baylands
+baseline, valid, and clearing evidence remains pending.
 
 The first bounded headless Task 5 live run produced detector records with `valid:false` and no dji1 typed hazard because no explicit downward dji1 camera pitch was commanded and the UGV was outside the image; it was not a model, projector, fusion, or source-selection failure. The validated profile fixes the dji1-only camera scanner at `-60.0` degrees. That bounded retry produced non-empty typed hazards at dji1, dji0, and the UGV, selected dji1, preserved source covariance, and preserved dji0-to-UGV forwarding. This validates the live typed contract under the corrected camera orientation only; it does not establish detector accuracy, general environmental hazard perception, closed-loop navigation success, full SLAM, quantitative safety improvement, or UAV repositioning. Deterministic synthetic/replayed Task 6/7 checks remain the Task 8 pass basis.
 
