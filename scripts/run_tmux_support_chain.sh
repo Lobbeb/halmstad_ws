@@ -10,6 +10,7 @@ SESSION=""
 LAYOUT="panes"
 TMUX_ATTACH=true
 DRY_RUN=false
+REDUCED_TRACK_A=false
 MODE_SET=false
 SUPPORT_FOLLOW_DELAY_S="0"
 SUPPORT_OBSERVATION_DELAY_S="0"
@@ -156,6 +157,9 @@ for arg in "$@"; do
     dry_run:=*)
       DRY_RUN="${arg#dry_run:=}"
       ;;
+    reduced_track_a:=*)
+      REDUCED_TRACK_A="${arg#reduced_track_a:=}"
+      ;;
     mode:=*)
       MODE_SET=true
       BASE_ARGS+=("$arg")
@@ -191,6 +195,9 @@ for arg in "$@"; do
       ;;
     aerial_support_layer_enable:=*)
       AERIAL_SUPPORT_LAYER_ENABLE="${arg#aerial_support_layer_enable:=}"
+      ;;
+    start_ugv_ground_truth_bridge:=*)
+      BASE_ARGS+=("$arg")
       ;;
     hazard_synthetic_enable:=*)
       HAZARD_SYNTHETIC_ENABLE="${arg#hazard_synthetic_enable:=}"
@@ -378,6 +385,7 @@ validate_boolean() {
 
 validate_boolean "hazard_chain_enable" "$HAZARD_CHAIN_ENABLE"
 validate_boolean "aerial_support_layer_enable" "$AERIAL_SUPPORT_LAYER_ENABLE"
+validate_boolean "reduced_track_a" "$REDUCED_TRACK_A"
 validate_boolean "hazard_synthetic_enable" "$HAZARD_SYNTHETIC_ENABLE"
 validate_boolean "hazard_localization_enable" "$HAZARD_LOCALIZATION_ENABLE"
 validate_boolean "hazard_projector_enable" "$HAZARD_PROJECTOR_ENABLE"
@@ -409,6 +417,15 @@ fi
 if [ "$HAZARD_CHAIN_ENABLE" = true ] && [ "$SUPPORT_DJI2_EXPLICIT" = false ]; then
   SUPPORT_DJI2_ENABLE=false
 fi
+if [ "$REDUCED_TRACK_A" = true ]; then
+  if [[ "$WORLD" != baylands* ]]; then
+    echo "reduced_track_a:=true is a fixed Baylands follow diagnostic." >&2
+    exit 2
+  fi
+  SUPPORT_DJI2_ENABLE=false
+  BASE_ARGS+=(reduced_track_a:=true)
+  SUPPORT_OBSERVATION_ARGS+=(dji1_enable:=false support_mux_enable:=false)
+fi
 SUPPORT_FOLLOW_ARGS+=("dji2_enable:=$SUPPORT_DJI2_ENABLE")
 SUPPORT_OBSERVATION_ARGS+=("dji2_enable:=$SUPPORT_DJI2_ENABLE")
 if [ "$HAZARD_CHAIN_ENABLE" = true ]; then
@@ -424,10 +441,12 @@ fi
 if [ "$AERIAL_SUPPORT_LAYER_ENABLE" = true ]; then
   BASE_ARGS+=("aerial_support_layer_enable:=true")
 fi
-
-FOLLOW_WAIT_TOPICS="/dji1/pose,/dji2/pose"
-if [ "$SUPPORT_DJI2_ENABLE" = false ]; then
+if [ "$REDUCED_TRACK_A" = true ]; then
+  FOLLOW_WAIT_TOPICS=""
+elif [ "$SUPPORT_DJI2_ENABLE" = false ]; then
   FOLLOW_WAIT_TOPICS="/dji1/pose"
+else
+  FOLLOW_WAIT_TOPICS="/dji1/pose,/dji2/pose"
 fi
 
 BASE_CMD=(
@@ -438,7 +457,11 @@ BASE_CMD=(
   "follow_wait_topics:=$FOLLOW_WAIT_TOPICS"
   "${BASE_ARGS[@]}"
 )
-SUPPORT_FOLLOW_CMD=(./run.sh support_follow_odom "$WORLD" "support_with_camera:=true" "${SUPPORT_FOLLOW_ARGS[@]}")
+if [ "$REDUCED_TRACK_A" = true ]; then
+  SUPPORT_FOLLOW_CMD=(/bin/true)
+else
+  SUPPORT_FOLLOW_CMD=(./run.sh support_follow_odom "$WORLD" "support_with_camera:=true" "${SUPPORT_FOLLOW_ARGS[@]}")
+fi
 SUPPORT_OBSERVATION_CMD=(./run.sh support_observation "$WORLD" "${SUPPORT_OBSERVATION_ARGS[@]}")
 SYNTHETIC_HAZARD_ROS_COMMAND=(
   ros2 run lrs_halmstad synthetic_hazard_publisher --ros-args
@@ -470,8 +493,13 @@ SYNTHETIC_HAZARD_COMMAND=(
   /bin/bash --noprofile --norc -c "source /opt/ros/jazzy/setup.bash && source $(printf '%q' "$WS_ROOT/install/setup.bash") && exec $(shell_join "${SYNTHETIC_HAZARD_ROS_COMMAND[@]}")"
 )
 
-SUPPORT_FOLLOW_READY_CMD="$(build_support_follow_ready_cmd)"
-SUPPORT_OBSERVATION_READY_CMD="$(build_support_observation_ready_cmd)"
+if [ "$REDUCED_TRACK_A" = true ]; then
+  SUPPORT_FOLLOW_READY_CMD=""
+  SUPPORT_OBSERVATION_READY_CMD=""
+else
+  SUPPORT_FOLLOW_READY_CMD="$(build_support_follow_ready_cmd)"
+  SUPPORT_OBSERVATION_READY_CMD="$(build_support_observation_ready_cmd)"
+fi
 SUPPORT_FOLLOW_LINE="$(build_line "$SUPPORT_FOLLOW_DELAY_S" "$SUPPORT_FOLLOW_READY_CMD" "${SUPPORT_FOLLOW_CMD[@]}")"
 SUPPORT_OBSERVATION_LINE="$(build_line "$SUPPORT_OBSERVATION_DELAY_S" "$SUPPORT_OBSERVATION_READY_CMD" "${SUPPORT_OBSERVATION_CMD[@]}")"
 SYNTHETIC_HAZARD_LINE="$(build_line "$HAZARD_SYNTHETIC_DELAY_S" "" "${SYNTHETIC_HAZARD_COMMAND[@]}")"
@@ -480,6 +508,7 @@ if [ "$DRY_RUN" = true ]; then
   echo "Session: $SESSION"
   echo "Layout: $LAYOUT"
   echo "Attach: $TMUX_ATTACH"
+  echo "NON-AUTHORITATIVE REDUCED-RESOURCE TRACK A DIAGNOSTIC: $REDUCED_TRACK_A"
   echo "[base]"
   "${BASE_CMD[@]}" "dry_run:=true"
   echo "[support_follow] $SUPPORT_FOLLOW_LINE"

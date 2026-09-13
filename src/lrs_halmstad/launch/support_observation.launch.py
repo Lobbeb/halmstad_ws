@@ -124,6 +124,11 @@ def generate_launch_description():
     )
     camera_name_arg = DeclareLaunchArgument('camera_name', default_value='camera0')
     dji1_name_arg = DeclareLaunchArgument('dji1_name', default_value='dji1')
+    dji1_enable_arg = DeclareLaunchArgument(
+        'dji1_enable',
+        default_value='true',
+        description='Start the legacy dji1 camera detector.',
+    )
     dji2_name_arg = DeclareLaunchArgument('dji2_name', default_value='dji2')
     dji2_enable_arg = DeclareLaunchArgument(
         'dji2_enable',
@@ -658,6 +663,7 @@ def generate_launch_description():
         detector_backend=LaunchConfiguration('dji1_detector_backend'),
         detector_onnx_model=LaunchConfiguration('dji1_detector_onnx_model'),
         yolo_weights=LaunchConfiguration('dji1_yolo_weights'),
+        condition=IfCondition(LaunchConfiguration('dji1_enable')),
     )
     support_dji2_detector = _support_detector_instance(
         instance_id='dji2',
@@ -925,6 +931,7 @@ def generate_launch_description():
         params_file_arg,
         camera_name_arg,
         dji1_name_arg,
+        dji1_enable_arg,
         dji2_name_arg,
         dji2_enable_arg,
         detector_backend_arg,

@@ -408,6 +408,32 @@ def directed_path_distance(
     )
 
 
+def point_to_path_distance(
+    point: tuple[float, float], path: Iterable[tuple[float, float]]
+) -> float | None:
+    points = list(path)
+    if not points:
+        return None
+    if len(points) == 1:
+        return math.hypot(point[0] - points[0][0], point[1] - points[0][1])
+
+    distances = []
+    for start, end in zip(points, points[1:]):
+        dx = end[0] - start[0]
+        dy = end[1] - start[1]
+        length_squared = dx * dx + dy * dy
+        if length_squared <= 0.0:
+            distances.append(math.hypot(point[0] - start[0], point[1] - start[1]))
+            continue
+        fraction = (
+            (point[0] - start[0]) * dx + (point[1] - start[1]) * dy
+        ) / length_squared
+        fraction = min(1.0, max(0.0, fraction))
+        closest = (start[0] + fraction * dx, start[1] + fraction * dy)
+        distances.append(math.hypot(point[0] - closest[0], point[1] - closest[1]))
+    return min(distances)
+
+
 def stationary_periods(
     poses: Iterable[PoseRecord],
     *,
@@ -1534,15 +1560,29 @@ class RuntimeEvidenceCollector(PlannerEvidenceCollector):
         terminal = next(
             (item for item in reversed(selected) if item.status in terminal_states), None
         )
+        completion_ns = terminal.received_ns if terminal else None
+        concurrent_states = (*live, GoalStatus.STATUS_CANCELING)
+        other_goal_ids = sorted({
+            item.goal_id
+            for item in events
+            if goal_id
+            and item.goal_id != goal_id
+            and item.status in concurrent_states
+            and start_ns is not None
+            and item.received_ns >= start_ns
+            and (completion_ns is None or item.received_ns <= completion_ns)
+        })
         return {
             'goal_id': goal_id,
             'start_ns': start_ns,
-            'completion_ns': terminal.received_ns if terminal else None,
+            'completion_ns': completion_ns,
             'terminal_status': (
                 GOAL_STATUS_NAMES.get(terminal.status, str(terminal.status))
                 if terminal else None
             ),
             'succeeded': bool(terminal and terminal.status == GoalStatus.STATUS_SUCCEEDED),
+            'other_goal_ids_during_mission': other_goal_ids,
+            'single_active_goal_observed': bool(goal_id and not other_goal_ids),
             'transitions': [
                 {
                     'received_ns': item.received_ns,
@@ -2246,12 +2286,35 @@ def _costmap_rows(
     return rows
 
 
+def _first_empty_after_nonempty(
+    collector: EvidenceCollector, topic: str
+) -> CapturedSample | None:
+    saw_nonempty = False
+    for sample in collector._ordered(topic):
+        if sample.message.hazards:
+            saw_nonempty = True
+        elif saw_nonempty:
+            return sample
+    return None
+
+
 def _clearing_mechanism(
     collector: PlannerEvidenceCollector,
     first_clear_ns: int | None,
     max_observation_age_s: float,
 ) -> dict[str, Any]:
-    explicit_empty = _has_empty_after_nonempty(collector, UGV_TOPIC)
+    source_empty = _first_empty_after_nonempty(collector, DJI1_TOPIC)
+    fused_empty = _first_empty_after_nonempty(collector, DJI0_TOPIC)
+    forwarded_empty = _first_empty_after_nonempty(collector, UGV_TOPIC)
+    explicit_empty_propagation = bool(
+        source_empty
+        and fused_empty
+        and forwarded_empty
+        and source_empty.received_ns <= fused_empty.received_ns
+        and fused_empty.received_ns <= forwarded_empty.received_ns
+        and first_clear_ns is not None
+        and forwarded_empty.received_ns <= first_clear_ns
+    )
     ugv_nonempty = [
         (sample, hazard)
         for sample in collector.samples[UGV_TOPIC]
@@ -2272,7 +2335,7 @@ def _clearing_mechanism(
         age_deadline_ns = stamp_ns(hazard.detection.header.stamp) + int(
             max_observation_age_s * 1.0e9
         )
-    if explicit_empty and first_clear_ns is not None:
+    if explicit_empty_propagation:
         mechanism = 'explicit_empty_snapshot'
     elif ugv_nonempty and first_clear_ns is not None:
         if age_deadline_ns <= ttl_deadline_ns and first_clear_ns >= age_deadline_ns:
@@ -2283,7 +2346,17 @@ def _clearing_mechanism(
             mechanism = 'source_silence'
     return {
         'observed_mechanism': mechanism,
-        'explicit_empty_snapshot_seen': explicit_empty,
+        'explicit_empty_snapshot_seen': explicit_empty_propagation,
+        'source_explicit_empty_ns': (
+            source_empty.received_ns if source_empty else None
+        ),
+        'fusion_explicit_empty_ns': (
+            fused_empty.received_ns if fused_empty else None
+        ),
+        'forwarded_explicit_empty_ns': (
+            forwarded_empty.received_ns if forwarded_empty else None
+        ),
+        'explicit_empty_propagation_complete': explicit_empty_propagation,
         'source_silence_seen': source_silence,
         'observation_age_deadline_ns': age_deadline_ns,
         'ttl_deadline_ns': ttl_deadline_ns,
@@ -3299,6 +3372,84 @@ def _xy_tolerance_history_diagnostics(
     }
 
 
+def _goal_checker_evidence(
+    *,
+    mission: dict[str, Any],
+    tf_pose: dict[str, Any] | None,
+    feedback_history: Iterable[dict[str, Any] | None],
+    amcl_history: Iterable[dict[str, Any] | None],
+    runtime_goal_checker: dict[str, Any] | None,
+    xy_tolerance_m: float,
+    yaw_tolerance_rad: float | None,
+) -> dict[str, Any]:
+    feedback = [pose for pose in feedback_history if pose is not None]
+    amcl = [pose for pose in amcl_history if pose is not None]
+
+    def valid_history_pose(pose: dict[str, Any]) -> bool:
+        return bool(
+            pose.get('frame_id', '').strip('/') == 'map'
+            and pose.get('child_frame_id', '').strip('/') == 'base_link'
+            and int(pose.get('received_ns') or 0) > 0
+            and int(pose.get('source_stamp_ns') or 0) > 0
+        )
+
+    valid_feedback = [pose for pose in feedback if valid_history_pose(pose)]
+    valid_amcl = [pose for pose in amcl if valid_history_pose(pose)]
+    first_feedback_entry = next(
+        (
+            pose for pose in valid_feedback
+            if pose['xy_error_m'] <= xy_tolerance_m
+        ),
+        None,
+    )
+    base = {
+        'accepted': False,
+        'classification': 'insufficient_or_inconsistent_pose_evidence',
+        'xy_tolerance_m': xy_tolerance_m,
+        'yaw_tolerance_rad': yaw_tolerance_rad,
+        'stateful': (
+            runtime_goal_checker.get('stateful')
+            if runtime_goal_checker is not None else None
+        ),
+        'valid_action_feedback_pose_count': len(valid_feedback),
+        'invalid_action_feedback_pose_count': len(feedback) - len(valid_feedback),
+        'valid_amcl_pose_count': len(valid_amcl),
+        'invalid_amcl_pose_count': len(amcl) - len(valid_amcl),
+        'first_proven_xy_entry': first_feedback_entry,
+        'xy_entry_proof_source': (
+            'navigate_to_pose_feedback' if first_feedback_entry else None
+        ),
+    }
+    if not mission.get('succeeded'):
+        return {**base, 'classification': 'mission_not_succeeded'}
+    if tf_pose is None or yaw_tolerance_rad is None:
+        return base
+    if (
+        tf_pose.get('frame_id', '').strip('/') != 'map'
+        or tf_pose.get('child_frame_id', '').strip('/') != 'base_link'
+    ):
+        return base
+    if tf_pose['yaw_error_rad'] > yaw_tolerance_rad:
+        return {**base, 'classification': 'outside_yaw_tolerance_at_success'}
+    if tf_pose['xy_error_m'] <= xy_tolerance_m:
+        return {
+            **base,
+            'accepted': True,
+            'classification': 'within_xy_tolerance_at_success',
+        }
+    if not (runtime_goal_checker and runtime_goal_checker.get('stateful')):
+        return {**base, 'classification': 'outside_xy_tolerance_at_success'}
+    if first_feedback_entry is not None:
+        return {
+            **base,
+            'accepted': True,
+            'classification': 'stateful_xy_latched_after_proven_entry',
+        }
+    if valid_feedback:
+        return {**base, 'classification': 'success_without_proven_xy_entry'}
+    return base
+
+
 def summarize_runtime_evidence(
     collector: RuntimeEvidenceCollector,
     *,
@@ -3316,6 +3467,7 @@ def summarize_runtime_evidence(
     goal_tolerance_m: float,
     yaw_goal_tolerance_rad: float | None = None,
     runtime_goal_checker: dict[str, Any] | None = None,
+    runtime_profile: str = 'authoritative_full',
 ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     inflation_radius_m = float(nav2_config['inflation_radius_m'])
     inflation_geometry = expanded_hazard_geometry(geometry, inflation_radius_m)
@@ -3417,7 +3569,15 @@ def summarize_runtime_evidence(
             amcl_history, goal_tolerance_m
         ),
     }
-    tf_goal_distance_m = tf_goal_pose['xy_error_m'] if tf_goal_pose else None
+    goal_checker_evidence = _goal_checker_evidence(
+        mission=mission,
+        tf_pose=tf_goal_pose,
+        feedback_history=feedback_history,
+        amcl_history=amcl_history,
+        runtime_goal_checker=runtime_goal_checker,
+        xy_tolerance_m=goal_tolerance_m,
+        yaw_tolerance_rad=yaw_goal_tolerance_rad,
+    )
     requested_goal = next(
         (item for item in reversed(collector.requested_goals)
          if start_ns is None or item.received_ns <= start_ns),
@@ -3448,11 +3608,38 @@ def summarize_runtime_evidence(
         baseline_trajectory, trajectory
     ) if baseline_trajectory and trajectory else None
     first_mark = costmaps['first_mark']
+    first_clear = costmaps['first_clear']
     changed_plan = selected_plans['hazard_active']
+    mark_ns = first_mark.received_ns if first_mark else None
+    automatic_replanning_observed = bool(
+        changed_plan is not None
+        and mark_ns is not None
+        and start_ns is not None
+        and changed_plan['result_ns'] > mark_ns >= start_ns
+        and (completion_ns is None or changed_plan['result_ns'] <= completion_ns)
+        and mission.get('single_active_goal_observed')
+    )
     post_replan_poses = [
         item for item in poses
         if changed_plan is not None and item.received_ns >= changed_plan['result_ns']
     ]
+    post_replan_deviations = [
+        (item, point_to_path_distance((item.x, item.y), baseline_trajectory))
+        for item in post_replan_poses
+    ] if baseline_trajectory else []
+    first_physical_deviation = next(
+        (
+            (item, distance)
+            for item, distance in post_replan_deviations
+            if distance is not None and distance >= minimum_trajectory_change_m
+        ),
+        None,
+    )
+    physical_detour_observed = bool(
+        first_physical_deviation
+        and trajectory_change_m is not None
+        and trajectory_change_m >= minimum_trajectory_change_m
+    )
     post_mark_plan_points = [
         tuple(point)
         for plan in plans
@@ -3481,8 +3668,26 @@ def summarize_runtime_evidence(
         require_covariance_match=(scenario != 'baseline'),
         max_age_s=float(nav2_config['aerial_max_observation_age_s']),
     ))
-    first_clear = costmaps['first_clear']
     mark_delta = costmaps['first_mark_delta'] or {}
+    clearing = _clearing_mechanism(
+        collector,
+        first_clear.received_ns if first_clear else None,
+        float(nav2_config['aerial_max_observation_age_s']),
+    )
+    post_clear_poses = [
+        item for item in poses
+        if first_clear is not None and item.received_ns >= first_clear.received_ns
+    ]
+    post_clear_driven_distance_m = path_length(
+        (item.x, item.y) for item in post_clear_poses
+    )
+    navigation_continued_after_clear = bool(
+        first_clear is not None
+        and completion_ns is not None
+        and first_clear.received_ns < completion_ns
+        and len(post_clear_poses) >= 2
+        and post_clear_driven_distance_m > 0.05
+    )
     failures: list[str] = []
     if not mission['goal_id']:
         failures.append('navigate_to_pose_goal_not_observed')
@@ -3490,7 +3695,9 @@ def summarize_runtime_evidence(
         failures.append('invalid_runtime_timestamp')
     if mission.get('completion_ns') is not None and mission['completion_ns'] <= 0:
         failures.append('invalid_runtime_timestamp')
-    if not mission['succeeded']:
+    if mission.get('completion_ns') is None:
+        failures.append('navigate_to_pose_goal_not_completed')
+    elif not mission['succeeded']:
         failures.append('navigate_to_pose_goal_not_succeeded')
     if requested_goal is None:
         failures.append('requested_action_goal_not_observed')
@@ -3508,22 +3715,16 @@ def summarize_runtime_evidence(
         failures.append('runtime_goal_checker_parameter_mismatch')
     if len(trajectory) < 2:
         failures.append('ugv_trajectory_missing')
-    if tf_goal_distance_m is None:
-        failures.append('success_time_tf_pose_unavailable')
-    elif tf_goal_distance_m > goal_tolerance_m:
-        failures.append('success_time_tf_pose_outside_goal_tolerance')
-    if (
-        tf_goal_pose is None
-        or tf_goal_pose.get('frame_id', '').strip('/') != 'map'
-        or tf_goal_pose.get('child_frame_id', '').strip('/') != 'base_link'
-    ):
-        failures.append('frame_correct_success_pose_missing')
-    if (
-        yaw_goal_tolerance_rad is None
-        or tf_goal_pose is None
-        or tf_goal_pose['yaw_error_rad'] > yaw_goal_tolerance_rad
-    ):
-        failures.append('success_time_tf_yaw_outside_goal_tolerance')
+    if mission.get('succeeded') and not goal_checker_evidence['accepted']:
+        goal_classification = goal_checker_evidence['classification']
+        if goal_classification == 'insufficient_or_inconsistent_pose_evidence':
+            failures.append('goal_checker_pose_evidence_insufficient')
+        elif goal_classification == 'success_without_proven_xy_entry':
+            failures.append('goal_checker_xy_entry_not_proven')
+        elif goal_classification == 'outside_xy_tolerance_at_success':
+            failures.append('success_time_tf_pose_outside_goal_tolerance')
+        elif goal_classification == 'outside_yaw_tolerance_at_success':
+            failures.append('success_time_tf_yaw_outside_goal_tolerance')
     if selected_plans['automatic_plan_count_during_goal'] < 1:
         failures.append('active_mission_plan_not_observed')
     if costmaps['baseline'] is None:
@@ -3570,6 +3771,10 @@ def summarize_runtime_evidence(
             failures.append('pre_hazard_plan_misses_effective_hazard')
         if active is None:
             failures.append('automatic_post_mark_replan_not_observed')
+        elif not mission.get('single_active_goal_observed'):
+            failures.append('automatic_replan_goal_identity_ambiguous')
+        elif not automatic_replanning_observed:
+            failures.append('automatic_replan_timing_invalid')
         elif active['crosses_lethal_costmap_cell'] is not False:
             failures.append('automatic_replan_crosses_lethal_cost')
         if trajectory_geometry['crosses_effective_hazard']:
@@ -3583,10 +3788,7 @@ def summarize_runtime_evidence(
             or not baseline_trajectory_geometry['crosses_effective_hazard']
         ):
             failures.append('baseline_reference_trajectory_not_hazard_relevant')
-        if (
-            trajectory_change_m is None
-            or trajectory_change_m < minimum_trajectory_change_m
-        ):
+        if not physical_detour_observed:
             failures.append('ugv_trajectory_did_not_materially_deviate')
         if (
             plan_tracking_error_m is None
@@ -3594,35 +3796,15 @@ def summarize_runtime_evidence(
         ):
             failures.append('ugv_trajectory_did_not_follow_replanned_corridor')
         if scenario == 'clearing':
-            clearing = _clearing_mechanism(
-                collector,
-                first_clear.received_ns if first_clear else None,
-                float(nav2_config['aerial_max_observation_age_s']),
-            )
             if first_clear is None:
                 failures.append('aerial_costmap_clear_not_observed')
-            if not clearing['explicit_empty_snapshot_seen']:
-                failures.append('source_empty_clearing_not_observed')
-            if (
-                first_clear is None
-                or completion_ns is None
-                or first_clear.received_ns >= completion_ns
-            ):
+            if not clearing['explicit_empty_propagation_complete']:
+                failures.append('explicit_empty_clearing_propagation_incomplete')
+            if not navigation_continued_after_clear:
                 failures.append('navigation_did_not_continue_after_clear')
             if selected_plans['post_clear'] is None:
                 failures.append('post_clear_active_goal_plan_missing')
-        else:
-            clearing = _clearing_mechanism(
-                collector,
-                first_clear.received_ns if first_clear else None,
-                float(nav2_config['aerial_max_observation_age_s']),
-            )
-    if scenario == 'baseline':
-        clearing = _clearing_mechanism(
-            collector, None, float(nav2_config['aerial_max_observation_age_s'])
-        )
 
-    mark_ns = first_mark.received_ns if first_mark else None
     replanning_latency_s = (
         (changed_plan['result_ns'] - mark_ns) * 1.0e-9
         if changed_plan is not None and mark_ns is not None else None
@@ -3634,13 +3816,41 @@ def summarize_runtime_evidence(
         map_image = map_resolved.parent / map_image
     map_image = map_image.resolve()
     stationary = stationary_periods(poses)
+    inconclusive_reasons = []
+    if not mission.get('goal_id'):
+        inconclusive_reasons.append('mission_identity_missing')
+    if mission.get('completion_ns') is None:
+        inconclusive_reasons.append('terminal_status_missing')
+    if runtime_goal_checker is None:
+        inconclusive_reasons.append('runtime_goal_checker_parameters_missing')
+    if mission.get('succeeded') and tf_goal_pose is None:
+        inconclusive_reasons.append('success_time_tf_pose_missing')
+    if goal_checker_evidence['classification'] == (
+        'insufficient_or_inconsistent_pose_evidence'
+    ):
+        inconclusive_reasons.append('goal_checker_pose_evidence_insufficient')
+    if 'bounded_evidence_limit_exceeded' in failures:
+        inconclusive_reasons.append('bounded_evidence_limit_exceeded')
+    result_classification = (
+        'pass' if not failures
+        else 'inconclusive' if inconclusive_reasons
+        else 'fail'
+    )
     summary = {
-        'schema_version': 5,
-        'status': 'pass' if not failures else 'fail',
+        'schema_version': 6,
+        'status': result_classification,
+        'classification': result_classification,
+        'inconclusive_reasons': inconclusive_reasons,
         'scenario': scenario,
-        'validated_scope': 'full_baylands_navigate_to_pose_runtime',
+        'validated_scope': (
+            'full_baylands_navigate_to_pose_runtime'
+            if runtime_profile == 'authoritative_full'
+            else 'non_authoritative_reduced_resource_track_a_diagnostic'
+        ),
         'time_model': 'explicit_best_effort_simulation_clock_with_wall_time_timeout',
         'configuration': {
+            'runtime_profile': runtime_profile,
+            'authoritative_full_runtime': runtime_profile == 'authoritative_full',
             'start': {'x': start[0], 'y': start[1], 'yaw': start[2]},
             'goal': {'x': goal[0], 'y': goal[1], 'yaw': goal[2]},
             'requested_action_goal': (
@@ -3704,6 +3914,7 @@ def summarize_runtime_evidence(
             'comparison_frame': 'map',
             'compared_child_frame': 'base_link',
             'runtime_goal_checker': runtime_goal_checker,
+            'goal_checker_evidence': goal_checker_evidence,
             'stateful_xy_diagnostics': stateful_xy_diagnostics,
             'stateful_goal_checker_semantics': (
                 'Once XY first passes, XY remains latched and is not rechecked '
@@ -3735,6 +3946,9 @@ def summarize_runtime_evidence(
                 if first_clear is not None and mark_ns is not None else None
             ),
             'restored_to_pre_hazard_in_analysis_region': first_clear is not None,
+            'post_clear_pose_count': len(post_clear_poses),
+            'post_clear_driven_distance_m': post_clear_driven_distance_m,
+            'navigation_continued_after_clear': navigation_continued_after_clear,
             'preservation_scope': (
                 'exact pre-hazard cell values across the covariance footprint, '
                 'inflation radius, and one-metre margin'
@@ -3745,22 +3959,24 @@ def summarize_runtime_evidence(
             'evidence_source': 'passive /plan subscription during active NavigateToPose',
             'manual_compute_path_requests': 0,
             'automatic_mission_replanning': {
-                'observed': (
-                    changed_plan is not None
-                    and mark_ns is not None
-                    and start_ns is not None
-                    and changed_plan['result_ns'] >= mark_ns >= start_ns
-                    and (
-                        completion_ns is None
-                        or changed_plan['result_ns'] <= completion_ns
-                    )
-                ),
+                'observed': automatic_replanning_observed,
                 'basis': (
                     'materially changed passive /plan output after the aerial mark '
-                    'while the same NavigateToPose goal remained active; the evidence '
-                    'process issued zero ComputePath requests'
+                    'inside one unambiguous NavigateToPose mission lifetime; the '
+                    'evidence process issued zero ComputePath requests'
                 ),
                 'goal_id': mission['goal_id'],
+                'single_active_goal_observed': mission.get(
+                    'single_active_goal_observed', False
+                ),
+                'other_goal_ids_during_mission': mission.get(
+                    'other_goal_ids_during_mission', []
+                ),
+                'mark_ns': mark_ns,
+                'changed_plan_ns': (
+                    changed_plan['result_ns'] if changed_plan else None
+                ),
+                'material_change_m': selected_plans['material_change_m'],
             },
             'plans': plans,
             **selected_plans,
@@ -3780,6 +3996,35 @@ def summarize_runtime_evidence(
             ],
             'crosses_inflation_region': trajectory_inflation['crosses_effective_hazard'],
             'hausdorff_distance_from_baseline_m': trajectory_change_m,
+            'physical_detour_observed': physical_detour_observed,
+            'samples_before_replan': sum(
+                1 for item in poses
+                if changed_plan is not None
+                and item.received_ns < changed_plan['result_ns']
+            ),
+            'samples_at_or_after_replan': len(post_replan_poses),
+            'first_physical_deviation_after_replan': (
+                {
+                    'received_ns': first_physical_deviation[0].received_ns,
+                    'time_from_replan_s': (
+                        first_physical_deviation[0].received_ns
+                        - changed_plan['result_ns']
+                    ) * 1.0e-9,
+                    'x': first_physical_deviation[0].x,
+                    'y': first_physical_deviation[0].y,
+                    'distance_from_baseline_trajectory_m': (
+                        first_physical_deviation[1]
+                    ),
+                }
+                if first_physical_deviation and changed_plan else None
+            ),
+            'maximum_post_replan_deviation_from_baseline_m': max(
+                (
+                    distance for _, distance in post_replan_deviations
+                    if distance is not None
+                ),
+                default=None,
+            ),
             'maximum_distance_to_post_mark_plan_history_m': plan_tracking_error_m,
             'maximum_plan_tracking_error_m': maximum_plan_tracking_error_m,
             'stationary_periods': stationary,
@@ -3886,7 +4131,8 @@ def _run_runtime_live(args: argparse.Namespace, ros_args: list[str]) -> int:
     nav2_config = load_nav2_inflation_config(args.nav2_config)
     if nav2_config['global_costmap_rolling_window']:
         raise ValueError(
-            'runtime profile requires the fixed Baylands global costmap; rolling grid correction is pending'
+            'runtime profile requires the fixed Baylands global costmap; '
+            'rolling grid correction is pending'
         )
     baseline_bundle = _runtime_baseline_bundle(
         args.baseline_evidence if args.scenario != 'baseline' else None
@@ -3965,10 +4211,15 @@ def _run_runtime_live(args: argparse.Namespace, ros_args: list[str]) -> int:
                 else nav2_config['goal_checker_yaw_tolerance_rad']
             ),
             runtime_goal_checker=runtime_goal_checker,
+            runtime_profile=args.runtime_profile,
         )
         if collector.selected_mission()['completion_ns'] is None:
-            summary['failures'].append('runtime_timeout_before_terminal_status')
-            summary['status'] = 'fail'
+            if 'runtime_timeout_before_terminal_status' not in summary['failures']:
+                summary['failures'].append('runtime_timeout_before_terminal_status')
+            if 'terminal_status_missing' not in summary['inconclusive_reasons']:
+                summary['inconclusive_reasons'].append('terminal_status_missing')
+            summary['status'] = 'inconclusive'
+            summary['classification'] = 'inconclusive'
         write_runtime_evidence(args.output, summary, collector, trajectory_rows)
         print(json.dumps(summary, indent=2, sort_keys=True))
         return 0 if summary['status'] == 'pass' else 1
@@ -4396,6 +4647,11 @@ def build_parser() -> argparse.ArgumentParser:
     runtime.add_argument('--map', type=Path, required=True)
     runtime.add_argument('--nav2-config', type=Path, required=True)
     runtime.add_argument('--baseline-evidence', type=Path)
+    runtime.add_argument(
+        '--runtime-profile',
+        choices=('authoritative_full', 'reduced_resource_diagnostic'),
+        default='authoritative_full',
+    )
     runtime.add_argument('--start-x', type=float, required=True)
     runtime.add_argument('--start-y', type=float, required=True)
     runtime.add_argument('--start-yaw', type=float, default=0.0)

@@ -437,6 +437,7 @@ def test_full_runtime_profile_is_fixed_passive_and_three_uav():
         assert "record=0" in output
         assert "prelaunch_safety_cleanup" not in output
         assert "pkill" not in output
+        assert "start_ugv_ground_truth_bridge:=false" in output
 
     assert "aerial_support_layer_enable:=true" not in baseline
     assert "hazard_synthetic_enable:=true" not in baseline
@@ -444,6 +445,60 @@ def test_full_runtime_profile_is_fixed_passive_and_three_uav():
     assert "activation_status_topic:=/a201_0000/navigate_to_pose/_action/status" in valid
     assert "active_duration_s:=0.0" in valid
     assert "active_duration_s:=4.0" in clearing
+
+
+def test_reduced_track_a_profile_reuses_downstream_chain_without_uav_rendering():
+    output = _dry_run([
+        "support_chain_full_runtime", "scenario:=valid",
+        "output:=/tmp/reduced-track-a/valid",
+        "reduced_resource:=true", "gui:=false",
+        "tmux_attach:=false", "dry_run:=true",
+    ])
+    lines = output.splitlines()
+    spawn = next(line for line in lines if line.startswith("[spawn]"))
+    follow = next(line for line in lines if line.startswith("[follow]"))
+    support_follow = next(
+        line for line in lines if line.startswith("[support_follow]")
+    )
+    support_observation = next(
+        line for line in lines if line.startswith("[support_observation]")
+    )
+    evidence = next(
+        line for line in lines if line.startswith("[runtime_evidence]")
+    )
+
+    assert "NON-AUTHORITATIVE REDUCED-RESOURCE TRACK A DIAGNOSTIC" in output
+    assert spawn.endswith("/bin/true")
+    assert "spawn_uav" not in spawn
+    assert "start_uav_simulator:=false" in follow
+    assert "start_uav_follow:=false" in follow
+    assert "start_camera_tracker:=false" in follow
+    assert "start_ugv_ground_truth_bridge:=false" in follow
+    assert "gazebo_model_pose_bridge" not in output
+    assert support_follow.endswith("/bin/true")
+    assert "dji1_enable:=false" in support_observation
+    assert "dji2_enable:=false" in support_observation
+    assert "hazard_fusion_enable:=true" in support_observation
+    assert "hazard_forward_enable:=true" in support_observation
+    assert "aerial_support_layer_enable:=true" in output
+    assert "support_hazard_evidence runtime-live" in evidence
+    assert "--runtime-profile reduced_resource_diagnostic" in evidence
+    assert "--baseline-evidence /tmp/reduced-track-a/baseline/analysis" in evidence
+    assert "camera_info" not in output
+    assert "image_raw" not in output
+
+
+def test_support_observation_dji1_detector_remains_enabled_by_default():
+    launch_source = (
+        REPO_ROOT / "src/lrs_halmstad/launch/support_observation.launch.py"
+    ).read_text(encoding="utf-8")
+
+    assert "'dji1_enable'" in launch_source
+    assert "default_value='true'" in launch_source
+    assert (
+        "condition=IfCondition(LaunchConfiguration('dji1_enable'))"
+        in launch_source
+    )
 
 
 def test_shared_operator_routes_sensor_and_detector_options():

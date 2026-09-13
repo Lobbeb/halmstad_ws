@@ -218,11 +218,29 @@ while the goal is still active, continued motion, and successful completion.
 
 `/plan` is observed passively and the summary records zero manual planner
 requests. Replanning evidence requires a materially changed plan after the
-aerial mark while the same NavigateToPose goal remains active; topic presence
-alone cannot pass. In this bounded profile, that timing plus the absence of an
-evidence-side ComputePath request supports attribution to Nav2 mission
-replanning. It remains synthetic-input evidence and does not establish detector
-accuracy, general safety, EiraX behavior, or broader Baylands coverage.
+aerial mark inside one unambiguous NavigateToPose goal lifetime; topic presence
+alone cannot pass. Physical detour additionally requires the actual trajectory
+to depart from the baseline trajectory after that replan. Explicit clearing
+requires ordered empty snapshots at dji1, dji0, and UGV before the aerial
+costmap returns exactly to its pre-hazard state. A stateful goal-checker result
+outside XY tolerance is accepted only when earlier map-frame action feedback
+proves XY tolerance entry.
+
+For laptop diagnostics only, `reduced_resource:=true` omits rendered UAVs,
+cameras, perception, gimbals, support follow, and the optional Gazebo
+ground-truth bridge. It retains the same Baylands UGV, localization, Nav2,
+controller, typed fusion/forwarding, AerialSupportLayer, driver, recorder, and
+analyzer. Output is explicitly labelled non-authoritative and cannot replace
+the final desktop three-UAV run.
+
+```bash
+./run.sh support_chain_full_runtime scenario:=baseline \
+  output:=evidence/support_runtime/final_v6/reduced_resource/baseline \
+  reduced_resource:=true gui:=false
+```
+
+It remains synthetic-input evidence and does not establish detector accuracy,
+general safety, EiraX behavior, or broader Baylands coverage.
 
 ## Task 4: interactive synthetic hazard validation
 

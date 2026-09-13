@@ -12,6 +12,7 @@ MAP_PATH=""
 GUI="false"
 TMUX_ATTACH=true
 DRY_RUN=false
+REDUCED_TRACK_A=false
 YOLO_WEIGHTS_WAIT_TIMEOUT_S="${YOLO_WEIGHTS_WAIT_TIMEOUT_S:-30}"
 LAYOUT="panes"
 MODE="follow"
@@ -212,6 +213,9 @@ for arg in "$@"; do
     dry_run:=*)
       DRY_RUN="${arg#dry_run:=}"
       ;;
+    reduced_track_a:=*)
+      REDUCED_TRACK_A="${arg#reduced_track_a:=}"
+      ;;
     layout:=*)
       LAYOUT="${arg#layout:=}"
       ;;
@@ -356,7 +360,7 @@ for arg in "$@"; do
     params_file:=*)
       FOLLOW_ARGS+=("$arg")
       ;;
-    follow_yaw:=*|pan_enable:=*|use_tilt:=*|tilt_enable:=*|camera_default_tilt_deg:=*|start_camera_tracker:=*|use_actual_heading:=*|leader_actual_heading_enable:=*|leader_actual_heading_topic:=*|leader_actual_pose_enable:=*|camera_actual_pose_reacquire_enable:=*|ugv_goal_sequence_randomize:=*|ugv_goal_sequence_random_reverse:=*|ugv_goal_sequence_relative_to_current_pose:=*)
+    follow_yaw:=*|pan_enable:=*|use_tilt:=*|tilt_enable:=*|camera_default_tilt_deg:=*|start_camera_tracker:=*|start_ugv_ground_truth_bridge:=*|use_actual_heading:=*|leader_actual_heading_enable:=*|leader_actual_heading_topic:=*|leader_actual_pose_enable:=*|camera_actual_pose_reacquire_enable:=*|ugv_goal_sequence_randomize:=*|ugv_goal_sequence_random_reverse:=*|ugv_goal_sequence_relative_to_current_pose:=*)
       FOLLOW_ARGS+=("$arg")
       ;;
     range_mode:=*|radio_range_topic:=*)
@@ -433,6 +437,31 @@ case "$MODE" in
     exit 2
     ;;
 esac
+
+case "$REDUCED_TRACK_A" in
+  true|false) ;;
+  *)
+    echo "Invalid reduced_track_a option: $REDUCED_TRACK_A" >&2
+    exit 2
+    ;;
+esac
+if [ "$REDUCED_TRACK_A" = true ]; then
+  if [[ "$WORLD" != baylands* ]] || [ "$MODE" != follow ]; then
+    echo "reduced_track_a:=true is a Baylands follow diagnostic only." >&2
+    exit 2
+  fi
+  FOLLOW_WAIT_TOPICS=""
+  FOLLOW_ARGS+=(
+    start_uav_simulator:=false
+    start_uav_follow:=false
+    start_camera_tracker:=false
+    require_uav_actual_before_motion:=false
+    uav_start_x:=0.0
+    uav_start_y:=0.0
+    start_ugv_ground_truth_bridge:=false
+    ugv_use_amcl_odom_fallback:=false
+  )
+fi
 
 if [ "$MODE" != "yolo" ]; then
   for arg in "${FOLLOW_ARGS[@]}"; do
@@ -892,7 +921,11 @@ if [ "${#GAZEBO_ARGS[@]}" -gt 0 ]; then
   GAZEBO_CMD+=("${GAZEBO_ARGS[@]}")
 fi
 
-SPAWN_CMD=(./run.sh spawn_uav "$WORLD" "${SPAWN_ARGS[@]}")
+if [ "$REDUCED_TRACK_A" = true ]; then
+  SPAWN_CMD=(/bin/true)
+else
+  SPAWN_CMD=(./run.sh spawn_uav "$WORLD" "${SPAWN_ARGS[@]}")
+fi
 LOCALIZATION_CMD=(./run.sh localization "$WORLD")
 if [ -n "$MAP_PATH" ]; then
   LOCALIZATION_CMD+=("$MAP_PATH")
@@ -991,6 +1024,7 @@ if [ "$DRY_RUN" = true ]; then
   echo "GUI: $EFFECTIVE_GUI"
   echo "Lidar: ${EFFECTIVE_NAV_LIDAR_MODE:-default}"
   echo "Record: $RECORD"
+  echo "Reduced Track A diagnostic: $REDUCED_TRACK_A"
   echo "Base delay: $BASE_DELAY_S"
   echo "Overrides: spawn=${SPAWN_DELAY_OVERRIDE:-default} localization=${LOCALIZATION_DELAY_OVERRIDE:-default} nav2=${NAV2_DELAY_OVERRIDE:-default} follow=${FOLLOW_DELAY_OVERRIDE:-default} record=${RECORD_DELAY_OVERRIDE:-default}"
   if [ "$OMNET" = true ] || [ -n "$OMNET_START_DELAY_OVERRIDE" ] || [ -n "$UGV_START_DELAY_OVERRIDE" ] || [ -n "$UAV_START_DELAY_OVERRIDE" ]; then

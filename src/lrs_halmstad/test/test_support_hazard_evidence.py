@@ -10,6 +10,7 @@ from builtin_interfaces.msg import Duration, Time
 from action_msgs.msg import GoalStatus
 from geometry_msgs.msg import Point
 from lrs_halmstad.tools.support_hazard_evidence import (
+    _clearing_mechanism,
     _request_costmap_snapshot,
     _set_aerial_layer,
     baseline_repeatability,
@@ -930,6 +931,63 @@ def _runtime_collector(*, clearing=False):
     return collector
 
 
+def _summarize_runtime_collector(
+    collector,
+    *,
+    scenario='clearing',
+    stateful=True,
+    baseline_trajectory=None,
+):
+    nav2_config = load_nav2_inflation_config(
+        REPO_ROOT / 'src/lrs_halmstad/config/nav2_baylands_large_map.yaml'
+    )
+    baseline_bundle = None
+    if scenario != 'baseline':
+        baseline_bundle = {
+            'root': '/tmp/baseline',
+            'summary': {'status': 'pass'},
+            'plans': [{
+                'label': 'baseline',
+                'crosses_covariance_footprint': True,
+            }],
+            'trajectory': (
+                baseline_trajectory
+                if baseline_trajectory is not None
+                else [(0.0, 5.0), (0.0, -5.0)]
+            ),
+        }
+    return summarize_runtime_evidence(
+        collector,
+        scenario=scenario,
+        start=(0.0, 5.0, 0.0),
+        goal=(0.0, -5.0, 0.0),
+        geometry={
+            'center_x': 0.0, 'center_y': 0.0, 'yaw': 0.0,
+            'nominal_size_x': 2.0, 'nominal_size_y': 2.0,
+            'variance_x': 0.25, 'variance_y': 0.25,
+            'covariance_sigma_scale': 2.0,
+            'effective_size_x': 4.0, 'effective_size_y': 4.0,
+        },
+        nav2_config=nav2_config,
+        map_path=REPO_ROOT / 'maps/baylands.yaml',
+        layer_enabled=scenario != 'baseline',
+        baseline_bundle=baseline_bundle,
+        minimum_path_change_m=0.5,
+        minimum_trajectory_change_m=0.75,
+        maximum_plan_tracking_error_m=2.0,
+        goal_tolerance_m=1.0,
+        yaw_goal_tolerance_rad=2.5,
+        runtime_goal_checker={
+            'goal_checker_plugins': ['general_goal_checker'],
+            'plugin': 'nav2_controller::SimpleGoalChecker',
+            'xy_goal_tolerance_m': 1.0,
+            'yaw_goal_tolerance_rad': 2.5,
+            'stateful': stateful,
+            'source': 'test',
+        },
+    )
+
+
 def test_runtime_summary_requires_passive_replan_motion_and_clearing(tmp_path):
     collector = _runtime_collector(clearing=True)
     nav2_config = load_nav2_inflation_config(
@@ -993,6 +1051,16 @@ def test_runtime_summary_requires_passive_replan_motion_and_clearing(tmp_path):
     assert summary['mission']['amcl_pose_at_or_before_success']['xy_error_m'] == 0.0
     assert summary['mission']['later_shutdown_amcl_pose']['xy_error_m'] == 1.0
     assert summary['mission']['runtime_goal_checker']['stateful'] is True
+    assert summary['mission']['goal_checker_evidence']['classification'] == (
+        'within_xy_tolerance_at_success'
+    )
+    assert summary['planner']['automatic_mission_replanning']['observed'] is True
+    assert summary['trajectory']['physical_detour_observed'] is True
+    assert summary['trajectory']['first_physical_deviation_after_replan'] is not None
+    assert summary['costmap']['clearing'][
+        'explicit_empty_propagation_complete'
+    ] is True
+    assert summary['costmap']['navigation_continued_after_clear'] is True
     assert summary['configuration']['requested_action_goal']['matches_configured_goal'] is True
     assert summary['configuration']['requested_action_goal'][
         'xy_error_to_configured_goal_m'
@@ -1048,5 +1116,175 @@ def test_runtime_summary_cannot_pass_without_terminal_mission_evidence():
         },
     )
 
+    assert summary['status'] == 'inconclusive'
+    assert 'navigate_to_pose_goal_not_completed' in summary['failures']
+    assert 'terminal_status_missing' in summary['inconclusive_reasons']
+
+
+def test_stateful_goal_checker_accepts_only_a_proven_xy_entry_before_drift():
+    collector = _runtime_collector(clearing=True)
+    collector.transforms.clear()
+    collector.transforms.append(TransformRecord(
+        9_900_000_000, 9_900_000_000, 'map', 'base_link',
+        1.2, -5.0, 0.0,
+    ))
+
+    summary, _ = _summarize_runtime_collector(collector)
+
+    evidence = summary['mission']['goal_checker_evidence']
+    assert summary['status'] == 'pass', summary['failures']
+    assert evidence['classification'] == 'stateful_xy_latched_after_proven_entry'
+    assert evidence['first_proven_xy_entry']['xy_error_m'] == 0.5
+    assert evidence['xy_entry_proof_source'] == 'navigate_to_pose_feedback'
+
+
+def test_stateful_goal_checker_rejects_success_without_proven_xy_entry():
+    collector = _runtime_collector(clearing=True)
+    collector.transforms.clear()
+    collector.transforms.append(TransformRecord(
+        9_900_000_000, 9_900_000_000, 'map', 'base_link',
+        1.2, -5.0, 0.0,
+    ))
+    collector.feedback.clear()
+    collector.feedback.append(FeedbackRecord(
+        9_800_000_000,
+        'goal-1',
+        PoseRecord(
+            9_800_000_000, 1.5, -5.0, 0.0, 9_750_000_000,
+            'map', 'base_link', 'navigate_to_pose_feedback',
+        ),
+        1.5,
+        0,
+    ))
+
+    summary, _ = _summarize_runtime_collector(collector)
+
     assert summary['status'] == 'fail'
-    assert 'navigate_to_pose_goal_not_succeeded' in summary['failures']
+    assert summary['mission']['goal_checker_evidence']['classification'] == (
+        'success_without_proven_xy_entry'
+    )
+    assert 'goal_checker_xy_entry_not_proven' in summary['failures']
+
+
+def test_goal_checker_reports_insufficient_pose_evidence_separately():
+    collector = _runtime_collector(clearing=True)
+    collector.transforms.clear()
+    collector.feedback.clear()
+
+    summary, _ = _summarize_runtime_collector(collector)
+
+    assert summary['status'] == 'inconclusive'
+    assert summary['mission']['goal_checker_evidence']['classification'] == (
+        'insufficient_or_inconsistent_pose_evidence'
+    )
+    assert 'success_time_tf_pose_missing' in summary['inconclusive_reasons']
+
+
+def test_non_stateful_goal_checker_requires_xy_tolerance_at_success():
+    collector = _runtime_collector(clearing=True)
+    collector.transforms.clear()
+    collector.transforms.append(TransformRecord(
+        9_900_000_000, 9_900_000_000, 'map', 'base_link',
+        1.2, -5.0, 0.0,
+    ))
+
+    summary, _ = _summarize_runtime_collector(collector, stateful=False)
+
+    assert summary['status'] == 'fail'
+    assert summary['mission']['goal_checker_evidence']['classification'] == (
+        'outside_xy_tolerance_at_success'
+    )
+
+
+def test_automatic_replanning_rejects_an_ambiguous_goal_lifetime():
+    collector = _runtime_collector(clearing=True)
+    collector.status_events.append(MissionStatusRecord(
+        5 * SECOND, 'goal-2', GoalStatus.STATUS_ACCEPTED,
+    ))
+
+    summary, _ = _summarize_runtime_collector(collector)
+
+    replanning = summary['planner']['automatic_mission_replanning']
+    assert replanning['observed'] is False
+    assert replanning['other_goal_ids_during_mission'] == ['goal-2']
+    assert 'automatic_replan_goal_identity_ambiguous' in summary['failures']
+
+
+def test_terminal_goal_history_does_not_make_replanning_ambiguous():
+    collector = _runtime_collector(clearing=True)
+    collector.status_events.append(MissionStatusRecord(
+        5 * SECOND, 'old-goal', GoalStatus.STATUS_SUCCEEDED,
+    ))
+
+    summary, _ = _summarize_runtime_collector(collector)
+
+    replanning = summary['planner']['automatic_mission_replanning']
+    assert replanning['observed'] is True
+    assert replanning['other_goal_ids_during_mission'] == []
+
+
+def test_ordinary_plan_traffic_without_post_mark_change_is_not_replanning():
+    collector = _runtime_collector(clearing=True)
+    unchanged = collector.automatic_plans[0].points
+    collector.automatic_plans[1] = PlanRecord(
+        'automatic_0002', 4 * SECOND, 4 * SECOND, 0.0, 0, '', unchanged,
+    )
+    collector.automatic_plans[2] = PlanRecord(
+        'automatic_0003', 7 * SECOND, 7 * SECOND, 0.0, 0, '', unchanged,
+    )
+
+    summary, _ = _summarize_runtime_collector(collector)
+
+    assert summary['planner']['automatic_mission_replanning']['observed'] is False
+    assert 'automatic_post_mark_replan_not_observed' in summary['failures']
+
+
+def test_pre_replan_motion_cannot_count_as_a_physical_detour():
+    collector = _runtime_collector(clearing=True)
+    collector.poses[2] = PoseRecord(6 * SECOND, 0.0, -2.5, 0.0)
+
+    summary, _ = _summarize_runtime_collector(collector)
+
+    assert summary['trajectory']['hausdorff_distance_from_baseline_m'] > 0.75
+    assert summary['trajectory']['first_physical_deviation_after_replan'] is None
+    assert summary['trajectory']['physical_detour_observed'] is False
+    assert 'ugv_trajectory_did_not_materially_deviate' in summary['failures']
+
+
+def test_clearing_requires_ordered_empty_propagation_through_every_stage():
+    collector = _runtime_collector(clearing=True)
+    collector.samples[DJI1_TOPIC].pop()
+
+    summary, _ = _summarize_runtime_collector(collector)
+
+    clearing = summary['costmap']['clearing']
+    assert clearing['explicit_empty_propagation_complete'] is False
+    assert clearing['source_explicit_empty_ns'] is None
+    assert clearing['fusion_explicit_empty_ns'] == 5_500_000_000
+    assert clearing['forwarded_explicit_empty_ns'] == 5_500_000_000
+    assert 'explicit_empty_clearing_propagation_incomplete' in summary['failures']
+
+
+def test_clearing_cannot_pass_without_prior_marking():
+    collector = _runtime_collector(clearing=True)
+    collector.costmaps[2] = _runtime_grid(3 * SECOND)
+
+    summary, _ = _summarize_runtime_collector(collector)
+
+    assert summary['costmap']['first_mark_ns'] is None
+    assert summary['costmap']['clearing']['observed_mechanism'] == 'not_observed'
+    assert 'aerial_costmap_mark_not_observed' in summary['failures']
+
+
+def test_clearing_expiry_and_silence_mechanisms_remain_distinct():
+    collector = _runtime_collector()
+
+    age_expiry = _clearing_mechanism(collector, 5 * SECOND, 2.0)
+    ttl_expiry = _clearing_mechanism(collector, 5 * SECOND, 10.0)
+    source_silence = _clearing_mechanism(collector, 3 * SECOND, 10.0)
+
+    assert age_expiry['observed_mechanism'] == 'observation_age_expiry'
+    assert ttl_expiry['observed_mechanism'] == 'ttl_expiry'
+    assert source_silence['observed_mechanism'] == 'source_silence'
+    for result in (age_expiry, ttl_expiry, source_silence):
+        assert result['explicit_empty_propagation_complete'] is False

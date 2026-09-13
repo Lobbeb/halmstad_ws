@@ -10,6 +10,7 @@ SESSION=""
 GUI="true"
 TMUX_ATTACH="true"
 DRY_RUN="false"
+REDUCED_RESOURCE="false"
 TIMEOUT_S="300.0"
 
 START_WAYPOINT="parkinglot_west_1"
@@ -40,6 +41,7 @@ Options:
   tmux_attach:=true|false Attach after startup. Default: true.
   timeout_s:=S            Evidence wall-time limit. Default: 300.
   dry_run:=true           Print all resolved commands without starting ROS or tmux.
+  reduced_resource:=true  Non-authoritative UGV/Nav2/typed-chain diagnostic without UAV rendering.
 
 This fixed Baylands profile starts at parkinglot_west_1 and sends one existing
 NavigateToPose driver goal to parkinglot_west_2. valid and clearing use a
@@ -78,6 +80,7 @@ for arg in "$@"; do
     tmux_attach:=*|attach:=*) TMUX_ATTACH="${arg#*:=}" ;;
     timeout_s:=*) TIMEOUT_S="${arg#timeout_s:=}" ;;
     dry_run:=*) DRY_RUN="${arg#dry_run:=}" ;;
+    reduced_resource:=*) REDUCED_RESOURCE="${arg#reduced_resource:=}" ;;
     *) echo "Unknown argument: $arg" >&2; usage >&2; exit 2 ;;
   esac
 done
@@ -89,19 +92,26 @@ esac
 validate_boolean gui "$GUI"
 validate_boolean tmux_attach "$TMUX_ATTACH"
 validate_boolean dry_run "$DRY_RUN"
+validate_boolean reduced_resource "$REDUCED_RESOURCE"
 
 if [ -z "$OUTPUT" ]; then
   OUTPUT="$WS_ROOT/evidence/support_runtime/$SCENARIO"
 elif [[ "$OUTPUT" != /* ]]; then
   OUTPUT="$WS_ROOT/$OUTPUT"
 fi
-if [ -z "$BASELINE_EVIDENCE" ]; then
+if [ -z "$BASELINE_EVIDENCE" ] && [ "$REDUCED_RESOURCE" = true ]; then
+  BASELINE_EVIDENCE="$(dirname "$OUTPUT")/baseline/analysis"
+elif [ -z "$BASELINE_EVIDENCE" ]; then
   BASELINE_EVIDENCE="$WS_ROOT/evidence/support_runtime/baseline/analysis"
 elif [[ "$BASELINE_EVIDENCE" != /* ]]; then
   BASELINE_EVIDENCE="$WS_ROOT/$BASELINE_EVIDENCE"
 fi
 if [ -z "$SESSION" ]; then
-  SESSION="halmstad-baylands-track-a-$SCENARIO"
+  if [ "$REDUCED_RESOURCE" = true ]; then
+    SESSION="halmstad-baylands-track-a-reduced-$SCENARIO"
+  else
+    SESSION="halmstad-baylands-track-a-$SCENARIO"
+  fi
 fi
 
 ANALYSIS_DIR="$OUTPUT/analysis"
@@ -157,6 +167,12 @@ SUPPORT_CMD=(
   hazard_synthetic_activation_status_topic:=/a201_0000/navigate_to_pose/_action/status
   hazard_synthetic_provenance:="synthetic_track_a_full_runtime:$SCENARIO"
 )
+if [ "$REDUCED_RESOURCE" = true ]; then
+  SUPPORT_CMD+=(reduced_track_a:=true)
+else
+  # Track A does not consume legacy Gazebo ground truth, and Jazzy lacks its Python binding.
+  SUPPORT_CMD+=(start_ugv_ground_truth_bridge:=false)
+fi
 
 EVIDENCE_ROS_CMD=(
   ros2 run lrs_halmstad support_hazard_evidence runtime-live
@@ -171,6 +187,13 @@ EVIDENCE_ROS_CMD=(
   --variance-x 0.25 --variance-y 0.25 --covariance-sigma-scale 2.0
   --timeout-s "$TIMEOUT_S"
   --output "$ANALYSIS_DIR"
+  --runtime-profile "$(
+    if [ "$REDUCED_RESOURCE" = true ]; then
+      printf '%s' reduced_resource_diagnostic
+    else
+      printf '%s' authoritative_full
+    fi
+  )"
 )
 if [ "$SCENARIO" != "baseline" ]; then
   EVIDENCE_ROS_CMD+=(--baseline-evidence "$BASELINE_EVIDENCE")
@@ -181,6 +204,9 @@ echo "[support_chain_full_runtime] scenario=$SCENARIO"
 echo "[support_chain_full_runtime] output=$OUTPUT"
 echo "[support_chain_full_runtime] session=$SESSION"
 echo "[support_chain_full_runtime] fixed global costmap config=$NAV2_CONFIG"
+if [ "$REDUCED_RESOURCE" = true ]; then
+  echo "[support_chain_full_runtime] NON-AUTHORITATIVE REDUCED-RESOURCE TRACK A DIAGNOSTIC"
+fi
 if [ "$DRY_RUN" = "true" ]; then
   "${SUPPORT_CMD[@]}" dry_run:=true
   echo "[runtime_evidence] $EVIDENCE_LINE"
