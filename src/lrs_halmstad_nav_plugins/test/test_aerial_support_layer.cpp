@@ -126,7 +126,7 @@ protected:
           rclcpp::Parameter("aerial_support_layer.covariance_sigma_scale", 2.0),
     });
     node_ = std::make_shared<nav2_util::LifecycleNode>("aerial_support_layer_test", "", options);
-    layered_costmap_ = std::make_unique<nav2_costmap_2d::LayeredCostmap>("map", false, false);
+    layered_costmap_ = std::make_unique<nav2_costmap_2d::LayeredCostmap>("map", true, false);
     layered_costmap_->resizeMap(100, 100, 0.1, -5.0, -5.0);
     tf_buffer_ = std::make_unique<tf2_ros::Buffer>(node_->get_clock());
     tf_buffer_->setUsingDedicatedThread(true);
@@ -205,6 +205,20 @@ TEST_F(AerialSupportLayerTest, ValidConfirmedHazardMarksLethalCost)
   layer_->ingest(makeArray(layer_->test_now_ns, {makeHazard(layer_->test_now_ns)}));
   cycle();
   EXPECT_EQ(costAt(0.0, 0.0), nav2_costmap_2d::LETHAL_OBSTACLE);
+}
+
+TEST_F(AerialSupportLayerTest, SynchronizesWithRollingMasterOrigin)
+{
+  layer_->ingest(makeArray(layer_->test_now_ns, {makeHazard(layer_->test_now_ns)}));
+  cycle();
+  ASSERT_EQ(costAt(0.0, 0.0), nav2_costmap_2d::LETHAL_OBSTACLE);
+
+  master_->updateOrigin(-4.0, -5.0);
+  cycle();
+  EXPECT_DOUBLE_EQ(layer_->getOriginX(), master_->getOriginX());
+  EXPECT_DOUBLE_EQ(layer_->getOriginY(), master_->getOriginY());
+  EXPECT_EQ(costAt(0.0, 0.0), nav2_costmap_2d::LETHAL_OBSTACLE);
+  EXPECT_EQ(costAt(1.0, 0.0), nav2_costmap_2d::FREE_SPACE);
 }
 
 TEST_F(AerialSupportLayerTest, TentativeHazardUsesConfiguredHighCost)
@@ -311,6 +325,23 @@ TEST_F(AerialSupportLayerTest, TrackExpiryClearsFootprint)
   cycle();
   EXPECT_EQ(costAt(0.0, 0.0), nav2_costmap_2d::FREE_SPACE);
   EXPECT_EQ(markedCellCount(), 0U);
+}
+
+TEST_F(AerialSupportLayerTest, AcceptedTrackSurvivesBriefInputGapUntilTtl)
+{
+  layer_->ingest(makeArray(
+    layer_->test_now_ns,
+      {makeHazard(layer_->test_now_ns, "retained", Hazard::CONFIRMED, 0.0, 0.0, 0.01, 3.0)}));
+  cycle();
+  EXPECT_EQ(costAt(0.0, 0.0), nav2_costmap_2d::LETHAL_OBSTACLE);
+
+  layer_->test_now_ns += 2 * kSecond;
+  cycle();
+  EXPECT_EQ(costAt(0.0, 0.0), nav2_costmap_2d::LETHAL_OBSTACLE);
+
+  layer_->test_now_ns += 2 * kSecond;
+  cycle();
+  EXPECT_EQ(costAt(0.0, 0.0), nav2_costmap_2d::FREE_SPACE);
 }
 
 TEST_F(AerialSupportLayerTest, ResetClearsLayer)

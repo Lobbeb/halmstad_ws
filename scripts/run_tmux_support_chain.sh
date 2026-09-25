@@ -419,7 +419,7 @@ if [ "$HAZARD_CHAIN_ENABLE" = true ] && [ "$SUPPORT_DJI2_EXPLICIT" = false ]; th
 fi
 if [ "$REDUCED_TRACK_A" = true ]; then
   if [[ "$WORLD" != baylands* ]]; then
-    echo "reduced_track_a:=true is a fixed Baylands follow diagnostic." >&2
+    echo "reduced_track_a:=true is a fixed Baylands downstream Track A profile." >&2
     exit 2
   fi
   SUPPORT_DJI2_ENABLE=false
@@ -508,7 +508,7 @@ if [ "$DRY_RUN" = true ]; then
   echo "Session: $SESSION"
   echo "Layout: $LAYOUT"
   echo "Attach: $TMUX_ATTACH"
-  echo "NON-AUTHORITATIVE REDUCED-RESOURCE TRACK A DIAGNOSTIC: $REDUCED_TRACK_A"
+  echo "Downstream Track A without rendered UAVs: $REDUCED_TRACK_A"
   echo "[base]"
   "${BASE_CMD[@]}" "dry_run:=true"
   echo "[support_follow] $SUPPORT_FOLLOW_LINE"

@@ -15,27 +15,24 @@ canonical 0-to-100 project sequence.
 ## Current state
 
 - Active branch: `support-chain`.
-- Current implementation baseline: `bcc83771b25bd15f7f573a56af380e6e2998660a`.
 - Current Track A world: Baylands. Warehouse material is legacy/reference
   unless needed to preserve compatibility.
 - Lightweight Track A: PASS.
-- Full-runtime Track A: implementation complete; authoritative desktop runtime
-  pending.
+- Downstream Track A: **DONE / PASS**. The authoritative desktop sequence
+  `baseline -> valid -> clearing` passed. The valid gate includes configured
+  padded-footprint avoidance while the virtual lethal core is active; clearing
+  proves ordered explicit empty propagation, exact cost restoration, continued
+  navigation, and mission completion.
 - Laptop full and reduced Baylands runtime attempts were environment-limited
   and inconclusive, not demonstrated functional failures.
 
 ### Current next gate
 
-Run authoritative desktop Baylands full-runtime validation in this order:
-
-1. `baseline`
-2. `valid`, only if baseline passes
-3. `clearing`, only if valid passes
-
-Use the exact commands and evidence criteria in
-`descriptions/TRACK_A_FULL_RUNTIME_WIP_HANDOFF.md`. Do not expand Track A
-implementation unless these runs reveal a demonstrated defect. After all three
-authoritative scenarios pass, begin Phase 4 Track B perception work.
+Phase 4 Track B real perception is now unblocked and is the next implementation
+phase. Define the real environmental-hazard classes and dataset/evaluation
+contract before training. The detector must publish through the already
+validated typed projector/fusion/forwarding interface; it must not redesign the
+Nav2 integration.
 
 ## Final system
 
@@ -49,7 +46,7 @@ real support-UAV perception
 -> dji0-to-UGV forwarding
 -> /coord/ugv/aerial_hazards
 -> AerialSupportLayer
--> Nav2 global costmap
+-> Nav2 global and local costmaps
 -> automatic Nav2 replanning
 -> existing UGV navigation/controller
 -> safe UGV traversal
@@ -83,7 +80,8 @@ operational navigation or tracking input.
 - dji0 associates and conservatively selects/fuses evidence, publishing
   `/coord/dji0/aerial_hazards`.
 - The dji0-to-UGV forwarder publishes `/coord/ugv/aerial_hazards`.
-- `AerialSupportLayer` consumes the UGV topic in the Nav2 global costmap.
+- `AerialSupportLayer` consumes the UGV topic in the Nav2 global and local
+  costmaps when explicitly enabled; both instances remain disabled by default.
 - Typed dji2 input exists at `/coord/support/dji2/aerial_hazards` but remains
   opt-in and disabled by default.
 
@@ -108,49 +106,77 @@ goal completion, runtime safety, or detector accuracy. Checkpoint: `4d1953f`.
 
 ### Phase 3 - Full Baylands Track A runtime
 
-**Status: IMPLEMENTATION COMPLETE / AUTHORITATIVE DESKTOP RUNTIME PENDING**
+**Status: DONE / PASS**
 
-Required authoritative sequence: `baseline -> valid -> clearing`.
+The authoritative desktop sequence `baseline -> valid -> clearing` passed using
+the minimal headless downstream profile: real Baylands UGV, localization, Nav2
+mission/controller, synthetic dji1 typed source, dji0 fusion, forwarding,
+AerialSupportLayer, and passive evidence. No rendered UAVs, cameras, YOLO,
+gimbals, support follow, RViz, or operational ground-truth input were used.
 
-Baseline must prove:
+Baseline evidence is under
+`evidence/support_runtime/final_v6/desktop/baseline_reanalyzed_v3/analysis`.
+It proves one matching NavigateToPose mission, 19.693 m estimated motion,
+117 observed active-goal plans, stable pre-hazard costmap, and `SUCCEEDED`.
+Its historical localization discrepancy remains visible: success-time map-frame
+TF and AMCL estimates were outside the configured 1.0 m XY tolerance even
+though Jazzy's stateful controller-frame/timestamp goal check succeeded. Track A
+does not claim independent absolute map-frame localization accuracy.
 
-- one real NavigateToPose mission;
-- actual UGV motion;
-- runtime goal-checker parameters and correct success semantics;
-- a hazard-relevant baseline plan and trajectory without operational hazard.
+The earlier valid recording exposed five genuine estimated footprint
+penetrations into the active virtual lethal core. The analyzer now reproduces
+Nav2 1.3.10 footprint semantics exactly: the configured 1.10 x 0.90 m polygon
+is expanded by the default 0.01 m `footprint_padding`, producing vertices at
+(+/-0.56, +/-0.46), then transformed by each map-frame AMCL pose and yaw. The
+five samples were fresh and aligned with an active 400-cell lethal core; maximum
+intersection was 0.010863 m2. The cause was architectural: the support layer
+existed only in the global costmap. The global planner avoided lethal centerline
+cells, while MPPI's configured footprint collision check used the local costmap
+and could cut the corner without seeing the virtual hazard.
 
-Valid must additionally prove:
+The bounded correction adds the same opt-in support layer before inflation in
+the local rolling `odom` costmap and synchronizes the plugin's internal origin
+with the rolling master costmap. Both local and global instances remain disabled
+by default and are enabled together only through the existing Baylands support
+argument. No controller weights, inflation radii, goal tolerances, C1-C4
+defaults, hazard geometry, or motion authority changed.
 
-- synthetic dji1 hazard publication, dji0 fusion, and UGV forwarding;
-- aerial costmap lethal marking plus configured inflation;
-- a materially changed automatic plan under the same unambiguous active goal,
-  with no evidence-side ComputePath request;
-- actual post-replan physical UGV deviation from the baseline trajectory;
-- hazard avoidance, replanned-path tracking, and goal completion.
+Fresh minimal valid evidence is under
+`evidence/support_runtime/final_v6/desktop/valid_downstream_v1/analysis` and is
+**PASS** with no failures. Both support layers were observed enabled. Typed flow
+completed; the global map contained 400 lethal-core cells and 438 graded halo
+cells; a passive same-goal plan changed 2.959 m 0.328 s after marking; the
+evidence process issued zero ComputePath requests; the estimated trajectory
+deviated 4.122 m from baseline; all 131 active-interval padded footprints had
+zero intersection and at least 0.443 m polygon clearance; and NavigateToPose
+returned `SUCCEEDED` after 21.984 m estimated travel.
 
-Clearing must additionally prove:
+Fresh minimal clearing evidence is under
+`evidence/support_runtime/final_v6/desktop/clearing_downstream_v1/`. The live
+analysis initially applied the active-hazard centerline rule to the full mission
+and incorrectly failed when the UGV traversed the former region after clearing.
+A regression-tested analyzer correction now evaluates centerline and footprint
+safety over the same mark-to-clear interval. Offline replay of the unchanged bag
+at `analysis_clearing_gate_v2/` is **PASS**: explicit empty snapshots propagated
+dji1 -> dji0 -> UGV at 40.000 s; exact observed costmap restoration occurred at
+40.564 s; the post-clear plan returned toward baseline through the former
+hazard; navigation continued 18.580 m; and the mission `SUCCEEDED`. No active-
+interval centerline or padded-footprint intersection occurred.
 
-- the hazard and aerial cost were marked first;
-- ordered explicit empty propagation from dji1 to dji0 to UGV;
-- exact restoration of the observed pre-hazard costmap region;
-- continued healthy navigation, a post-clear plan, and goal completion.
-
-The success-time common-timestamp TF evidence is corrected at `e76b99e`.
-Goal semantics, passive automatic-replanning attribution, physical-trajectory
-proof, explicit clearing, and inconclusive classifications are implemented in
-the evidence analyzer. The complete runtime-closure implementation is at
-`bcc83771b25bd15f7f573a56af380e6e2998660a`.
-
-Full three-UAV and reduced-resource Baylands attempts on the laptop were
-environment-limited. The reduced profile is diagnostic only and cannot replace
-authoritative three-UAV evidence. Run the heavy sequence on the stronger
-desktop without speculative Nav2/controller retuning.
+The result proves Track A downstream of perception for the synthetic map-frame
+hazard contract: typed propagation, costmap marking and inflation, automatic
+same-goal replanning, estimated physical route deviation, configured-footprint
+avoidance while active, explicit clearing, continued navigation, and mission
+completion. It does not prove real detector accuracy, three-UAV composition,
+absolute Gazebo-world clearance, or general runtime safety outside this bounded
+Baylands experiment. Optional world-registration diagnostics remain
+inconclusive and evaluation-only.
 
 ### Phase 4 - Track B real perception
 
-**Status: NOT STARTED / DEFERRED UNTIL TRACK A GATE**
+**Status: NOT STARTED / UNBLOCKED; NEXT PHASE**
 
-After Phase 3 passes:
+Phase 3 has passed. Next:
 
 1. Define the environmental hazard classes and operational scope.
 2. Select or collect representative data.
@@ -200,8 +226,8 @@ navigation effects. Keep detector claims separate from integration claims.
 - Preserve acquisition timestamps, track IDs, state, TTL, geometry, and
   covariance through transforms.
 - Rotate/reproject covariance correctly where required.
-- Correct and validate the known generic AerialSupportLayer rolling-costmap
-  origin issue before using it with EiraX's rolling global costmap.
+- The generic AerialSupportLayer rolling-origin correction is implemented and
+  unit-tested; validate its frame/topic configuration in EiraX before enabling it there.
 
 These are future integration requirements, not claims that EiraX integration
 or registration is already implemented.
@@ -241,7 +267,8 @@ or registration is already implemented.
 - Prefer small evidence-driven fixes over speculative retuning or redesign.
 - Planner evidence is not physical-motion evidence.
 - Lightweight PASS is not full-runtime PASS.
-- Reduced-resource diagnostics are not authoritative three-UAV evidence.
+- Downstream Track A evidence with a synthetic source is not three-UAV
+  composition or real-perception evidence.
 - Generated evidence, bags, build/install/log outputs, and runtime artifacts
   must not be silently committed.
 - Do not commit, push, merge, or rebase without explicit authorization.
@@ -251,8 +278,10 @@ or registration is already implemented.
 - `783b2ef` - shared-runtime reconciliation.
 - `4d1953f` - validated lightweight Track A.
 - `e76b99e` - success-time TF evidence correction.
-- `bcc83771b25bd15f7f573a56af380e6e2998660a` - latest pushed Track A
-  runtime-closure state and current implementation baseline.
+- `bcc83771b25bd15f7f573a56af380e6e2998660a` - last committed Track A
+  runtime-code checkpoint before the evidence-policy correction.
+- `dd08e358518f02791ccc511beeca218969390658` - documentation checkpoint from
+  which the final Track A closure work began.
 
 ## Maintaining this plan
 

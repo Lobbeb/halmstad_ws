@@ -66,6 +66,15 @@ def _time_from_ns(stamp_ns: int) -> Time:
     )
 
 
+def valid_array_header(message: AerialHazardArray, now_ns: int, max_age_s: float) -> bool:
+    stamp_ns = _stamp_ns(message.header.stamp)
+    return (
+        message.header.frame_id == MAP_FRAME
+        and stamp_ns > 0
+        and 0 <= now_ns - stamp_ns <= int(round(max_age_s * _NANOSECONDS_PER_SECOND))
+    )
+
+
 def _finite_positive(values) -> bool:
     return all(math.isfinite(float(value)) and float(value) > 0.0 for value in values)
 
@@ -453,36 +462,39 @@ class HazardFusionCore:
             raise ValueError(f"unknown source_id: {source_id}")
         self._prune_inactive_evidence(now_ns=now_ns)
         self._cleanup_tracks(now_ns=now_ns)
+        if not valid_array_header(message, now_ns, self.stale_timeout_s):
+            return 0
         self._last_source_message_ns[source_id] = now_ns
         self._timed_out_sources.discard(source_id)
         source_order = self.source_order.index(source_id)
         accepted_by_id: dict[str, StoredHazard] = {}
-        if message.header.frame_id == MAP_FRAME and _stamp_ns(message.header.stamp) > 0:
-            for hazard in message.hazards:
-                reason = validate_hazard(
-                    hazard,
-                    array_header=message.header,
-                    now_ns=now_ns,
-                    stale_timeout_s=self.stale_timeout_s,
-                    max_covariance=self.max_covariance,
-                    max_source_age_s=self.max_source_age_s,
-                )
-                if reason is not None:
-                    self._record_rejection(reason)
-                    continue
-                candidate = StoredHazard(
-                    hazard=hazard,
-                    array_stamp_ns=_stamp_ns(message.header.stamp),
-                    source_id=source_id,
-                    source_order=source_order,
-                )
-                current = accepted_by_id.get(candidate.detection_id)
-                if current is None or self._prefer_candidate(
-                    candidate,
-                    current,
-                    now_ns=now_ns,
-                ):
-                    accepted_by_id[candidate.detection_id] = candidate
+        for hazard in message.hazards:
+            reason = validate_hazard(
+                hazard,
+                array_header=message.header,
+                now_ns=now_ns,
+                stale_timeout_s=self.stale_timeout_s,
+                max_covariance=self.max_covariance,
+                max_source_age_s=self.max_source_age_s,
+            )
+            if reason is not None:
+                self._record_rejection(reason)
+                continue
+            candidate = StoredHazard(
+                hazard=hazard,
+                array_stamp_ns=_stamp_ns(message.header.stamp),
+                source_id=source_id,
+                source_order=source_order,
+            )
+            current = accepted_by_id.get(candidate.detection_id)
+            if current is None or self._prefer_candidate(
+                candidate,
+                current,
+                now_ns=now_ns,
+            ):
+                accepted_by_id[candidate.detection_id] = candidate
+        if message.hazards and not accepted_by_id:
+            return 0
 
         old_evidence = {
             track_id: track.evidence.get(source_id)
@@ -1090,6 +1102,7 @@ class SupportHazardFusion(Node):
             source_communication_penalty=source_communication_penalty,
             **configured,
         )
+        self._sources_with_accepted_hazards: set[str] = set()
         qos = QoSProfile(
             history=HistoryPolicy.KEEP_LAST,
             depth=5,
@@ -1129,16 +1142,25 @@ class SupportHazardFusion(Node):
         return value or default
 
     def _on_source(self, source_id: str, message: AerialHazardArray) -> None:
-        self._core.replace_source(
-            source_id,
-            message,
-            now_ns=int(self.get_clock().now().nanoseconds),
+        now_ns = int(self.get_clock().now().nanoseconds)
+        explicit_empty = (
+            not message.hazards
+            and valid_array_header(message, now_ns, self._core.stale_timeout_s)
         )
+        accepted = self._core.replace_source(source_id, message, now_ns=now_ns)
+        if accepted:
+            self._sources_with_accepted_hazards.add(source_id)
+        elif explicit_empty:
+            self._sources_with_accepted_hazards.discard(source_id)
+        if explicit_empty and not self._sources_with_accepted_hazards:
+            output = self._core.build_output(now_ns=now_ns)
+            if not output.hazards:
+                self._publisher.publish(output)
 
     def _on_timer(self) -> None:
-        self._publisher.publish(
-            self._core.build_output(now_ns=int(self.get_clock().now().nanoseconds))
-        )
+        output = self._core.build_output(now_ns=int(self.get_clock().now().nanoseconds))
+        if output.hazards:
+            self._publisher.publish(output)
 
     def _on_diagnostics(self) -> None:
         self.get_logger().info(

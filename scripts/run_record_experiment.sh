@@ -203,6 +203,10 @@ if [ "$PROFILE" = "support_hazard" ]; then
     "/a201_0000/tf"
     "/a201_0000/tf_static"
   )
+  if [[ "$WORLD" == baylands* ]]; then
+    # Passive Gazebo-world pose evidence; no operational node consumes these topics.
+    TOPICS+=("/model/a201_0000/robot/pose")
+  fi
 fi
 
 # Keep existing baseline/support profiles intact. New profiles/options are additive.

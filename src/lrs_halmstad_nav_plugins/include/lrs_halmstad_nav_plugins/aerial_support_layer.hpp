@@ -80,6 +80,7 @@ private:
   void includeTrackBoundsLocked(const Track & track);
   void includeAllTrackBoundsLocked(const TrackStore & tracks);
   void rasterizeTrackLocked(const Track & track);
+  void synchronizeRollingOriginLocked();
 
   bool buildTrack(
     const lrs_halmstad_interfaces::msg::AerialHazard & hazard,

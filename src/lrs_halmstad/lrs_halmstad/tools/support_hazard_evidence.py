@@ -35,6 +35,7 @@ from rclpy.parameter import Parameter
 from rclpy.parameter_client import AsyncParameterClient
 from rclpy.qos import DurabilityPolicy, HistoryPolicy, QoSProfile, ReliabilityPolicy
 from rosgraph_msgs.msg import Clock
+from rcl_interfaces.msg import Log
 from rclpy.serialization import deserialize_message
 from tf2_msgs.msg import TFMessage
 import yaml
@@ -300,6 +301,146 @@ def path_hazard_metrics(
     }
 
 
+def _oriented_vertices(
+    vertices: Iterable[tuple[float, float]], x: float, y: float, yaw: float
+) -> list[tuple[float, float]]:
+    cosine, sine = math.cos(yaw), math.sin(yaw)
+    return [
+        (x + cosine * px - sine * py, y + sine * px + cosine * py)
+        for px, py in vertices
+    ]
+
+
+def _convex_intersection_area(
+    polygon: list[tuple[float, float]],
+    clipper: list[tuple[float, float]],
+) -> float:
+    """Clip a robot polygon to the counter-clockwise hazard rectangle."""
+    result = polygon
+    for start, end in zip(clipper, clipper[1:] + clipper[:1]):
+        def side(point):
+            return ((end[0] - start[0]) * (point[1] - start[1])
+                    - (end[1] - start[1]) * (point[0] - start[0]))
+        clipped = []
+        for first, second in zip(result, result[1:] + result[:1]):
+            first_side, second_side = side(first), side(second)
+            if (first_side >= 0.0) != (second_side >= 0.0):
+                ratio = first_side / (first_side - second_side)
+                clipped.append((
+                    first[0] + ratio * (second[0] - first[0]),
+                    first[1] + ratio * (second[1] - first[1]),
+                ))
+            if second_side >= 0.0:
+                clipped.append(second)
+        result = clipped
+        if not result:
+            return 0.0
+    return 0.5 * abs(sum(
+        first[0] * second[1] - second[0] * first[1]
+        for first, second in zip(result, result[1:] + result[:1])
+    ))
+
+
+def _point_segment_distance(point, start, end) -> float:
+    dx, dy = end[0] - start[0], end[1] - start[1]
+    length_squared = dx * dx + dy * dy
+    if length_squared <= 0.0:
+        return math.hypot(point[0] - start[0], point[1] - start[1])
+    ratio = min(1.0, max(0.0, (
+        (point[0] - start[0]) * dx + (point[1] - start[1]) * dy
+    ) / length_squared))
+    return math.hypot(
+        point[0] - (start[0] + ratio * dx),
+        point[1] - (start[1] + ratio * dy),
+    )
+
+
+def _polygon_clearance(
+    first: list[tuple[float, float]], second: list[tuple[float, float]]
+) -> float:
+    if _convex_intersection_area(first, second) > 1.0e-9:
+        return 0.0
+    return min(
+        _point_segment_distance(point, start, end)
+        for polygon, other in ((first, second), (second, first))
+        for point in polygon
+        for start, end in zip(other, other[1:] + other[:1])
+    )
+
+
+def _parse_footprint(parameters: dict[str, Any]) -> tuple[
+    list[tuple[float, float]], list[tuple[float, float]], float
+]:
+    value = parameters.get('footprint', '[]')
+    vertices = ast.literal_eval(value) if isinstance(value, str) else value
+    footprint = [(float(x), float(y)) for x, y in vertices]
+    if len(footprint) < 3 or not all(
+        math.isfinite(x) and math.isfinite(y) for x, y in footprint
+    ):
+        raise ValueError('costmap footprint must have at least three finite vertices')
+    # Nav2 1.3.10 Costmap2DROS defaults footprint_padding to 0.01 and
+    # padFootprint moves each nonzero coordinate outward by that amount.
+    padding = float(parameters.get('footprint_padding', 0.01))
+    if not math.isfinite(padding) or padding < 0.0:
+        raise ValueError('costmap footprint_padding must be finite and non-negative')
+    padded = [(
+        x + (padding if x > 0.0 else -padding if x < 0.0 else 0.0),
+        y + (padding if y > 0.0 else -padding if y < 0.0 else 0.0),
+    ) for x, y in footprint]
+    return footprint, padded, padding
+
+
+def _global_robot_footprint(nav2_yaml: str) -> list[tuple[float, float]]:
+    document = yaml.safe_load(Path(nav2_yaml).read_text(encoding='utf-8'))
+    parameters = document['global_costmap']['global_costmap']['ros__parameters']
+    _, padded, _ = _parse_footprint(parameters)
+    return padded
+
+
+def trajectory_footprint_overlap(
+    poses, geometry: dict[str, float], footprint: list[tuple[float, float]]
+) -> dict[str, Any]:
+    """Diagnostic overlap of recorded map-frame robot poses with the virtual core."""
+    half_x = 0.5 * geometry['effective_size_x']
+    half_y = 0.5 * geometry['effective_size_y']
+    hazard = _oriented_vertices(
+        [(-half_x, -half_y), (half_x, -half_y),
+         (half_x, half_y), (-half_x, half_y)],
+        geometry['center_x'], geometry['center_y'], geometry['yaw'],
+    )
+    overlaps = []
+    clearances = []
+    for pose in poses:
+        robot = _oriented_vertices(footprint, pose.x, pose.y, pose.yaw)
+        area = _convex_intersection_area(robot, hazard)
+        clearance = _polygon_clearance(robot, hazard)
+        clearances.append(clearance)
+        if area > 1.0e-9:
+            overlaps.append({
+                'received_ns': pose.received_ns,
+                'source_stamp_ns': pose.source_stamp_ns,
+                'pose': {'x': pose.x, 'y': pose.y, 'yaw': pose.yaw},
+                'footprint_polygon': [list(point) for point in robot],
+                'hazard_polygon': [list(point) for point in hazard],
+                'overlap_area_m2': area,
+                'minimum_clearance_m': clearance,
+            })
+    return {
+        'source': 'recorded_amcl_map_frame_poses_and_global_costmap_yaml_footprint',
+        'recorded_pose_count': len(poses),
+        'overlapping_recorded_pose_count': len(overlaps),
+        'first_overlap_received_ns': overlaps[0]['received_ns'] if overlaps else None,
+        'last_overlap_received_ns': overlaps[-1]['received_ns'] if overlaps else None,
+        'maximum_overlap_area_m2': max(
+            (item['overlap_area_m2'] for item in overlaps), default=0.0
+        ),
+        'minimum_recorded_pose_clearance_m': min(clearances, default=None),
+        'overlap_events': overlaps,
+        'evaluated_footprint_vertices': footprint,
+        'continuous_swept_footprint_not_proven': True,
+    }
+
+
 def expanded_hazard_geometry(
     geometry: dict[str, float], inflation_radius_m: float
 ) -> dict[str, float]:
@@ -329,6 +470,16 @@ def load_nav2_inflation_config(path: Path) -> dict[str, Any]:
         break
     if not isinstance(parameters, dict):
         raise ValueError(f'global_costmap ROS parameters not found in {resolved}')
+    try:
+        local_parameters = document['local_costmap']['local_costmap']['ros__parameters']
+    except (KeyError, TypeError):
+        local_parameters = None
+    if not isinstance(local_parameters, dict):
+        raise ValueError(f'local_costmap ROS parameters not found in {resolved}')
+    global_footprint, global_padded_footprint, global_padding = _parse_footprint(parameters)
+    local_footprint, local_padded_footprint, local_padding = _parse_footprint(
+        local_parameters
+    )
     inflation = parameters.get('inflation_layer')
     if not isinstance(inflation, dict):
         raise ValueError(f'global_costmap inflation_layer not found in {resolved}')
@@ -341,6 +492,18 @@ def load_nav2_inflation_config(path: Path) -> dict[str, Any]:
     aerial = parameters.get('aerial_support_layer')
     if not isinstance(aerial, dict):
         raise ValueError(f'global_costmap aerial_support_layer not found in {resolved}')
+    local_aerial = local_parameters.get('aerial_support_layer')
+    if not isinstance(local_aerial, dict):
+        raise ValueError(f'local_costmap aerial_support_layer not found in {resolved}')
+    shared_aerial_keys = (
+        'topic', 'max_observation_age_s', 'default_ttl_s', 'min_confidence',
+        'max_xy_variance_m2', 'confirmed_cost', 'tentative_cost', 'conflict_cost',
+        'covariance_sigma_scale', 'min_footprint_size_m', 'subscription_depth',
+    )
+    if any(local_aerial.get(key) != aerial.get(key) for key in shared_aerial_keys):
+        raise ValueError(
+            f'local/global aerial_support_layer contracts differ in {resolved}'
+        )
     controller_parameters = None
     for candidate in candidates:
         try:
@@ -371,6 +534,26 @@ def load_nav2_inflation_config(path: Path) -> dict[str, Any]:
         'global_costmap_resolution_m': (
             float(parameters['resolution']) if 'resolution' in parameters else None
         ),
+        'global_costmap_frame': str(parameters.get('global_frame', 'map')),
+        'global_robot_base_frame': str(parameters.get('robot_base_frame', 'base_link')),
+        'global_footprint_unpadded': [list(point) for point in global_footprint],
+        'global_footprint_padding_m': global_padding,
+        'global_footprint_padded': [list(point) for point in global_padded_footprint],
+        'local_costmap_frame': str(local_parameters.get('global_frame', 'odom')),
+        'local_robot_base_frame': str(local_parameters.get('robot_base_frame', 'base_link')),
+        'local_footprint_unpadded': [list(point) for point in local_footprint],
+        'local_footprint_padding_m': local_padding,
+        'local_footprint_padded': [list(point) for point in local_padded_footprint],
+        'local_inflation_radius_m': float(
+            local_parameters['inflation_layer']['inflation_radius']
+        ),
+        'local_cost_scaling_factor': float(
+            local_parameters['inflation_layer']['cost_scaling_factor']
+        ),
+        'local_aerial_layer_configured': (
+            'aerial_support_layer' in local_parameters.get('plugins', [])
+        ),
+        'local_aerial_target_frame': str(local_aerial.get('target_frame', '')),
         'goal_checker_xy_tolerance_m': float(goal_checker['xy_goal_tolerance']),
         'goal_checker_yaw_tolerance_rad': float(goal_checker['yaw_goal_tolerance']),
         'goal_checker_plugin': str(goal_checker['plugin']),
@@ -1272,6 +1455,8 @@ class RuntimeEvidenceCollector(PlannerEvidenceCollector):
         self.requested_goal_dropped_count = 0
         self.plan_dropped_count = 0
         self.status_dropped_count = 0
+        self.amcl_warnings: deque[str] = deque(maxlen=10)
+        self.amcl_warning_count = 0
         self.crop_geometry = crop_geometry
         self.crop_margin_m = max(0.0, float(crop_margin_m))
         self._crop_source_x = 0
@@ -1544,6 +1729,15 @@ class RuntimeEvidenceCollector(PlannerEvidenceCollector):
                 status=status,
             ))
 
+    def add_rosout(self, message: Log) -> None:
+        if message.level >= Log.WARN and 'amcl' in message.name.lower():
+            self.record_amcl_warning(str(message.msg))
+
+    def record_amcl_warning(self, message: str) -> None:
+        self.amcl_warning_count += 1
+        if message not in self.amcl_warnings:
+            self.amcl_warnings.append(message)
+
     def selected_mission(self) -> dict[str, Any]:
         events = sorted(self.status_events, key=lambda item: item.received_ns)
         live = (GoalStatus.STATUS_ACCEPTED, GoalStatus.STATUS_EXECUTING)
@@ -1560,6 +1754,7 @@ class RuntimeEvidenceCollector(PlannerEvidenceCollector):
         terminal = next(
             (item for item in reversed(selected) if item.status in terminal_states), None
         )
+        terminal_statuses = sorted({item.status for item in selected if item.status in terminal_states})
         completion_ns = terminal.received_ns if terminal else None
         concurrent_states = (*live, GoalStatus.STATUS_CANCELING)
         other_goal_ids = sorted({
@@ -1581,6 +1776,7 @@ class RuntimeEvidenceCollector(PlannerEvidenceCollector):
                 if terminal else None
             ),
             'succeeded': bool(terminal and terminal.status == GoalStatus.STATUS_SUCCEEDED),
+            'contradictory_terminal_statuses': len(terminal_statuses) > 1,
             'other_goal_ids_during_mission': other_goal_ids,
             'single_active_goal_observed': bool(goal_id and not other_goal_ids),
             'transitions': [
@@ -1951,6 +2147,9 @@ class RuntimeEvidenceNode(LiveEvidenceNode):
                 '/clock',
                 self._on_runtime_clock,
                 clock_qos,
+            ),
+            self.create_subscription(
+                Log, '/rosout', collector.add_rosout, stream_qos
             ),
             self.create_subscription(
                 Costmap,
@@ -2937,10 +3136,11 @@ def _runtime_plan_dicts(
     ]
     mark = costmaps['first_mark']
     clear = costmaps['first_clear']
-    if mark is None:
+    first_hazard_ns = costmaps['first_hazard_ns']
+    if first_hazard_ns is None:
         pre_hazard = records[0] if records else None
     else:
-        before = [item for item in records if item.received_ns < mark.received_ns]
+        before = [item for item in records if item.received_ns < first_hazard_ns]
         pre_hazard = before[-1] if before else None
     changed = None
     changed_distance = None
@@ -3403,6 +3603,7 @@ def _goal_checker_evidence(
         None,
     )
     base = {
+        'diagnostic_only': True,
         'accepted': False,
         'classification': 'insufficient_or_inconsistent_pose_evidence',
         'xy_tolerance_m': xy_tolerance_m,
@@ -3450,6 +3651,36 @@ def _goal_checker_evidence(
     return base
 
 
+def _map_odom_drift(
+    transforms: Iterable[TransformRecord], start_ns: int | None,
+    completion_ns: int | None,
+) -> dict[str, Any]:
+    samples = sorted(
+        (
+            item for item in transforms
+            if item.parent_frame.strip('/') == 'map'
+            and item.child_frame.strip('/') == 'odom'
+            and not item.is_static
+            and start_ns is not None and completion_ns is not None
+            and start_ns <= item.received_ns <= completion_ns
+        ),
+        key=lambda item: item.received_ns,
+    )
+    if len(samples) < 2:
+        return {'sample_count': len(samples), 'translation_change_m': None,
+                'yaw_change_rad': None}
+    first, last = samples[0], samples[-1]
+    return {
+        'sample_count': len(samples),
+        'first_received_ns': first.received_ns,
+        'last_received_ns': last.received_ns,
+        'translation_change_m': math.hypot(last.x - first.x, last.y - first.y),
+        'yaw_change_rad': abs(math.atan2(
+            math.sin(last.yaw - first.yaw), math.cos(last.yaw - first.yaw)
+        )),
+    }
+
+
 def summarize_runtime_evidence(
     collector: RuntimeEvidenceCollector,
     *,
@@ -3495,6 +3726,31 @@ def summarize_runtime_evidence(
     trajectory = [(item.x, item.y) for item in poses]
     trajectory_geometry = path_hazard_metrics(trajectory, geometry)
     trajectory_inflation = path_hazard_metrics(trajectory, inflation_geometry)
+    mark_bound_ns = (
+        costmaps['first_mark'].received_ns if costmaps['first_mark'] is not None else None
+    )
+    clear_bound_ns = (
+        costmaps['first_clear'].received_ns if costmaps['first_clear'] is not None else None
+    )
+    footprint_poses = [
+        item for item in poses
+        if mark_bound_ns is None or (
+            item.received_ns >= mark_bound_ns
+            and (clear_bound_ns is None or item.received_ns < clear_bound_ns)
+        )
+    ]
+    active_trajectory_geometry = path_hazard_metrics(
+        [(item.x, item.y) for item in footprint_poses], geometry
+    )
+    footprint_overlap = trajectory_footprint_overlap(
+        footprint_poses, geometry, _global_robot_footprint(nav2_config['source_yaml'])
+    )
+    footprint_overlap['evaluation_window'] = (
+        'entire_mission_without_observed_aerial_mark'
+        if mark_bound_ns is None else 'aerial_mark_active_interval'
+    )
+    footprint_overlap['mark_received_ns'] = mark_bound_ns
+    footprint_overlap['clear_received_ns'] = clear_bound_ns
     driven_distance_m = path_length(trajectory)
     amcl_at_success = max(poses, key=lambda item: item.received_ns) if poses else None
     later_amcl = next(
@@ -3578,6 +3834,12 @@ def summarize_runtime_evidence(
         xy_tolerance_m=goal_tolerance_m,
         yaw_tolerance_rad=yaw_goal_tolerance_rad,
     )
+    map_frame_outside_xy_tolerance = bool(
+        tf_goal_pose is not None and tf_goal_pose['xy_error_m'] > goal_tolerance_m
+    )
+    map_odom_drift = _map_odom_drift(
+        collector.transforms, start_ns, completion_ns
+    )
     requested_goal = next(
         (item for item in reversed(collector.requested_goals)
          if start_ns is None or item.received_ns <= start_ns),
@@ -3650,6 +3912,80 @@ def summarize_runtime_evidence(
         ((item.x, item.y) for item in post_replan_poses),
         post_mark_plan_points,
     )
+    for event in footprint_overlap['overlap_events']:
+        event_ns = event['received_ns']
+        event['time_from_mission_start_s'] = (
+            (event_ns - start_ns) * 1.0e-9 if start_ns is not None else None
+        )
+        active_plan = max(
+            (item for item in plans if item['result_ns'] <= event_ns),
+            key=lambda item: item['result_ns'], default=None,
+        )
+        if active_plan is not None:
+            event['active_plan'] = {
+                'label': active_plan['label'],
+                'result_ns': active_plan['result_ns'],
+                'age_s': (event_ns - active_plan['result_ns']) * 1.0e-9,
+                'distance_from_pose_to_plan_m': point_to_path_distance(
+                    (event['pose']['x'], event['pose']['y']), active_plan['points']
+                ),
+                'minimum_centerline_clearance_to_core_m': active_plan[
+                    'minimum_distance_to_covariance_footprint_m'
+                ],
+                'crosses_lethal_costmap_cell': active_plan[
+                    'crosses_lethal_costmap_cell'
+                ],
+            }
+        snapshot = max(
+            (item for item in costmaps['snapshots'] if item.received_ns <= event_ns),
+            key=lambda item: item.received_ns, default=None,
+        )
+        if snapshot is not None and costmaps['baseline'] is not None:
+            delta = relevant_costmap_delta(
+                costmaps['baseline'], snapshot, geometry, inflation_radius_m
+            )
+            event['costmap'] = {
+                'snapshot_received_ns': snapshot.received_ns,
+                'snapshot_age_s': (event_ns - snapshot.received_ns) * 1.0e-9,
+                'source_kind': snapshot.source_kind,
+                'comparable': delta['comparable'],
+                'lethal_core_cell_count': delta.get(
+                    'hazard_footprint_current_lethal_cells', 0
+                ),
+                'graded_inflation_cell_count': delta.get(
+                    'inflation_halo_nonzero_cells', 0
+                ),
+            }
+        hazard_sample = max(
+            (
+                item for item in collector.samples[UGV_TOPIC]
+                if item.received_ns <= event_ns
+            ),
+            key=lambda item: item.received_ns, default=None,
+        )
+        if hazard_sample is not None:
+            hazard = hazard_sample.message.hazards[0] if hazard_sample.message.hazards else None
+            event['active_ugv_hazard'] = {
+                'message_received_ns': hazard_sample.received_ns,
+                'message_age_s': (event_ns - hazard_sample.received_ns) * 1.0e-9,
+                'nonempty': hazard is not None,
+                'array_stamp_ns': stamp_ns(hazard_sample.message.header.stamp),
+            }
+            if hazard is not None:
+                last_seen_ns = stamp_ns(hazard.last_seen)
+                event['active_ugv_hazard'].update({
+                    'track_id': str(hazard.detection.id),
+                    'state': int(hazard.state),
+                    'last_seen_ns': last_seen_ns,
+                    'ttl_ns': stamp_ns(hazard.ttl),
+                    'ttl_deadline_ns': last_seen_ns + stamp_ns(hazard.ttl),
+                    'geometry': effective_hazard_geometry(
+                        hazard,
+                        covariance_sigma_scale=(
+                            nav2_config['aerial_covariance_sigma_scale']
+                        ),
+                    ),
+                })
     baseline_plans = baseline_bundle['plans'] if baseline_bundle else []
     baseline_reference_plan = next(
         (item for item in baseline_plans if item.get('label') == 'baseline'),
@@ -3699,6 +4035,10 @@ def summarize_runtime_evidence(
         failures.append('navigate_to_pose_goal_not_completed')
     elif not mission['succeeded']:
         failures.append('navigate_to_pose_goal_not_succeeded')
+    if mission.get('other_goal_ids_during_mission'):
+        failures.append('navigate_to_pose_goal_identity_ambiguous')
+    if mission.get('contradictory_terminal_statuses'):
+        failures.append('navigate_to_pose_terminal_status_contradictory')
     if requested_goal is None:
         failures.append('requested_action_goal_not_observed')
     elif not requested_goal_matches_configuration:
@@ -3713,18 +4053,8 @@ def summarize_runtime_evidence(
         or runtime_goal_checker.get('yaw_goal_tolerance_rad') != yaw_goal_tolerance_rad
     ):
         failures.append('runtime_goal_checker_parameter_mismatch')
-    if len(trajectory) < 2:
+    if len(trajectory) < 2 or driven_distance_m < 1.0:
         failures.append('ugv_trajectory_missing')
-    if mission.get('succeeded') and not goal_checker_evidence['accepted']:
-        goal_classification = goal_checker_evidence['classification']
-        if goal_classification == 'insufficient_or_inconsistent_pose_evidence':
-            failures.append('goal_checker_pose_evidence_insufficient')
-        elif goal_classification == 'success_without_proven_xy_entry':
-            failures.append('goal_checker_xy_entry_not_proven')
-        elif goal_classification == 'outside_xy_tolerance_at_success':
-            failures.append('success_time_tf_pose_outside_goal_tolerance')
-        elif goal_classification == 'outside_yaw_tolerance_at_success':
-            failures.append('success_time_tf_yaw_outside_goal_tolerance')
     if selected_plans['automatic_plan_count_during_goal'] < 1:
         failures.append('active_mission_plan_not_observed')
     if costmaps['baseline'] is None:
@@ -3763,6 +4093,16 @@ def summarize_runtime_evidence(
             failures.append('lethal_hazard_core_not_observed')
         if mark_delta.get('inflation_halo_nonzero_cells', 0) < 1:
             failures.append('graded_inflation_halo_not_observed')
+        if (
+            scenario == 'valid'
+            and first_clear is not None
+            and (completion_ns is None or first_clear.received_ns < completion_ns)
+            and (
+                clearing['source_explicit_empty_ns'] is None
+                or clearing['source_explicit_empty_ns'] > first_clear.received_ns
+            )
+        ):
+            failures.append('aerial_costmap_cleared_during_active_hazard')
         pre_hazard = selected_plans['pre_hazard']
         active = selected_plans['hazard_active']
         if pre_hazard is None:
@@ -3777,8 +4117,10 @@ def summarize_runtime_evidence(
             failures.append('automatic_replan_timing_invalid')
         elif active['crosses_lethal_costmap_cell'] is not False:
             failures.append('automatic_replan_crosses_lethal_cost')
-        if trajectory_geometry['crosses_effective_hazard']:
-            failures.append('ugv_trajectory_crosses_effective_hazard')
+        if active_trajectory_geometry['crosses_effective_hazard']:
+            failures.append('ugv_trajectory_crosses_effective_hazard_while_active')
+        if footprint_overlap['overlapping_recorded_pose_count'] > 0:
+            failures.append('ugv_footprint_intersects_effective_hazard')
         if baseline_reference_plan is None or not baseline_reference_plan.get(
             'crosses_covariance_footprint', False
         ):
@@ -3823,12 +4165,6 @@ def summarize_runtime_evidence(
         inconclusive_reasons.append('terminal_status_missing')
     if runtime_goal_checker is None:
         inconclusive_reasons.append('runtime_goal_checker_parameters_missing')
-    if mission.get('succeeded') and tf_goal_pose is None:
-        inconclusive_reasons.append('success_time_tf_pose_missing')
-    if goal_checker_evidence['classification'] == (
-        'insufficient_or_inconsistent_pose_evidence'
-    ):
-        inconclusive_reasons.append('goal_checker_pose_evidence_insufficient')
     if 'bounded_evidence_limit_exceeded' in failures:
         inconclusive_reasons.append('bounded_evidence_limit_exceeded')
     result_classification = (
@@ -3837,20 +4173,21 @@ def summarize_runtime_evidence(
         else 'fail'
     )
     summary = {
-        'schema_version': 6,
+        'schema_version': 7,
         'status': result_classification,
         'classification': result_classification,
         'inconclusive_reasons': inconclusive_reasons,
         'scenario': scenario,
-        'validated_scope': (
-            'full_baylands_navigate_to_pose_runtime'
-            if runtime_profile == 'authoritative_full'
-            else 'non_authoritative_reduced_resource_track_a_diagnostic'
-        ),
+        'validated_scope': {
+            'authoritative_full': 'full_baylands_navigate_to_pose_runtime',
+            'downstream_track_a': 'baylands_downstream_support_navigation_runtime',
+            'reduced_resource_diagnostic': 'non_authoritative_reduced_resource_track_a_diagnostic',
+        }[runtime_profile],
         'time_model': 'explicit_best_effort_simulation_clock_with_wall_time_timeout',
         'configuration': {
             'runtime_profile': runtime_profile,
             'authoritative_full_runtime': runtime_profile == 'authoritative_full',
+            'authoritative_downstream_track_a': runtime_profile == 'downstream_track_a',
             'start': {'x': start[0], 'y': start[1], 'yaw': start[2]},
             'goal': {'x': goal[0], 'y': goal[1], 'yaw': goal[2]},
             'requested_action_goal': (
@@ -3915,6 +4252,24 @@ def summarize_runtime_evidence(
             'compared_child_frame': 'base_link',
             'runtime_goal_checker': runtime_goal_checker,
             'goal_checker_evidence': goal_checker_evidence,
+            'success_contract': 'matching NavigateToPose action SUCCEEDED with unambiguous goal and physical UGV motion',
+            'localization_diagnostic': {
+                'independent_map_frame_xy_outside_controller_tolerance': map_frame_outside_xy_tolerance,
+                'map_frame_tf_xy_error_m': (
+                    tf_goal_pose['xy_error_m'] if tf_goal_pose else None
+                ),
+                'amcl_xy_error_m': (
+                    amcl_goal_pose['xy_error_m'] if amcl_goal_pose else None
+                ),
+                'map_to_odom_drift': map_odom_drift,
+                'amcl_warnings': list(collector.amcl_warnings),
+                'amcl_warning_count': collector.amcl_warning_count,
+                'amcl_warning_source': 'rosout' if collector.amcl_warnings else 'not_observed',
+                'classification': (
+                    'limitation' if map_frame_outside_xy_tolerance
+                    else 'unavailable' if tf_goal_pose is None else 'within_tolerance'
+                ),
+            },
             'stateful_xy_diagnostics': stateful_xy_diagnostics,
             'stateful_goal_checker_semantics': (
                 'Once XY first passes, XY remains latched and is not rechecked '
@@ -3984,6 +4339,20 @@ def summarize_runtime_evidence(
         },
         'trajectory': {
             'pose_count': len(trajectory),
+            'active_hazard_interval': {
+                'mark_received_ns': mark_bound_ns,
+                'clear_received_ns': clear_bound_ns,
+                'pose_count': len(footprint_poses),
+                'minimum_distance_to_covariance_footprint_m': (
+                    active_trajectory_geometry[
+                        'minimum_distance_to_effective_hazard_m'
+                    ]
+                ),
+                'crosses_covariance_footprint': active_trajectory_geometry[
+                    'crosses_effective_hazard'
+                ],
+            },
+            'virtual_core_robot_footprint_diagnostic': footprint_overlap,
             'driven_distance_m': driven_distance_m,
             'minimum_distance_to_covariance_footprint_m': trajectory_geometry[
                 'minimum_distance_to_effective_hazard_m'
@@ -4045,6 +4414,7 @@ def summarize_runtime_evidence(
             'Synthetic hazards substitute for the deferred support-UAV detector.',
             'A passing run establishes one configured Baylands mission, not general safety.',
             'No perception accuracy or EiraX rolling-costmap behavior is inferred.',
+            'Independent current map-frame localization accuracy is reported separately from Nav2 mission success.',
         ],
     }
     trajectory_rows = [
@@ -4227,6 +4597,151 @@ def _run_runtime_live(args: argparse.Namespace, ros_args: list[str]) -> int:
         node.destroy_node()
         if rclpy.ok():
             rclpy.shutdown()
+
+
+def _run_runtime_bag(args: argparse.Namespace) -> int:
+    """Recompute a historical runtime verdict from its recorded ROS messages."""
+    import rosbag2_py
+    from rosidl_runtime_py.utilities import get_message
+
+    recording_root = args.recording_root.expanduser().resolve()
+    source_analysis = recording_root.parent / 'analysis'
+    source = json.loads((source_analysis / 'summary.json').read_text(encoding='utf-8'))
+    scenario = source.get('scenario')
+    if scenario not in ('baseline', 'valid', 'clearing'):
+        raise ValueError('runtime-bag requires a supported authoritative scenario')
+    source_profile = source.get('configuration', {}).get('runtime_profile')
+    if source_profile not in ('authoritative_full', 'downstream_track_a'):
+        raise ValueError('runtime-bag requires an authoritative Track A recording')
+    configuration = source['configuration']
+    nav2_config_path = Path(configuration['nav2']['source_yaml'])
+    nav2_config = load_nav2_inflation_config(nav2_config_path)
+    recorded_nav2 = dict(configuration['nav2'])
+    for key, value in nav2_config.items():
+        if key not in recorded_nav2 and key in {
+            'global_costmap_frame', 'global_robot_base_frame',
+            'global_footprint_unpadded', 'global_footprint_padding_m',
+            'global_footprint_padded', 'local_costmap_frame',
+            'local_robot_base_frame', 'local_footprint_unpadded',
+            'local_footprint_padding_m', 'local_footprint_padded',
+            'local_inflation_radius_m', 'local_cost_scaling_factor',
+            'local_aerial_layer_configured', 'local_aerial_target_frame',
+        }:
+            recorded_nav2[key] = value
+    if nav2_config != recorded_nav2:
+        raise ValueError('Nav2 configuration differs from the original live analysis')
+    map_path = Path(configuration['map_yaml'])
+    if hashlib.sha256(map_path.read_bytes()).hexdigest() != configuration['map_sha256']:
+        raise ValueError('map YAML differs from the original live analysis')
+    if hashlib.sha256(Path(configuration['map_image']).read_bytes()).hexdigest() != configuration['map_image_sha256']:
+        raise ValueError('map image differs from the original live analysis')
+    geometry = source['hazard_geometry']
+    collector = RuntimeEvidenceCollector(
+        crop_geometry=geometry,
+        crop_margin_m=float(nav2_config['inflation_radius_m']) + 1.0,
+    )
+    bag_dir = recording_root / 'bag'
+    reader = rosbag2_py.SequentialReader()
+    reader.open(
+        rosbag2_py.StorageOptions(uri=str(bag_dir), storage_id='mcap'),
+        rosbag2_py.ConverterOptions(
+            input_serialization_format='cdr', output_serialization_format='cdr'
+        ),
+    )
+    prefix = '/a201_0000'
+    handlers = {
+        **{topic: (AerialHazardArray, lambda msg, now, topic=topic: collector.add(topic, msg, now))
+           for topic in HAZARD_TOPICS},
+        f'{prefix}/global_costmap/costmap_raw': (Costmap, collector.add_full_costmap),
+        f'{prefix}/global_costmap/costmap_raw_updates': (CostmapUpdate, collector.add_costmap_update),
+        f'{prefix}/plan': (NavPath, collector.add_automatic_plan),
+        f'{prefix}/planned_path': (NavPath, collector.add_requested_route),
+        f'{prefix}/amcl_pose': (PoseWithCovarianceStamped, collector.add_pose),
+        f'{prefix}/navigate_to_pose/_action/status': (GoalStatusArray, collector.add_status),
+        f'{prefix}/navigate_to_pose/_action/feedback': (NavigateToPose_FeedbackMessage, collector.add_feedback),
+        f'{prefix}/tf': (TFMessage, lambda msg, now: collector.add_tf(msg, now, is_static=False)),
+        f'{prefix}/tf_static': (TFMessage, lambda msg, now: collector.add_tf(msg, now, is_static=True)),
+        '/tf': (TFMessage, lambda msg, now: collector.add_tf(msg, now, is_static=False)),
+        '/tf_static': (TFMessage, lambda msg, now: collector.add_tf(msg, now, is_static=True)),
+        '/rosout': (Log, lambda msg, now: collector.add_rosout(msg)),
+    }
+    types = {topic.name: topic.type for topic in reader.get_all_topics_and_types()}
+    required = {
+        '/clock', f'{prefix}/plan', f'{prefix}/amcl_pose',
+        f'{prefix}/navigate_to_pose/_action/status',
+        f'{prefix}/navigate_to_pose/_action/feedback',
+        f'{prefix}/global_costmap/costmap_raw',
+    }
+    if missing := required - types.keys():
+        raise ValueError(f'runtime recording is missing required topics: {sorted(missing)}')
+    for topic, (message_type, _) in handlers.items():
+        if topic in types and get_message(types[topic]) != message_type:
+            raise ValueError(f'unexpected recorded message type for {topic}: {types[topic]}')
+    now_ns = 0
+    message_count = 0
+    completion_ns = source.get('mission', {}).get('completion_ns')
+    replay_cutoff_ns = (
+        int(completion_ns) + 2_000_000_000
+        if completion_ns is not None else None
+    )
+    while reader.has_next():
+        topic, data, _ = reader.read_next()
+        if topic == '/clock':
+            now_ns = stamp_ns(deserialize_message(data, Clock).clock)
+            if replay_cutoff_ns is not None and now_ns > replay_cutoff_ns:
+                break
+        elif topic in handlers and now_ns > 0:
+            message_type, handler = handlers[topic]
+            handler(deserialize_message(data, message_type), now_ns)
+            message_count += 1
+    if not collector.amcl_warnings:
+        for log_path in sorted((recording_root.parent / 'logs').glob('*.log')):
+            for line in log_path.read_text(encoding='utf-8', errors='replace').splitlines():
+                if 'amcl' in line.lower() and (
+                    '[WARN]' in line or 'observations were not in the map' in line
+                ):
+                    collector.record_amcl_warning(line.strip())
+    runtime_goal_checker = source['mission']['runtime_goal_checker']
+    start = configuration['start']
+    goal = configuration['goal']
+    baseline_bundle = _runtime_baseline_bundle(args.baseline_evidence)
+    if scenario != 'baseline' and baseline_bundle is None:
+        raise ValueError('valid and clearing bag reanalysis require --baseline-evidence')
+    summary, trajectory_rows = summarize_runtime_evidence(
+        collector,
+        scenario=scenario,
+        start=(start['x'], start['y'], start['yaw']),
+        goal=(goal['x'], goal['y'], goal['yaw']),
+        geometry=geometry, nav2_config=nav2_config, map_path=map_path,
+        layer_enabled=configuration['aerial_layer_enabled_observed'],
+        baseline_bundle=baseline_bundle,
+        minimum_path_change_m=0.5,
+        minimum_trajectory_change_m=0.75,
+        maximum_plan_tracking_error_m=2.0,
+        goal_tolerance_m=runtime_goal_checker['xy_goal_tolerance_m'],
+        yaw_goal_tolerance_rad=runtime_goal_checker['yaw_goal_tolerance_rad'],
+        runtime_goal_checker=runtime_goal_checker,
+        runtime_profile=source_profile,
+    )
+    summary['reanalysis'] = {
+        'source_analysis': str(source_analysis),
+        'source_recording': str(bag_dir),
+        'source_summary_sha256': hashlib.sha256(
+            (source_analysis / 'summary.json').read_bytes()
+        ).hexdigest(),
+        'recorded_messages_processed': message_count,
+        'replay_cutoff_ns': replay_cutoff_ns,
+        'runtime_parameters_from_original_live_capture': True,
+    }
+    if not types.get('/rosout') and collector.amcl_warnings:
+        summary['mission']['localization_diagnostic']['amcl_warning_source'] = 'recorded_runtime_logs'
+    write_runtime_evidence(args.output, summary, collector, trajectory_rows)
+    print(json.dumps({
+        'status': summary['status'], 'failures': summary['failures'],
+        'inconclusive_reasons': summary['inconclusive_reasons'],
+        'output': str(args.output), 'recorded_messages_processed': message_count,
+    }, indent=2))
+    return 0 if summary['status'] == 'pass' else 1
 
 
 @dataclass(frozen=True)
@@ -4640,7 +5155,7 @@ def build_parser() -> argparse.ArgumentParser:
     planner.add_argument('--output', type=Path, required=True)
     runtime = subparsers.add_parser(
         'runtime-live',
-        help='Passively capture one full Baylands NavigateToPose mission.',
+        help='Passively capture one Baylands NavigateToPose mission.',
     )
     runtime.add_argument('--scenario', choices=('baseline', 'valid', 'clearing'), required=True)
     runtime.add_argument('--namespace', default='a201_0000')
@@ -4649,7 +5164,7 @@ def build_parser() -> argparse.ArgumentParser:
     runtime.add_argument('--baseline-evidence', type=Path)
     runtime.add_argument(
         '--runtime-profile',
-        choices=('authoritative_full', 'reduced_resource_diagnostic'),
+        choices=('authoritative_full', 'downstream_track_a', 'reduced_resource_diagnostic'),
         default='authoritative_full',
     )
     runtime.add_argument('--start-x', type=float, required=True)
@@ -4680,6 +5195,12 @@ def build_parser() -> argparse.ArgumentParser:
     runtime.add_argument('--max-poses', type=int, default=30000)
     runtime.add_argument('--max-plans', type=int, default=2000)
     runtime.add_argument('--output', type=Path, required=True)
+    runtime_bag = subparsers.add_parser(
+        'runtime-bag', help='Reanalyze an authoritative runtime bag offline.'
+    )
+    runtime_bag.add_argument('--recording-root', type=Path, required=True)
+    runtime_bag.add_argument('--baseline-evidence', type=Path)
+    runtime_bag.add_argument('--output', type=Path, required=True)
     map_check = subparsers.add_parser(
         'map-check', help='Check the fixed Baylands candidate without ROS runtime.'
     )
@@ -4713,6 +5234,8 @@ def main(args=None) -> None:
             status = _run_planner_live(parsed, ros_args)
         elif parsed.mode == 'runtime-live':
             status = _run_runtime_live(parsed, ros_args)
+        elif parsed.mode == 'runtime-bag':
+            status = _run_runtime_bag(parsed)
         else:
             status = _run_map_check(parsed)
     except (FileExistsError, FileNotFoundError, ValueError) as exc:

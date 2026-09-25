@@ -216,6 +216,34 @@ def test_stale_source_is_rejected():
     assert core.build_output(now_ns=12 * SECOND + 1).hazards == []
 
 
+def test_rejected_nonempty_snapshot_does_not_erase_fresh_prior_evidence():
+    core = _core(stale_timeout_s=0.75, max_source_age_s=0.75)
+    core.replace_source("dji1", _array(_hazard()), now_ns=10_100_000_000)
+    assert len(core.build_output(now_ns=10_100_000_000).hazards) == 1
+
+    future = _hazard(last_seen_ns=10_500_000_000)
+    assert core.replace_source(
+        "dji1", _array(future), now_ns=10_400_000_000
+    ) == 0
+    assert len(core.build_output(now_ns=10_400_000_000).hazards) == 1
+
+    malformed = _hazard(last_seen_ns=10_500_000_000)
+    malformed.detection.bbox.center.position.x = math.nan
+    assert core.replace_source(
+        "dji1", _array(malformed), now_ns=10_500_000_000
+    ) == 0
+    assert len(core.build_output(now_ns=10_500_000_000).hazards) == 1
+
+
+def test_explicit_empty_source_snapshot_still_clears_prior_evidence():
+    core = _core(stale_timeout_s=0.75, max_source_age_s=0.75)
+    core.replace_source("dji1", _array(_hazard()), now_ns=10_100_000_000)
+
+    core.replace_source("dji1", _array(stamp_ns=10_400_000_000), now_ns=10_400_000_000)
+
+    assert core.build_output(now_ns=10_400_000_000).hazards == []
+
+
 def test_one_source_dropout_retains_track_and_complete_sources():
     core = _core()
     core.replace_source("dji1", _array(_hazard(source="dji1")), now_ns=10_200_000_000)
@@ -725,9 +753,69 @@ def test_runtime_typed_dji2_subscription_defaults_off():
 class _FakePublisher:
     def __init__(self):
         self.last_message = None
+        self.messages = []
 
     def publish(self, message):
         self.last_message = message
+        self.messages.append(message)
+
+
+def test_fusion_publishes_empty_only_for_explicit_source_clear():
+    class _Clock:
+        nanoseconds = 10_100_000_000
+
+        def now(self):
+            return self
+
+    node = object.__new__(SupportHazardFusion)
+    clock = _Clock()
+    node.get_clock = lambda: clock
+    node._core = _core(stale_timeout_s=0.75, max_source_age_s=0.75)
+    node._sources_with_accepted_hazards = set()
+    node._publisher = _FakePublisher()
+    node._on_source("dji1", _array(_hazard()))
+    node._on_timer()
+    assert len(node._publisher.messages) == 1
+    assert len(node._publisher.last_message.hazards) == 1
+
+    clock.nanoseconds = 10_900_000_000
+    node._on_timer()
+    assert len(node._publisher.messages) == 1
+
+    clock.nanoseconds = 11_000_000_000
+    node._on_source("dji1", _array(stamp_ns=11_000_000_000))
+    assert len(node._publisher.messages) == 2
+    assert node._publisher.last_message.hazards == []
+
+
+def test_empty_optional_source_does_not_clear_primary_hazard():
+    class _Clock:
+        nanoseconds = 10_100_000_000
+
+        def now(self):
+            return self
+
+    node = object.__new__(SupportHazardFusion)
+    clock = _Clock()
+    node.get_clock = lambda: clock
+    node._core = _core(stale_timeout_s=0.75, max_source_age_s=0.75)
+    node._sources_with_accepted_hazards = set()
+    node._publisher = _FakePublisher()
+    node._on_source("dji1", _array(_hazard()))
+    node._on_timer()
+    assert node._sources_with_accepted_hazards == {"dji1"}
+    assert len(node._publisher.messages) == 1
+
+    clock.nanoseconds = 10_900_000_000
+    node._on_source("dji2", _array(stamp_ns=10_900_000_000))
+    assert node._sources_with_accepted_hazards == {"dji1"}
+    assert len(node._publisher.messages) == 1
+
+    clock.nanoseconds = 11_000_000_000
+    node._on_source("dji1", _array(stamp_ns=11_000_000_000))
+    assert node._sources_with_accepted_hazards == set()
+    assert len(node._publisher.messages) == 2
+    assert node._publisher.last_message.hazards == []
 
 
 def test_forwarding_preserves_typed_message_without_mutation():

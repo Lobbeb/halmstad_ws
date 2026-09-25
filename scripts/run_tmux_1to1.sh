@@ -447,7 +447,7 @@ case "$REDUCED_TRACK_A" in
 esac
 if [ "$REDUCED_TRACK_A" = true ]; then
   if [[ "$WORLD" != baylands* ]] || [ "$MODE" != follow ]; then
-    echo "reduced_track_a:=true is a Baylands follow diagnostic only." >&2
+    echo "reduced_track_a:=true is a Baylands downstream Track A profile only." >&2
     exit 2
   fi
   FOLLOW_WAIT_TOPICS=""
@@ -1024,7 +1024,7 @@ if [ "$DRY_RUN" = true ]; then
   echo "GUI: $EFFECTIVE_GUI"
   echo "Lidar: ${EFFECTIVE_NAV_LIDAR_MODE:-default}"
   echo "Record: $RECORD"
-  echo "Reduced Track A diagnostic: $REDUCED_TRACK_A"
+  echo "Downstream Track A without rendered UAVs: $REDUCED_TRACK_A"
   echo "Base delay: $BASE_DELAY_S"
   echo "Overrides: spawn=${SPAWN_DELAY_OVERRIDE:-default} localization=${LOCALIZATION_DELAY_OVERRIDE:-default} nav2=${NAV2_DELAY_OVERRIDE:-default} follow=${FOLLOW_DELAY_OVERRIDE:-default} record=${RECORD_DELAY_OVERRIDE:-default}"
   if [ "$OMNET" = true ] || [ -n "$OMNET_START_DELAY_OVERRIDE" ] || [ -n "$UGV_START_DELAY_OVERRIDE" ] || [ -n "$UAV_START_DELAY_OVERRIDE" ]; then

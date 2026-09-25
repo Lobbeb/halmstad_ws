@@ -315,8 +315,9 @@ bool AerialSupportLayer::buildTrack(
     ttl_ns = static_cast<int64_t>(default_ttl_s_ * kNanosecondsPerSecond);
   }
   const int64_t ttl_deadline = saturatingAdd(last_seen_ns, ttl_ns);
-  const int64_t age_deadline = saturatingAdd(detection_stamp_ns, max_age_ns);
-  track.valid_until_ns = std::min(ttl_deadline, age_deadline);
+  // Freshness gates admission; an accepted track persists until its declared
+  // TTL unless a subsequent explicit empty snapshot removes it.
+  track.valid_until_ns = ttl_deadline;
   if (now_ns > track.valid_until_ns) {
     return false;
   }
@@ -555,11 +556,28 @@ void AerialSupportLayer::clearTracksLocked()
   rebuildLayerLocked();
 }
 
+void AerialSupportLayer::synchronizeRollingOriginLocked()
+{
+  if (!layered_costmap_->isRolling()) {
+    return;
+  }
+  const auto * master = layered_costmap_->getCostmap();
+  if (getOriginX() == master->getOriginX() && getOriginY() == master->getOriginY()) {
+    return;
+  }
+
+  includeAllTrackBoundsLocked(tracks_);
+  updateOrigin(master->getOriginX(), master->getOriginY());
+  rebuildLayerLocked();
+  includeAllTrackBoundsLocked(tracks_);
+}
+
 void AerialSupportLayer::updateBounds(
   double, double, double,
   double * min_x, double * min_y, double * max_x, double * max_y)
 {
   std::lock_guard<std::mutex> lock(mutex_);
+  synchronizeRollingOriginLocked();
   const int64_t now_ns = nowNanoseconds();
   if (!enabled_) {
     if (!tracks_.empty() || pending_snapshot_) {

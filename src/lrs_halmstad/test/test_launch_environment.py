@@ -409,17 +409,17 @@ def test_support_hazard_record_profile_remains_image_free_and_timestamped():
 def test_full_runtime_profile_is_fixed_passive_and_three_uav():
     baseline = _dry_run([
         "support_chain_full_runtime", "scenario:=baseline",
-        "output:=/tmp/full-runtime-baseline", "gui:=false",
+        "output:=/tmp/full-runtime-baseline", "reduced_resource:=false", "gui:=false",
         "tmux_attach:=false", "dry_run:=true",
     ])
     valid = _dry_run([
         "support_chain_full_runtime", "scenario:=valid",
-        "output:=/tmp/full-runtime-valid", "gui:=false",
+        "output:=/tmp/full-runtime-valid", "reduced_resource:=false", "gui:=false",
         "tmux_attach:=false", "dry_run:=true",
     ])
     clearing = _dry_run([
         "support_chain_full_runtime", "scenario:=clearing",
-        "output:=/tmp/full-runtime-clearing", "gui:=false",
+        "output:=/tmp/full-runtime-clearing", "reduced_resource:=false", "gui:=false",
         "tmux_attach:=false", "dry_run:=true",
     ])
 
@@ -451,7 +451,7 @@ def test_reduced_track_a_profile_reuses_downstream_chain_without_uav_rendering()
     output = _dry_run([
         "support_chain_full_runtime", "scenario:=valid",
         "output:=/tmp/reduced-track-a/valid",
-        "reduced_resource:=true", "gui:=false",
+        "gui:=false",
         "tmux_attach:=false", "dry_run:=true",
     ])
     lines = output.splitlines()
@@ -467,7 +467,7 @@ def test_reduced_track_a_profile_reuses_downstream_chain_without_uav_rendering()
         line for line in lines if line.startswith("[runtime_evidence]")
     )
 
-    assert "NON-AUTHORITATIVE REDUCED-RESOURCE TRACK A DIAGNOSTIC" in output
+    assert "AUTHORITATIVE DOWNSTREAM TRACK A" in output
     assert spawn.endswith("/bin/true")
     assert "spawn_uav" not in spawn
     assert "start_uav_simulator:=false" in follow
@@ -482,7 +482,8 @@ def test_reduced_track_a_profile_reuses_downstream_chain_without_uav_rendering()
     assert "hazard_forward_enable:=true" in support_observation
     assert "aerial_support_layer_enable:=true" in output
     assert "support_hazard_evidence runtime-live" in evidence
-    assert "--runtime-profile reduced_resource_diagnostic" in evidence
+    assert "--runtime-profile downstream_track_a" in evidence
+    assert "[evaluation_only_world_pose]" not in output
     assert "--baseline-evidence /tmp/reduced-track-a/baseline/analysis" in evidence
     assert "camera_info" not in output
     assert "image_raw" not in output

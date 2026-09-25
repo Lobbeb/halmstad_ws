@@ -2,17 +2,20 @@
 Canonical roadmap and current status:
 [`descriptions/MASTER_IMPLEMENTATION_PLAN.md`](descriptions/MASTER_IMPLEMENTATION_PLAN.md).
 Current Track A runtime is Baylands; warehouse workflows below are
-legacy/reference unless needed for compatibility. The next gate is the ordered
-authoritative desktop `baseline -> valid -> clearing` run, not more laptop
-implementation.
+legacy/reference unless needed for compatibility. Downstream Track A uses the
+bounded Baylands UGV + synthetic typed-hazard profile. Full three-UAV
+composition is a separate later integration check.
 
 Shared-runtime reconciliation is checkpointed. See Phase 0 in the canonical
 master plan for its status and preserved boundaries.
 Normal tmux/Gazebo startup does not kill matching ROS, Nav2, Gazebo or tmux
 processes. The Gazebo wrapper refuses to replace a live recorded simulator
 helper, and exit cleanup remains limited to its own PID record and child.
-The lightweight Track A planner suite passes. Full-runtime evidence tooling is
-implemented; authoritative desktop Baylands runtime remains pending.
+The lightweight Track A planner suite and the authoritative desktop runtime
+sequence (`baseline`, `valid`, and `clearing`) pass. Valid includes configured
+padded-footprint avoidance while the virtual core is active; clearing includes
+ordered explicit empty propagation, exact cost restoration, continued motion,
+and mission completion. See the canonical plan for evidence and limitations.
 
 Current source of truth
 -----------------------
@@ -112,18 +115,19 @@ to preserve the real Nav2-config provenance, analyze the configured inflation
 halo, and require repeatable baseline plans. The final corrected seven-scenario
 planner-only suite under `evidence/support_planner_corrected_v5/` passes. This
 closes the bounded typed-flow, costmap, planner-response, negative-control, and
-clearing gates only; full NavigateToPose motion and goal completion remain pending.
+clearing gates only. The separate full-runtime gate described below has since
+established NavigateToPose replanning, estimated motion, and goal completion.
 
-The first full Baylands runtime experiment is prepared through
+The downstream Baylands runtime experiment is available through
 `./run.sh support_chain_full_runtime scenario:=baseline|valid|clearing`. It
-reuses the existing three-UAV support tmux stack and Nav2 waypoint driver,
+reuses the Baylands UGV/localization/Nav2 stack and waypoint driver without
+rendered UAVs, cameras, detectors, gimbals, or support follow by default,
 records the expanded `support_hazard` profile, and passively analyzes the active
 NavigateToPose mission. The synthetic dji1 source waits for an active goal;
 typed dji2 fusion and the aerial layer retain their normal disabled defaults
 outside this explicit profile. See `src/lrs_halmstad/README.md` for the ordered
 operator commands, task-owned stop commands, evidence files, and pass criteria.
-Full-runtime implementation is complete; authoritative desktop Baylands
-baseline, valid, and clearing evidence remains pending.
+This synthetic-source gate does not validate full multi-UAV composition.
 
 The first bounded headless Task 5 live run produced detector records with `valid:false` and no dji1 typed hazard because no explicit downward dji1 camera pitch was commanded and the UGV was outside the image; it was not a model, projector, fusion, or source-selection failure. The validated profile fixes the dji1-only camera scanner at `-60.0` degrees. That bounded retry produced non-empty typed hazards at dji1, dji0, and the UGV, selected dji1, preserved source covariance, and preserved dji0-to-UGV forwarding. This validates the live typed contract under the corrected camera orientation only; it does not establish detector accuracy, general environmental hazard perception, closed-loop navigation success, full SLAM, quantitative safety improvement, or UAV repositioning. Deterministic synthetic/replayed Task 6/7 checks remain the Task 8 pass basis.
 

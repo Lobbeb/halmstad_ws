@@ -72,7 +72,7 @@ The typed path is disabled by default. Enable its map-frame association/fusion a
 ./run.sh support_observation baylands hazard_fusion_enable:=true hazard_forward_enable:=true
 ```
 
-The path validates age, TTL, dimensions, confidence, and covariance, associates class-compatible observations in time and XY, and assigns deterministic dji0 track IDs. First evidence is tentative; repeated single-UAV evidence or consistent two-UAV evidence confirms a track; incompatible overlapping cross-UAV evidence is marked conflict. Estimate selection remains conservative: one fresh acceptable source is forwarded without averaging or covariance reduction. Typed dji2 evidence is disabled unless `hazard_fusion_dji2_enable:=true` is supplied. The Baylands global costmap can consume the typed UGV output only when explicitly enabled below.
+The path validates age, TTL, dimensions, confidence, and covariance, associates class-compatible observations in time and XY, and assigns deterministic dji0 track IDs. First evidence is tentative; repeated single-UAV evidence or consistent two-UAV evidence confirms a track; incompatible overlapping cross-UAV evidence is marked conflict. Estimate selection remains conservative: one fresh acceptable source is forwarded without averaging or covariance reduction. Typed dji2 evidence is disabled unless `hazard_fusion_dji2_enable:=true` is supplied. The Baylands global and local costmaps consume the typed UGV output only when explicitly enabled below.
 
 ## Track A: lightweight Baylands planner validation
 
@@ -140,20 +140,28 @@ actual Nav2 YAML supplied to the launch rather than duplicated in the analyzer.
 A passing planner run establishes typed propagation, fixed-global-costmap
 integration, planner response, and the tested clearing behavior. It does not
 establish automatic NavigateToPose BT replanning, physical detour, goal
-completion, or motion safety. Those remain full Baylands runtime gates.
+completion, or motion safety. Those claims come from the separate passing full
+Baylands runtime gate below, not from planner-only evidence.
 
-The fixed Baylands global costmap has no rolling window, so the known generic
-rolling-grid origin portability issue is outside this harness. Correct and test
-that plugin behavior before adapting the layer to a downstream rolling costmap.
+The lightweight harness uses only the fixed global costmap. The plugin also
+supports the rolling local costmap: it synchronizes its internal origin with
+the rolling master and rerasterizes retained tracks after an origin shift. That
+behavior is unit-tested and used by the passing full-runtime profile.
 
 ## Track A: full Baylands NavigateToPose runtime
 
-This user-run profile extends the existing Baylands tmux, localization, Nav2,
-three-UAV follow, typed-hazard, recorder, and evidence paths. It does not launch
+The authoritative desktop `baseline -> valid -> clearing` sequence is complete
+and **PASS**. Detailed evidence and proof boundaries are in
+`../../descriptions/TRACK_A_FULL_RUNTIME_WIP_HANDOFF.md`.
+
+The default downstream profile reuses Baylands tmux, UGV localization, Nav2,
+the typed-hazard chain, recorder, and evidence paths. It does not launch
 a second controller or send planner requests. `ugv_nav2_driver` sends one
 NavigateToPose goal and Nav2 remains the only autonomous UGV motion authority.
 The evidence process only subscribes to the action status, AMCL pose, `/plan`,
-global costmap, and typed hazard topics.
+global costmap, and typed hazard topics. Valid and clearing enable the same
+support layer before inflation in both global (`map`) and local rolling
+(`odom`) costmaps; both instances remain disabled by default.
 
 The fixed experiment uses these map-frame values:
 
@@ -168,8 +176,8 @@ The 2026-09-09 offline recheck against the current `maps/baylands.yaml` and
 `nav2_baylands_large_map.yaml` passes: the baseline path crosses the effective
 footprint, the blocked path avoids it with 1.1 m clearance, and the paths differ
 by 2.4 m Hausdorff distance. The global costmap is fixed (`rolling_window` is
-absent/false); only the local costmap rolls. The generic rolling-grid origin fix
-therefore remains downstream EiraX work and is not part of this experiment.
+absent/false); the local costmap rolls and uses the tested origin synchronization
+described above.
 
 Build and source the workspace, then run the scenarios in order. Each output
 root is protected against overwrite. After the evidence pane prints its summary,
@@ -179,23 +187,25 @@ after the bounded analyzer exits, without leaving its ROS process running.
 
 ```bash
 ./run.sh support_chain_full_runtime scenario:=baseline
-./stop.sh tmux_support_chain baylands session:=halmstad-baylands-track-a-baseline
+./stop.sh tmux_support_chain baylands session:=halmstad-baylands-track-a-reduced-baseline
 
 ./run.sh support_chain_full_runtime scenario:=valid
-./stop.sh tmux_support_chain baylands session:=halmstad-baylands-track-a-valid
+./stop.sh tmux_support_chain baylands session:=halmstad-baylands-track-a-reduced-valid
 
 ./run.sh support_chain_full_runtime scenario:=clearing
-./stop.sh tmux_support_chain baylands session:=halmstad-baylands-track-a-clearing
+./stop.sh tmux_support_chain baylands session:=halmstad-baylands-track-a-reduced-clearing
 ```
 
 The profile delays the mission start for 30 seconds so recording, support nodes,
 and passive analysis can subscribe first. `valid` and `clearing` enable fusion,
-forwarding, and `AerialSupportLayer` explicitly. All three UAVs are present, but
-typed dji2 fusion remains disabled. The synthetic dji1 source activates one
+forwarding, and `AerialSupportLayer` explicitly. No rendered UAV, camera,
+detector, gimbal, or support-follow process is required. Typed dji2 fusion
+remains disabled. The synthetic dji1 source activates one
 second after NavigateToPose reports an accepted/executing goal. `valid` keeps
 the hazard active for the mission; `clearing` publishes it for four seconds and
 then publishes empty arrays. The real support-UAV detector remains deferred and
-is not an input to these runs.
+is not an input to these runs. The same messages, mission driver, Nav2 settings,
+controller, and evidence analyzer are used as in the larger composition.
 
 Each scenario writes under `evidence/support_runtime/<scenario>/`:
 
@@ -216,26 +226,45 @@ layer observed disabled. Valid PASS additionally requires exact dji1 -> dji0 ->
 UGV propagation, lethal core plus graded halo, a materially changed `/plan`
 published after the mark while the same goal is active, no lethal-plan crossing,
 an actual trajectory that leaves the baseline corridor, follows post-mark plan
-history, avoids the covariance footprint, and reaches the goal. Clearing PASS
+history, keeps the configured padded footprint outside the lethal core while
+the hazard is active, and reaches the goal. Clearing PASS
 adds an explicit empty-source clear, disappearance of aerial costs, another plan
 while the goal is still active, continued motion, and successful completion.
 
 `/plan` is observed passively and the summary records zero manual planner
 requests. Replanning evidence requires a materially changed plan after the
 aerial mark inside one unambiguous NavigateToPose goal lifetime; topic presence
-alone cannot pass. Physical detour additionally requires the actual trajectory
+alone cannot pass. Operational detour additionally requires the recorded map-frame trajectory
 to depart from the baseline trajectory after that replan. Explicit clearing
 requires ordered empty snapshots at dji1, dji0, and UGV before the aerial
-costmap returns exactly to its pre-hazard state. A stateful goal-checker result
-outside XY tolerance is accepted only when earlier map-frame action feedback
-proves XY tolerance entry.
+costmap returns exactly to its pre-hazard state. Mission completion follows the
+matching NavigateToPose action result and observed UGV motion. Success-time
+map-frame TF, AMCL, feedback, and stateful XY-entry checks remain diagnostic:
+exceeding the controller's XY tolerance in the current map frame is reported
+as a localization limitation, not a second mission-success veto. This does
+not prove independent map-frame accuracy or absolute Gazebo-world clearance.
 
-For laptop diagnostics only, `reduced_resource:=true` omits rendered UAVs,
-cameras, perception, gimbals, support follow, and the optional Gazebo
-ground-truth bridge. It retains the same Baylands UGV, localization, Nav2,
-controller, typed fusion/forwarding, AerialSupportLayer, driver, recorder, and
-analyzer. Output is explicitly labelled non-authoritative and cannot replace
-the final desktop three-UAV run.
+Optional independent world-frame evaluation is available when an absolute
+physical-clearance claim is needed. The default downstream Track A runner does
+not start a Gazebo world-pose bridge. An explicitly recorded named
+`/model/a201_0000/robot/pose` stream can later be evaluated with
+`python3 -m lrs_halmstad.tools.support_world_clearance` with the completed
+analysis, recording, and `maps/waypoints_baylands_groups.csv`. The evaluator
+fits distinct world/map waypoint pairs, records fit and leave-one-out residuals,
+and subtracts the empirical registration margin and configured robot footprint
+radius from nominal world-frame clearance. A nonpositive conservative margin,
+an unverified model identity, or extrapolation outside the control-point hull
+cannot establish absolute-world avoidance. Accepted hazards persist through a brief
+input gap only until their declared TTL; a valid explicit empty source snapshot
+still clears the aerial layer.
+
+`reduced_resource:=true` is the default authoritative downstream Track A
+composition. It omits rendered UAVs, cameras, perception, gimbals, support
+follow, and Gazebo ground-truth bridging. It retains the real Baylands UGV,
+localization, Nav2, controller, typed fusion/forwarding, AerialSupportLayer,
+driver, recorder, and analyzer. `reduced_resource:=false` explicitly selects
+the separate three-UAV composition; that later integration/smoke scope is not
+proven by downstream Track A validation.
 
 ```bash
 ./run.sh support_chain_full_runtime scenario:=baseline \

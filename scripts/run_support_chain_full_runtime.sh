@@ -7,10 +7,10 @@ SCENARIO="baseline"
 OUTPUT=""
 BASELINE_EVIDENCE=""
 SESSION=""
-GUI="true"
-TMUX_ATTACH="true"
+GUI="false"
+TMUX_ATTACH="false"
 DRY_RUN="false"
-REDUCED_RESOURCE="false"
+REDUCED_RESOURCE="true"
 TIMEOUT_S="300.0"
 
 START_WAYPOINT="parkinglot_west_1"
@@ -37,11 +37,12 @@ Options:
   output:=DIR             Evidence root. Default: evidence/support_runtime/<scenario>.
   baseline_evidence:=DIR  Baseline analysis directory used by valid/clearing.
   session:=NAME           Exact task-owned tmux session name.
-  gui:=true|false         Gazebo GUI selection. Default: true.
-  tmux_attach:=true|false Attach after startup. Default: true.
+  gui:=true|false         Gazebo GUI selection. Default: false.
+  tmux_attach:=true|false Attach after startup. Default: false.
   timeout_s:=S            Evidence wall-time limit. Default: 300.
   dry_run:=true           Print all resolved commands without starting ROS or tmux.
-  reduced_resource:=true  Non-authoritative UGV/Nav2/typed-chain diagnostic without UAV rendering.
+  reduced_resource:=true|false  Downstream-only Track A runtime (default: true).
+                                false selects the separate three-UAV composition.
 
 This fixed Baylands profile starts at parkinglot_west_1 and sends one existing
 NavigateToPose driver goal to parkinglot_west_2. valid and clearing use a
@@ -189,7 +190,7 @@ EVIDENCE_ROS_CMD=(
   --output "$ANALYSIS_DIR"
   --runtime-profile "$(
     if [ "$REDUCED_RESOURCE" = true ]; then
-      printf '%s' reduced_resource_diagnostic
+      printf '%s' downstream_track_a
     else
       printf '%s' authoritative_full
     fi
@@ -199,17 +200,25 @@ if [ "$SCENARIO" != "baseline" ]; then
   EVIDENCE_ROS_CMD+=(--baseline-evidence "$BASELINE_EVIDENCE")
 fi
 EVIDENCE_LINE="cd $(printf '%q' "$WS_ROOT") && unset VIRTUAL_ENV PYTHONHOME PYTHONPATH && export PATH=/usr/bin:/bin:/usr/sbin:/sbin:\$PATH && source /opt/ros/jazzy/setup.bash && source $(printf '%q' "$WS_ROOT/install/setup.bash") && exec $(shell_join "${EVIDENCE_ROS_CMD[@]}") --ros-args -p use_sim_time:=true"
+WORLD_POSE_BRIDGE_CMD=(
+  ros2 run ros_gz_bridge parameter_bridge
+  '/model/a201_0000/robot/pose@tf2_msgs/msg/TFMessage[gz.msgs.Pose_V'
+)
+WORLD_POSE_BRIDGE_LINE="cd $(printf '%q' "$WS_ROOT") && unset VIRTUAL_ENV PYTHONHOME PYTHONPATH && export PATH=/usr/bin:/bin:/usr/sbin:/sbin:\$PATH && source /opt/ros/jazzy/setup.bash && exec $(shell_join "${WORLD_POSE_BRIDGE_CMD[@]}")"
 
 echo "[support_chain_full_runtime] scenario=$SCENARIO"
 echo "[support_chain_full_runtime] output=$OUTPUT"
 echo "[support_chain_full_runtime] session=$SESSION"
 echo "[support_chain_full_runtime] fixed global costmap config=$NAV2_CONFIG"
 if [ "$REDUCED_RESOURCE" = true ]; then
-  echo "[support_chain_full_runtime] NON-AUTHORITATIVE REDUCED-RESOURCE TRACK A DIAGNOSTIC"
+  echo "[support_chain_full_runtime] AUTHORITATIVE DOWNSTREAM TRACK A: UGV/Nav2 + synthetic typed chain; no rendered UAVs"
 fi
 if [ "$DRY_RUN" = "true" ]; then
   "${SUPPORT_CMD[@]}" dry_run:=true
   echo "[runtime_evidence] $EVIDENCE_LINE"
+  if [ "$REDUCED_RESOURCE" = false ]; then
+    echo "[evaluation_only_world_pose] $WORLD_POSE_BRIDGE_LINE"
+  fi
   echo "[stop] ./stop.sh tmux_support_chain baylands session:=$SESSION"
   exit 0
 fi
@@ -242,6 +251,11 @@ trap cleanup_failed_start ERR
 
 "${SUPPORT_CMD[@]}"
 started=true
+if [ "$REDUCED_RESOURCE" = false ]; then
+  tmux new-window -d -t "$SESSION" -n track_a_world_truth
+  tmux set-option -w -t "$SESSION:track_a_world_truth" remain-on-exit on
+  tmux send-keys -t "$SESSION:track_a_world_truth.0" "$WORLD_POSE_BRIDGE_LINE" C-m
+fi
 tmux new-window -d -t "$SESSION" -n track_a_evidence
 tmux set-option -w -t "$SESSION:track_a_evidence" remain-on-exit on
 tmux send-keys -t "$SESSION:track_a_evidence.0" "$EVIDENCE_LINE" C-m

@@ -6,11 +6,14 @@ import math
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+
 from builtin_interfaces.msg import Duration, Time
 from action_msgs.msg import GoalStatus
-from geometry_msgs.msg import Point
+from geometry_msgs.msg import Point, TransformStamped
 from lrs_halmstad.tools.support_hazard_evidence import (
     _clearing_mechanism,
+    _global_robot_footprint,
     _request_costmap_snapshot,
     _set_aerial_layer,
     baseline_repeatability,
@@ -41,20 +44,89 @@ from lrs_halmstad.tools.support_hazard_evidence import (
     segment_crosses_lethal_cost,
     settled_baseline_selection,
     summarize_runtime_evidence,
+    trajectory_footprint_overlap,
     UGV_TOPIC,
     write_evidence,
     write_planner_evidence,
     write_runtime_evidence,
 )
 from lrs_halmstad_interfaces.msg import AerialHazard, AerialHazardArray
+from lrs_halmstad.sim.simulation_uav_localization import load_calibration_points
+from lrs_halmstad.tools.support_world_clearance import (
+    MODEL_TOPIC, _model_world_pose, registration,
+)
 from nav2_msgs.msg import Costmap, CostmapUpdate
 from rosgraph_msgs.msg import Clock
 from std_msgs.msg import Header
+from tf2_msgs.msg import TFMessage
 from vision_msgs.msg import Detection3D, ObjectHypothesisWithPose
 
 
 SECOND = 1_000_000_000
 REPO_ROOT = Path(__file__).resolve().parents[3]
+
+
+def test_runtime_footprint_diagnostic_detects_body_overlap_without_center_crossing():
+    footprint = _global_robot_footprint(
+        str(REPO_ROOT / 'src/lrs_halmstad/config/nav2_baylands_large_map.yaml')
+    )
+    geometry = {
+        'center_x': 0.0, 'center_y': 0.0, 'yaw': 0.0,
+        'effective_size_x': 4.0, 'effective_size_y': 4.0,
+    }
+    poses = [
+        SimpleNamespace(x=3.0, y=0.0, yaw=0.0, received_ns=1, source_stamp_ns=1),
+        SimpleNamespace(x=2.4, y=0.0, yaw=0.0, received_ns=2, source_stamp_ns=2),
+    ]
+
+    result = trajectory_footprint_overlap(poses, geometry, footprint)
+
+    assert not path_hazard_metrics([(3.0, 0.0), (2.4, 0.0)], geometry)[
+        'crosses_effective_hazard'
+    ]
+    assert result['overlapping_recorded_pose_count'] == 1
+    assert result['first_overlap_received_ns'] == 2
+    assert result['maximum_overlap_area_m2'] == pytest.approx(0.1472)
+    assert result['overlap_events'][0]['source_stamp_ns'] == 2
+
+
+def test_world_clearance_requires_named_model_pose_and_uses_distinct_control_points():
+    unnamed = TFMessage(transforms=[TransformStamped()])
+    assert _model_world_pose(unnamed) is None
+    named = TransformStamped()
+    named.header.frame_id = 'baylands'
+    named.child_frame_id = 'a201_0000/robot'
+    named.transform.translation.x = -146.0
+    named.transform.translation.y = 91.0
+    assert _model_world_pose(TFMessage(transforms=[named])) == (-146.0, 91.0)
+
+    points = load_calibration_points(
+        str(REPO_ROOT / 'maps/waypoints_baylands_groups.csv'), 'parkinglot_west'
+    )
+    distinct, _, residuals, held_out, margin = registration(points)
+    assert len(distinct) == 21
+    assert len(residuals) == len(held_out) == 21
+    assert margin == max(max(value for _, value in residuals),
+                         max(value for _, value in held_out))
+    assert 1.2 < margin < 1.25
+
+
+def test_world_evaluation_topic_has_no_operational_consumer():
+    roots = (
+        REPO_ROOT / 'src/lrs_halmstad/launch',
+        REPO_ROOT / 'src/lrs_halmstad/lrs_halmstad/perception',
+        REPO_ROOT / 'src/lrs_halmstad/lrs_halmstad/nav',
+        REPO_ROOT / 'src/lrs_halmstad_nav_plugins/src',
+    )
+    for root in roots:
+        for source in root.rglob('*'):
+            if source.suffix in ('.py', '.cpp', '.hpp'):
+                assert MODEL_TOPIC not in source.read_text(encoding='utf-8')
+    evaluator = (REPO_ROOT / 'src/lrs_halmstad/lrs_halmstad/tools/'
+                 'support_world_clearance.py').read_text(encoding='utf-8')
+    assert 'create_subscription' not in evaluator
+    assert 'create_publisher' not in evaluator
+    assert 'rclpy.init' not in evaluator
 
 
 def _time(nanoseconds: int) -> Time:
@@ -508,13 +580,47 @@ def test_nav2_config_provenance_and_inflation_are_loaded_from_yaml(tmp_path):
 global_costmap:
   global_costmap:
     ros__parameters:
+      footprint: "[[0.55, 0.45], [0.55, -0.45], [-0.55, -0.45], [-0.55, 0.45]]"
+      plugins: [aerial_support_layer, inflation_layer]
       aerial_support_layer:
+        topic: /coord/ugv/aerial_hazards
+        target_frame: map
         min_confidence: 0.35
         max_observation_age_s: 1.0
+        default_ttl_s: 2.0
+        max_xy_variance_m2: 1.0
+        confirmed_cost: 254
+        tentative_cost: 200
+        conflict_cost: 220
         covariance_sigma_scale: 2.0
+        min_footprint_size_m: 0.3
+        subscription_depth: 10
       inflation_layer:
         inflation_radius: 1.25
         cost_scaling_factor: 3.5
+local_costmap:
+  local_costmap:
+    ros__parameters:
+      footprint: "[[0.55, 0.45], [0.55, -0.45], [-0.55, -0.45], [-0.55, 0.45]]"
+      global_frame: odom
+      robot_base_frame: base_link
+      plugins: [aerial_support_layer, inflation_layer]
+      aerial_support_layer:
+        topic: /coord/ugv/aerial_hazards
+        target_frame: odom
+        min_confidence: 0.35
+        max_observation_age_s: 1.0
+        default_ttl_s: 2.0
+        max_xy_variance_m2: 1.0
+        confirmed_cost: 254
+        tentative_cost: 200
+        conflict_cost: 220
+        covariance_sigma_scale: 2.0
+        min_footprint_size_m: 0.3
+        subscription_depth: 10
+      inflation_layer:
+        inflation_radius: 0.8
+        cost_scaling_factor: 4.0
 controller_server:
   ros__parameters:
     general_goal_checker:
@@ -531,6 +637,11 @@ controller_server:
     assert loaded['inflation_radius_m'] == 1.25
     assert loaded['cost_scaling_factor'] == 3.5
     assert loaded['aerial_min_confidence'] == 0.35
+    assert loaded['global_footprint_padding_m'] == pytest.approx(0.01)
+    assert loaded['global_footprint_padded'][0] == pytest.approx([0.56, 0.46])
+    assert loaded['local_costmap_frame'] == 'odom'
+    assert loaded['local_aerial_layer_configured'] is True
+    assert loaded['local_aerial_target_frame'] == 'odom'
     assert loaded['goal_checker_xy_tolerance_m'] == 0.75
     assert loaded['goal_checker_yaw_tolerance_rad'] == 1.25
     assert loaded['goal_checker_plugin'] == 'nav2_controller::SimpleGoalChecker'
@@ -547,6 +658,8 @@ def test_baylands_global_inflation_is_derived_from_the_actual_config():
     assert loaded['aerial_covariance_sigma_scale'] == 2.0
     assert loaded['global_costmap_rolling_window'] is False
     assert loaded['global_costmap_resolution_m'] == 0.2
+    assert loaded['local_aerial_layer_configured'] is True
+    assert loaded['local_aerial_target_frame'] == 'odom'
     assert loaded['goal_checker_xy_tolerance_m'] == 1.0
     assert loaded['goal_checker_yaw_tolerance_rad'] == 2.5
     assert loaded['goal_checker_stateful'] is True
@@ -1069,6 +1182,9 @@ def test_runtime_summary_requires_passive_replan_motion_and_clearing(tmp_path):
         'yaw_error_to_configured_goal_rad'
     ] == 0.0
     assert summary['trajectory']['crosses_covariance_footprint'] is False
+    assert summary['trajectory']['active_hazard_interval'][
+        'crosses_covariance_footprint'
+    ] is False
     assert len(trajectory) == 4
     write_runtime_evidence(tmp_path, summary, collector, trajectory)
     for filename in (
@@ -1077,6 +1193,38 @@ def test_runtime_summary_requires_passive_replan_motion_and_clearing(tmp_path):
         'planner_overlay.svg', 'runtime_overlay.svg',
     ):
         assert (tmp_path / filename).is_file()
+
+
+def test_clearing_allows_return_through_hazard_region_only_after_clear():
+    collector = _runtime_collector(clearing=True)
+    collector.poses.insert(3, PoseRecord(7 * SECOND, 1.0, -1.0, 0.0))
+
+    summary, _ = _summarize_runtime_collector(collector, scenario='clearing')
+
+    assert summary['status'] == 'pass', summary['failures']
+    assert summary['trajectory']['crosses_covariance_footprint'] is True
+    assert summary['trajectory']['active_hazard_interval'][
+        'crosses_covariance_footprint'
+    ] is False
+    assert summary['trajectory']['active_hazard_interval']['clear_received_ns'] == 6 * SECOND
+    assert 'ugv_trajectory_crosses_effective_hazard_while_active' not in summary[
+        'failures'
+    ]
+
+
+def test_runtime_summary_rejects_center_crossing_while_hazard_is_active():
+    collector = _runtime_collector(clearing=True)
+    collector.poses.insert(2, PoseRecord(4 * SECOND, 0.0, 0.0, 0.0))
+
+    summary, _ = _summarize_runtime_collector(collector, scenario='clearing')
+
+    assert summary['status'] == 'fail'
+    assert summary['trajectory']['active_hazard_interval'][
+        'crosses_covariance_footprint'
+    ] is True
+    assert 'ugv_trajectory_crosses_effective_hazard_while_active' in summary[
+        'failures'
+    ]
 
 
 def test_runtime_summary_cannot_pass_without_terminal_mission_evidence():
@@ -1138,7 +1286,7 @@ def test_stateful_goal_checker_accepts_only_a_proven_xy_entry_before_drift():
     assert evidence['xy_entry_proof_source'] == 'navigate_to_pose_feedback'
 
 
-def test_stateful_goal_checker_rejects_success_without_proven_xy_entry():
+def test_action_success_is_not_vetoed_by_independent_map_frame_xy_error():
     collector = _runtime_collector(clearing=True)
     collector.transforms.clear()
     collector.transforms.append(TransformRecord(
@@ -1159,11 +1307,16 @@ def test_stateful_goal_checker_rejects_success_without_proven_xy_entry():
 
     summary, _ = _summarize_runtime_collector(collector)
 
-    assert summary['status'] == 'fail'
+    assert summary['status'] == 'pass', summary['failures']
     assert summary['mission']['goal_checker_evidence']['classification'] == (
         'success_without_proven_xy_entry'
     )
-    assert 'goal_checker_xy_entry_not_proven' in summary['failures']
+    diagnostic = summary['mission']['localization_diagnostic']
+    assert diagnostic['classification'] == 'limitation'
+    assert diagnostic['independent_map_frame_xy_outside_controller_tolerance'] is True
+    assert diagnostic['map_frame_tf_xy_error_m'] == 1.2
+    assert summary['mission']['goal_checker_evidence']['diagnostic_only'] is True
+    assert summary['mission']['terminal_status'] == 'SUCCEEDED'
 
 
 def test_goal_checker_reports_insufficient_pose_evidence_separately():
@@ -1173,14 +1326,14 @@ def test_goal_checker_reports_insufficient_pose_evidence_separately():
 
     summary, _ = _summarize_runtime_collector(collector)
 
-    assert summary['status'] == 'inconclusive'
+    assert summary['status'] == 'pass', summary['failures']
     assert summary['mission']['goal_checker_evidence']['classification'] == (
         'insufficient_or_inconsistent_pose_evidence'
     )
-    assert 'success_time_tf_pose_missing' in summary['inconclusive_reasons']
+    assert summary['mission']['localization_diagnostic']['classification'] == 'unavailable'
 
 
-def test_non_stateful_goal_checker_requires_xy_tolerance_at_success():
+def test_non_stateful_map_frame_discrepancy_remains_diagnostic():
     collector = _runtime_collector(clearing=True)
     collector.transforms.clear()
     collector.transforms.append(TransformRecord(
@@ -1194,6 +1347,39 @@ def test_non_stateful_goal_checker_requires_xy_tolerance_at_success():
     assert summary['mission']['goal_checker_evidence']['classification'] == (
         'outside_xy_tolerance_at_success'
     )
+
+
+def test_action_failure_still_fails_with_good_map_frame_pose():
+    collector = _runtime_collector(clearing=True)
+    collector.status_events.pop()
+    collector.status_events.append(MissionStatusRecord(
+        10 * SECOND, 'goal-1', GoalStatus.STATUS_ABORTED
+    ))
+    summary, _ = _summarize_runtime_collector(collector)
+    assert summary['status'] == 'fail'
+    assert 'navigate_to_pose_goal_not_succeeded' in summary['failures']
+
+
+def test_baseline_cannot_pass_with_ambiguous_goal_identity():
+    collector = _runtime_collector()
+    collector.status_events.append(MissionStatusRecord(
+        5 * SECOND, 'goal-2', GoalStatus.STATUS_EXECUTING
+    ))
+    summary, _ = _summarize_runtime_collector(collector, scenario='baseline')
+    assert summary['status'] == 'fail'
+    assert 'navigate_to_pose_goal_identity_ambiguous' in summary['failures']
+
+
+def test_baseline_cannot_pass_without_physical_motion():
+    collector = _runtime_collector()
+    collector.poses.clear()
+    collector.poses.extend([
+        PoseRecord(2 * SECOND, 0.0, 5.0, 0.0),
+        PoseRecord(9 * SECOND, 0.0, 5.0, 0.0),
+    ])
+    summary, _ = _summarize_runtime_collector(collector, scenario='baseline')
+    assert summary['status'] == 'fail'
+    assert 'ugv_trajectory_missing' in summary['failures']
 
 
 def test_automatic_replanning_rejects_an_ambiguous_goal_lifetime():
@@ -1274,6 +1460,34 @@ def test_clearing_cannot_pass_without_prior_marking():
     assert summary['costmap']['first_mark_ns'] is None
     assert summary['costmap']['clearing']['observed_mechanism'] == 'not_observed'
     assert 'aerial_costmap_mark_not_observed' in summary['failures']
+
+
+def test_pre_hazard_plan_precedes_forwarded_hazard_even_when_mark_is_delayed():
+    collector = _runtime_collector(clearing=True)
+    collector.automatic_plans.insert(1, PlanRecord(
+        'early_hazard_response', 2_500_000_000, 2_500_000_000, 0.0, 0, '',
+        ((0.0, 5.0), (3.0, 2.5), (3.0, -2.5), (0.0, -5.0)),
+    ))
+    collector.plan_topic_count += 1
+
+    summary, _ = _summarize_runtime_collector(collector)
+
+    assert summary['planner']['pre_hazard']['result_ns'] == 1_500_000_000
+    assert summary['planner']['pre_hazard']['crosses_covariance_footprint'] is True
+
+
+def test_valid_fails_if_aerial_costmap_clears_before_mission_completion():
+    collector = _runtime_collector()
+    collector.costmaps.append(_runtime_grid(6 * SECOND))
+    collector.costmap_count += 1
+    collector.costmap_full_count += 1
+
+    summary, _ = _summarize_runtime_collector(collector, scenario='valid')
+
+    assert summary['costmap']['first_mark_ns'] == 3 * SECOND
+    assert summary['costmap']['first_clear_ns'] == 6 * SECOND
+    assert summary['costmap']['clearing']['source_explicit_empty_ns'] is None
+    assert 'aerial_costmap_cleared_during_active_hazard' in summary['failures']
 
 
 def test_clearing_expiry_and_silence_mechanisms_remain_distinct():
