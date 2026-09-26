@@ -1,0 +1,14 @@
+{
+  "dataset": "/home/ruben/halmstad_ws/datasets/final/baylands_generalization_playground",
+  "pred_dir": "/home/ruben/halmstad_ws/models/obb/experiments/sam3_hybrid_full/runs/predictions/baylands-leader-v6-nomosaic/baylands_generalization_playground_test_all",
+  "split": "test",
+  "images": 250,
+  "status_counts": {
+    "matched": 209,
+    "false_positive_empty": 3,
+    "correct_empty": 23,
+    "no_prediction": 1,
+    "multi_prediction": 14
+  },
+  "mean_best_iou_non_empty": 0.7477082735426009
+}

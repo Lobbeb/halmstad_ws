@@ -1,17 +1,5 @@
 waypoints:
   waypoint0:
-    name: strip_0
-    pose:
-    - 53.040291361783815
-    - -160.61434108337062
-    - 0.0
-    orientation:
-    - 0.9216645350136091
-    - 0.0
-    - 0.0
-    - -0.38798773807705284
-    group: strip
-  waypoint1:
     name: strip_1
     pose:
     - 86.56390128205739
@@ -23,7 +11,7 @@ waypoints:
     - 0.0
     - -0.22119526924342342
     group: strip
-  waypoint2:
+  waypoint1:
     name: strip_2
     pose:
     - 112.91271393040911
@@ -35,7 +23,7 @@ waypoints:
     - 0.0
     - -0.06013932644998195
     group: strip
-  waypoint3:
+  waypoint2:
     name: strip_3
     pose:
     - 139.96881828831047
@@ -47,7 +35,7 @@ waypoints:
     - 0.0
     - 0.018719453409384478
     group: strip
-  waypoint4:
+  waypoint3:
     name: strip_4
     pose:
     - 176.24736796931572
@@ -59,7 +47,7 @@ waypoints:
     - 0.0
     - -0.06880019373714623
     group: strip
-  waypoint5:
+  waypoint4:
     name: strip_5
     pose:
     - 213.141326204223
@@ -71,7 +59,7 @@ waypoints:
     - 0.0
     - -0.039696944427146254
     group: strip
-  waypoint6:
+  waypoint5:
     name: strip_6
     pose:
     - 218.3512145012023
@@ -83,7 +71,7 @@ waypoints:
     - 0.0
     - -0.07875759835376069
     group: strip
-  waypoint7:
+  waypoint6:
     name: strip_7
     pose:
     - 254.52493154611312
@@ -95,7 +83,7 @@ waypoints:
     - 0.0
     - -0.25584458892963996
     group: strip
-  waypoint8:
+  waypoint7:
     name: strip_8
     pose:
     - 271.20210699841806
@@ -107,7 +95,7 @@ waypoints:
     - 0.0
     - -0.230722379608727
     group: strip
-  waypoint9:
+  waypoint8:
     name: strip_9
     pose:
     - 286.03710561864534
@@ -119,7 +107,7 @@ waypoints:
     - 0.0
     - -0.14660707800400707
     group: strip
-  waypoint10:
+  waypoint9:
     name: strip_10
     pose:
     - 310.3933747310024
@@ -131,7 +119,7 @@ waypoints:
     - 0.0
     - -0.23096376991704998
     group: strip
-  waypoint11:
+  waypoint10:
     name: strip_11
     pose:
     - 326.00936794376986
@@ -143,7 +131,7 @@ waypoints:
     - 0.0
     - -0.26886311034693444
     group: strip
-  waypoint12:
+  waypoint11:
     name: strip_12
     pose:
     - 345.6449106430986
@@ -155,7 +143,7 @@ waypoints:
     - 0.0
     - -0.2584952808029538
     group: strip
-  waypoint13:
+  waypoint12:
     name: strip_13
     pose:
     - 363.32228443571273
@@ -167,7 +155,7 @@ waypoints:
     - 0.0
     - -0.29455343663938865
     group: strip
-  waypoint14:
+  waypoint13:
     name: strip_14
     pose:
     - 376.91834963699336
@@ -179,7 +167,7 @@ waypoints:
     - 0.0
     - -0.29720848160348023
     group: strip
-  waypoint15:
+  waypoint14:
     name: strip_15
     pose:
     - 393.06450885301416
@@ -191,7 +179,7 @@ waypoints:
     - 0.0
     - -0.2450323151927037
     group: strip
-  waypoint16:
+  waypoint15:
     name: strip_16
     pose:
     - 421.57801073473433

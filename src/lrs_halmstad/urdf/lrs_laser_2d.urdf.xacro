@@ -1,0 +1,62 @@
+<?xml version="1.0"?>
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro">
+  <xacro:property name="M_PI" value="3.1415926535897931"/>
+
+  <xacro:macro name="lrs_laser_2d"
+               params="name parent_link link_name x y z sensor_x sensor_y sensor_z rpy
+                       half_angle_deg visualize update_rate ang_res min_range max_range
+                       range_res ns topic frame_id">
+    <xacro:property name="half_angle_rad" value="${half_angle_deg * M_PI / 180.0}"/>
+    <xacro:property name="samples" value="${round((2.0 * half_angle_deg) / ang_res)}"/>
+
+    <link name="${link_name}">
+      <pose>${x} ${y} ${z} ${rpy}</pose>
+      <gravity>false</gravity>
+      <inertial>
+        <mass>0.02</mass>
+        <inertia>
+          <ixx>1.0e-5</ixx>
+          <ixy>0.0</ixy>
+          <ixz>0.0</ixz>
+          <iyy>1.0e-5</iyy>
+          <iyz>0.0</iyz>
+          <izz>1.0e-5</izz>
+        </inertia>
+      </inertial>
+      <sensor name="${name}" type="gpu_lidar">
+        <pose>${sensor_x} ${sensor_y} ${sensor_z} 0 0 0</pose>
+        <update_rate>${update_rate}</update_rate>
+        <visualize>${visualize}</visualize>
+        <always_on>true</always_on>
+        <topic>${ns}${topic}</topic>
+        <gz_frame_id>${frame_id}</gz_frame_id>
+        <lidar>
+          <scan>
+            <horizontal>
+              <samples>${samples}</samples>
+              <resolution>1</resolution>
+              <min_angle>${-half_angle_rad}</min_angle>
+              <max_angle>${half_angle_rad}</max_angle>
+            </horizontal>
+            <vertical>
+              <samples>1</samples>
+              <resolution>1</resolution>
+              <min_angle>0</min_angle>
+              <max_angle>0</max_angle>
+            </vertical>
+          </scan>
+          <range>
+            <min>${min_range}</min>
+            <max>${max_range}</max>
+            <resolution>${range_res}</resolution>
+          </range>
+        </lidar>
+      </sensor>
+    </link>
+
+    <joint name="${name}_joint" type="fixed">
+      <parent>${parent_link}</parent>
+      <child>${link_name}</child>
+    </joint>
+  </xacro:macro>
+</robot>

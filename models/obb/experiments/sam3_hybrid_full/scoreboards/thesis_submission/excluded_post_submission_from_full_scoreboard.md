@@ -1,0 +1,10 @@
+| post_submission_rank | rank | model_version | eval_score | main_test_mAP50-95 | gen_avg_mAP50-95 | pred_avg_score |
+| --- | --- | --- | --- | --- | --- | --- |
+| 1 | 1 | v10-tuned-no-playground | 0.8035 | 0.8475 | 0.7436 | 0.7504 |
+| 2 | 2 | v10-tuned-no-road-to-art | 0.7976 | 0.8386 | 0.7335 | 0.7844 |
+| 3 | 3 | v10-tuned-no-art | 0.7926 | 0.8461 | 0.7197 | 0.7360 |
+| 4 | 4 | v10-tuned-no-rotundan | 0.7877 | 0.8514 | 0.7055 | 0.7120 |
+| 5 | 5 | v9-2-full | 0.7876 | 0.7990 | 0.7899 | 0.7519 |
+| 6 | 8 | v10-tuned-from-v9-tight-5 | 0.7858 | 0.8472 | 0.7067 | 0.7361 |
+| 7 | 12 | v10-tuned-from-v9-tight-3 | 0.7813 | 0.8502 | 0.6893 | 0.7371 |
+| 8 | 20 | v10-tuned-full | 0.7634 | 0.8271 | 0.6726 | 0.7241 |

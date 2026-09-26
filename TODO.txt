@@ -1,0 +1,14 @@
+NOW:
+    - Fix pictures for the presentation and thesis
+        - Picture of before and after OBB overlay (before SAM3 and with SAM3)
+        - Picture of the UGV while its navigating in RViZ (lidar and stuff)
+        - Picture of SLAM mapping (maybe)
+        - Examples of training data
+    - Write more about SAM3 to OBB solution
+    - More communication tests
+        - With > 1 UAVs
+
+
+LATER:
+    - Inspect and fix topics that are not needed/unnecessary from the debug results in /debug debug_topics_suspects.md
+        - Disable camera topics when they are not used/needed

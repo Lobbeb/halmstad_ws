@@ -1,49 +1,53 @@
 # $--- Hyperparameters for training YOLO on the Ultralytics Platform --- <<<
 
-# Training Settings
-epochs: 300    # default:          300 — Number of training epochs (full passes over the dataset)
-batch: -1       # default:         -1 — Batch size for training (-1 means auto/infer from hardware)
-imgsz: 640       # default:        640 — Input image size in pixels (height and width)
-pretrained: true  # default:       true — Initialize model with pretrained weights
-patience: 100      # default:      100 — Early stopping patience (epochs without improvement)
-seed: 0             # default:     0 — Random seed for reproducibility (0 typically means use seed 0)
-deterministic: true  # default:    true — Enable deterministic operations for reproducible runs
-amp: true           # default:     true — Use automatic mixed precision (FP16) to speed training
-cos_lr: false      # default:      false — Use cosine learning rate schedule if true
-close_mosaic: 10  # default:       10 — Number of final epochs to disable mosaic augmentation
-save_period: -1  # default:        -1 — Period (in epochs) to save checkpoints (-1 disables)
-fraction: 1      # default:        1 — Fraction of dataset to use for training (1 = 100%)
-freeze: null      # default:       null — Layers or stages to freeze (null = none)
-single_cls: false  # default:      false — Treat dataset as single-class (true = single-class)
-rect: false       # default:       false — Use rectangular training (preserve aspect ratio)
-multi_scale: 0   # default:        0 — Multi-scale training toggle (0 = off)
-resume: false     # default:       false — Resume from last checkpoint if true
-optimizer: auto    # default:      auto — Optimizer to use (auto selects framework default)
-lr0: 0.01           # default:     0.01 — Initial/base learning rate
-lrf: 0.01            # default:    0.01 — Final learning rate multiplier (multiplied with lr0)
-momentum: 0.937       # default:   0.937 — SGD momentum term (if using SGD-like optimizer)
-weight_decay: 0.0005   # default:  0.0005 — Weight decay (L2 regularization)
-warmup_epochs: 3        # default: 3 — Number of warmup epochs for ramping learning rate
-warmup_momentum: 0.8   # default:  0.8 — Starting momentum during warmup
-warmup_bias_lr: 0.1   # default:   0.1 — Starting bias learning rate during warmup
-box: 7.5             # default:    7.5 — Weight for box (localization) loss term
-cls: 0.5            # default:     0.5 — Weight for classification loss term
-dfl: 1.5           # default:      1.5 — Weight for Distribution Focal Loss (bbox distribution)
-pose: 12          # default:       12 — Weight for pose loss (if using pose predictions)
-kobj: 1            # default:      1 — Weight for objectness loss term
-label_smoothing: 0  # default:     0 — Label smoothing factor (0 = no smoothing)
+# <<< Training Settings
+epochs: 100     # default:          300   — Number of training epochs (full passes over the dataset)
+batch: -1        # default:         -1    — Batch size for training (-1 means auto/infer from hardware)
+imgsz: 640        # default:        640   — Input image size in pixels (height and width)
+pretrained: true   # default:       true  — Initialize model with pretrained weights
+patience: 40        # default:      100   — Early stopping patience (epochs without improvement)
+seed: 0              # default:     0     — Random seed for reproducibility (0 typically means use seed 0)
+deterministic: true   # default:    true  — Enable deterministic operations for reproducible runs
+amp: true            # default:     true  — Use automatic mixed precision (FP16) to speed training
+cos_lr: false       # default:      false — Use cosine learning rate schedule if true
+close_mosaic: 10   # default:       10    — Number of final epochs to disable mosaic augmentation
+save_period: -1   # default:        -1    — Period (in epochs) to save checkpoints (-1 disables)
+fraction: 1      # default:        1      — Fraction of dataset to use for training (1 = 100%)
+freeze: null      # default:       null   — Layers or stages to freeze (null = none)
+single_cls: false  # default:      false  — Treat dataset as single-class (true = single-class)
+rect: false       # default:       false  — Use rectangular training (preserve aspect ratio)
+multi_scale: 0   # default:        0      — Multi-scale training toggle (0 = off)
+resume: false   # default:       false    — Resume from last checkpoint if true
+optimizer: auto  # default:      auto     — Optimizer to use (auto selects framework default)
 
-# Image Augmentations
-hsv_h: 0.015           # default:  0.015 — HSV hue augmentation factor (fractional)
-hsv_s: 0.7            # default:   0.7 — HSV saturation augmentation factor (fractional)
-hsv_v: 0.4           # default:    0.4 — HSV value (brightness) augmentation factor
-degrees: 0          # default:     0 — Rotation degrees range for augmentation
-translate: 0.1     # default:      0.1 — Translation fraction for augmentation (relative shift)
-scale: 0.5        # default:       0.5 — Scaling factor range for augmentation
-shear: 0           # default:      0 — Shear angle range for augmentation
-perspective: 0.001  # default:     0.001 — Perspective transform magnitude
+# <<< Hyperparameters for Loss and Optimization
+lr0: 0.005         # default:     0.01    — Initial/base learning rate
+lrf: 0.01           # default:    0.01    — Final learning rate multiplier (multiplied with lr0)
+momentum: 0.937      # default:   0.937   — SGD momentum term (if using SGD-like optimizer)
+weight_decay: 0.0005  # default:  0.0005  — Weight decay (L2 regularization)
+warmup_epochs: 3       # default: 3       — Number of warmup epochs for ramping learning rate
+warmup_momentum: 0.8  # default:  0.8     — Starting momentum during warmup
+warmup_bias_lr: 0.1  # default:   0.1     — Starting bias learning rate during warmup
+
+# <<< Loss Weights
+box: 7.5             # default:    7.5    — Weight for box (localization) loss term
+cls: 0.5            # default:     0.5    — Weight for classification loss term
+dfl: 1.5           # default:      1.5    — Weight for Distribution Focal Loss (bbox distribution)
+pose: 1.0           # default:       12     — Weight for pose loss (if using pose predictions)
+kobj: 0.5            # default:      1      — Weight for objectness loss term
+label_smoothing: 0  # default:     0      — Label smoothing factor (0 = no smoothing)
+
+# << <Image Augmentations
+hsv_h: 0.015           # default:  0.015  — HSV hue augmentation factor (fractional)
+hsv_s: 0.5            # default:   0.7 — HSV saturation augmentation factor (fractional)
+hsv_v: 0.3           # default:    0.4 — HSV value (brightness) augmentation factor
+degrees: 3          # default:     0 — Rotation degrees range for augmentation
+translate: 0.08    # default:      0.1 — Translation fraction for augmentation (relative shift)
+scale: 0.35       # default:       0.5 — Scaling factor range for augmentation
+shear: 0         # default:      0 — Shear angle range for augmentation
+perspective: 0.0  # default:     0.001 — Perspective transform magnitude
 flipud: 0          # default:      0 — Vertical flip probability (0 = off)
 fliplr: 0.5       # default:       0.5 — Horizontal flip probability
-mosaic: 1        # default:        1 — Mosaic augmentation toggle (1 = enabled)
+mosaic: 0.5      # default:        1 — Mosaic augmentation toggle (1 = enabled)
 mixup: 0        # default:         0 — MixUp augmentation probability
 copy_paste: 0  # default:          0 — Copy-paste augmentation probability

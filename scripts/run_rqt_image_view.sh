@@ -3,6 +3,28 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 WS_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+
+usage() {
+  cat <<'EOF'
+Usage:
+  ./run.sh rqt_image_view [topic] [rqt_image_view args...]
+
+Open rqt_image_view, optionally preselecting an image topic.
+
+Examples:
+  ./run.sh rqt_image_view
+  ./run.sh rqt_image_view /dji0/camera0/image_raw
+  ./run.sh rqt_image_view /a201_0000/sensors/camera_0/color/image
+EOF
+}
+
+case "${1:-}" in
+  help|-h|--help)
+    usage
+    exit 0
+    ;;
+esac
+
 TOPIC="${1:-}"
 
 if [ "$#" -gt 0 ]; then

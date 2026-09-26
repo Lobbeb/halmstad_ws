@@ -98,3 +98,7 @@ opt/omnetpp-*/
 /audit_v3.txt
 /*Zone.Identifier
 /scripts/thesis_plots/
+
+# --- Local packaged training jobs ---
+/cloud_sam3*.tar.gz
+/scripts/cloud_sam3*.tar.gz

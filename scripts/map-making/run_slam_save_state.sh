@@ -16,8 +16,31 @@ SAVE_ARGS=()
 MAP_SAVE_RETRIES="3"
 MAP_SAVE_RETRY_SLEEP_S="2"
 
+usage() {
+  cat <<'EOF'
+Usage:
+  ./run.sh slam_save_state [name] [arg:=value ...]
+
+Serialize the active SLAM pose graph and save a map snapshot.
+
+Arguments:
+  name | state_name:=NAME      Checkpoint name. Default comes from slam_state_common.
+  lidar:=2d|3d                 Record selected lidar mode in metadata.
+  scan_topic:=TOPIC            Record scan topic in metadata.
+  map_save_retries:=N          Map save retries. Default: 3.
+  map_save_retry_sleep_s:=S    Sleep between retries. Default: 2.
+
+Example:
+  ./run.sh slam_save_state baylands_slam lidar:=3d
+EOF
+}
+
 while [ "$#" -gt 0 ]; do
   case "$1" in
+    help|-h|--help)
+      usage
+      exit 0
+      ;;
     state_name:=*)
       STATE_NAME="${1#state_name:=}"
       ;;

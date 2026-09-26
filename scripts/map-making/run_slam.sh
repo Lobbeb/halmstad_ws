@@ -11,6 +11,35 @@ ACTIVE_SLAM_LIDAR_MODE_FILE="$STATE_DIR/slam.lidar_mode"
 
 source "$SHARED_SCRIPTS_DIR/lidar_mode_common.sh"
 
+usage() {
+  cat <<'EOF'
+Usage:
+  ./run.sh slam [lidar:=2d|3d] [arg:=value ...]
+
+Launch slam_toolbox with the repo's local SLAM launch file.
+
+Common arguments:
+  lidar:=2d|3d                 Select default scan source. Default: 3d.
+  scan_topic:=TOPIC            Override scan topic.
+  pointcloud_topic:=TOPIC      Pointcloud input when using 3D lidar conversion.
+  use_scan_relay:=true|false   Relay scan messages before SLAM.
+  scan_relay_hz:=FLOAT         Relay rate when enabled.
+  scan_relay_max_age_s:=FLOAT  Relay max message age.
+  sync:=true|false             Forwarded to the SLAM launch.
+
+Other arg:=value pairs are forwarded to slam_with_params.launch.py.
+EOF
+}
+
+for arg in "$@"; do
+  case "$arg" in
+    help|-h|--help)
+      usage
+      exit 0
+      ;;
+  esac
+done
+
 lidar_mode_parse_args 3d "$@"
 
 USE_SCAN_RELAY=""

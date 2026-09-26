@@ -60,6 +60,7 @@ class GazeboModelPoseBridge(Node):
         self.declare_parameter("odom_topic", "ground_truth/odom")
         self.declare_parameter("frame_id", "odom")
         self.declare_parameter("child_frame_id", "base_link")
+        self.declare_parameter("publish_hz", 0.0)
 
         self.world = str(self.get_parameter("world").value).strip()
         self.gz_world = gazebo_world_name(self.world)
@@ -70,6 +71,8 @@ class GazeboModelPoseBridge(Node):
         self.child_frame_id = (
             str(self.get_parameter("child_frame_id").value).strip() or "base_link"
         )
+        self.publish_hz = max(0.0, float(self.get_parameter("publish_hz").value))
+        self._min_publish_period_s = 1.0 / self.publish_hz if self.publish_hz > 0.0 else 0.0
 
         self.pose_pub = self.create_publisher(PoseStamped, self.pose_topic, 10)
         self.odom_pub = self.create_publisher(Odometry, self.odom_topic, 10)
@@ -106,7 +109,8 @@ class GazeboModelPoseBridge(Node):
 
         self.get_logger().info(
             f"[gazebo_model_pose_bridge] Tracking model '{self.model_name}' from {self._subscribed_topics} "
-            f"and publishing pose={self.pose_topic} odom={self.odom_topic} frame_id={self.frame_id}"
+            f"and publishing pose={self.pose_topic} odom={self.odom_topic} frame_id={self.frame_id} "
+            f"publish_hz={self.publish_hz:.1f}"
         )
 
     def _make_pose_callback(self, source_topic: str):
@@ -145,6 +149,10 @@ class GazeboModelPoseBridge(Node):
                     float(stamp_sec - previous.stamp_sec)
                     + float(stamp_nsec - previous.stamp_nsec) * 1e-9
                 )
+                if dt <= 1e-9:
+                    return
+                if self._min_publish_period_s > 0.0 and dt < self._min_publish_period_s:
+                    return
                 if dt > 1e-6:
                     vx_world = (x - previous.x) / dt
                     vy_world = (y - previous.y) / dt

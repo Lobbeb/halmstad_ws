@@ -1,0 +1,14 @@
+{
+  "dataset": "/home/ruben/halmstad_ws/datasets/final/baylands_sam3_obb_generalization_rotundan",
+  "pred_dir": "/home/ruben/halmstad_ws/models/obb/experiments/sam3_hybrid_full/runs/predictions/baylands-leader-v8c-mildgeometric/baylands_generalization_rotundan_test_all",
+  "split": "test",
+  "images": 252,
+  "status_counts": {
+    "matched": 170,
+    "no_prediction": 28,
+    "correct_empty": 51,
+    "multi_prediction": 1,
+    "false_positive_empty": 2
+  },
+  "mean_best_iou_non_empty": 0.7326405029239766
+}

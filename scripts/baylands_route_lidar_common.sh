@@ -1,11 +1,13 @@
 #!/usr/bin/env bash
 
+export BAYLANDS_ROUTE_LIDAR_OVERRIDES="true"
+
 route_lidar_config_path() {
   printf '%s/src/lrs_halmstad/config/baylands_route_lidar.yaml\n' "$WS_ROOT"
 }
 
 route_lidar_overrides_enabled() {
-  [ "${BAYLANDS_ROUTE_LIDAR_OVERRIDES:-false}" = "true" ]
+  [ "${BAYLANDS_ROUTE_LIDAR_OVERRIDES:-true}" = "true" ]
 }
 
 route_lidar_arg_present() {
@@ -63,11 +65,12 @@ route_lidar_waypoint_route() {
 
 route_lidar_waypoint_args() {
   local waypoint="$1"
+  shift || true
 
   route_lidar_overrides_enabled || return 0
   [ -n "$waypoint" ] || return 0
 
-  python3 - "$(route_lidar_config_path)" "$waypoint" <<'PY'
+  python3 - "$(route_lidar_config_path)" "$waypoint" "$@" <<'PY'
 import re
 import sys
 from pathlib import Path
@@ -76,6 +79,7 @@ import yaml
 
 config_path = Path(sys.argv[1])
 waypoint = sys.argv[2]
+existing = sys.argv[3:]
 
 if not config_path.is_file():
     raise SystemExit(0)
@@ -99,6 +103,9 @@ for key in ("pc2ls_min_height", "pc2ls_max_height", "min_height", "max_height"):
         out_key = "pc2ls_min_height"
     elif out_key == "max_height":
         out_key = "pc2ls_max_height"
+    prefix = f"{out_key}:="
+    if any(arg.startswith(prefix) for arg in existing):
+        continue
     print(f"{out_key}:={float(settings[key])}")
 PY
 }

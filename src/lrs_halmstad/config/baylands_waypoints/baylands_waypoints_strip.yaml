@@ -1,10 +1,5 @@
 frame_id: map
 waypoints:
-- name: strip_0
-  x: 53.040291361783815
-  y: -160.61434108337062
-  yaw_deg: -45.658696801800126
-  group: strip
 - name: strip_1
   x: 86.56390128205739
   y: -184.53264211820905

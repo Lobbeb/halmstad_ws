@@ -1,0 +1,206 @@
+<?xml version="1.0"?>
+<sdf version="1.7">
+  <model name="zedx">
+    <pose>0 0 0 0 0 0</pose>
+    <static>false</static>
+
+    <link name="base_link">
+      <inertial>
+        <mass>0.240</mass>
+        <inertia>
+          <ixx>0.000032</ixx>
+          <iyy>0.000545</iyy>
+          <izz>0.000541</izz>
+          <ixy>0</ixy>
+          <ixz>0</ixz>
+          <iyz>0</iyz>
+        </inertia>
+      </inertial>
+
+      <collision name="body_collision">
+        <geometry>
+          <box>
+            <size>0.032 0.164 0.037</size>
+          </box>
+        </geometry>
+      </collision>
+
+      <visual name="body_visual">
+        <geometry>
+          <box>
+            <size>0.034 0.140 0.037</size>
+          </box>
+        </geometry>
+        <material>
+          <ambient>0.02 0.02 0.025 1</ambient>
+          <diffuse>0.035 0.035 0.04 1</diffuse>
+          <specular>0.2 0.2 0.2 1</specular>
+        </material>
+      </visual>
+
+      <visual name="front_face_visual">
+        <pose>0.0165 0 0 0 0 0</pose>
+        <geometry>
+          <box>
+            <size>0.002 0.138 0.025</size>
+          </box>
+        </geometry>
+        <material>
+          <ambient>0.12 0.12 0.13 1</ambient>
+          <diffuse>0.18 0.18 0.19 1</diffuse>
+          <specular>0.3 0.3 0.3 1</specular>
+        </material>
+      </visual>
+
+      <visual name="left_lens_visual">
+        <pose>0.017 0.052 0 0 1.570796 0</pose>
+        <geometry>
+          <cylinder>
+            <radius>0.016</radius>
+            <length>0.006</length>
+          </cylinder>
+        </geometry>
+        <material>
+          <ambient>0.0 0.0 0.0 1</ambient>
+          <diffuse>0.005 0.005 0.008 1</diffuse>
+          <specular>0.9 0.9 0.95 1</specular>
+        </material>
+      </visual>
+      <visual name="left_lens_inner_visual">
+        <pose>0.018 0.052 0 0 1.570796 0</pose>
+        <geometry>
+          <cylinder>
+            <radius>0.008</radius>
+            <length>0.003</length>
+          </cylinder>
+        </geometry>
+        <material>
+          <ambient>0 0 0 1</ambient>
+          <diffuse>0 0 0 1</diffuse>
+          <specular>1 1 1 1</specular>
+        </material>
+      </visual>
+
+      <visual name="right_lens_visual">
+        <pose>0.017 -0.052 0 0 1.570796 0</pose>
+        <geometry>
+          <cylinder>
+            <radius>0.016</radius>
+            <length>0.006</length>
+          </cylinder>
+        </geometry>
+        <material>
+          <ambient>0.0 0.0 0.0 1</ambient>
+          <diffuse>0.005 0.005 0.008 1</diffuse>
+          <specular>0.9 0.9 0.95 1</specular>
+        </material>
+      </visual>
+      <visual name="right_lens_inner_visual">
+        <pose>0.018 -0.052 0 0 1.570796 0</pose>
+        <geometry>
+          <cylinder>
+            <radius>0.008</radius>
+            <length>0.003</length>
+          </cylinder>
+        </geometry>
+        <material>
+          <ambient>0 0 0 1</ambient>
+          <diffuse>0 0 0 1</diffuse>
+          <specular>1 1 1 1</specular>
+        </material>
+      </visual>
+      <visual name="zed_logo_visual">
+        <pose>0.018 0 0.0005 0 0 0</pose>
+        <geometry>
+          <box>
+            <size>0.001 0.020 0.006</size>
+          </box>
+        </geometry>
+        <material>
+          <ambient>0.85 0.85 0.85 1</ambient>
+          <diffuse>0.95 0.95 0.95 1</diffuse>
+          <emissive>0.35 0.35 0.35 1</emissive>
+        </material>
+      </visual>
+
+      <sensor name="zedx_rgbd" type="rgbd_camera">
+        <pose>0.020 0 0 0 0 0</pose>
+        <always_on>1</always_on>
+        <update_rate>30</update_rate>
+        <visualize>0</visualize>
+        <camera name="zedx_rgbd">
+          <horizontal_fov>1.919862</horizontal_fov>
+          <image>
+            <width>960</width>
+            <height>600</height>
+            <format>R8G8B8</format>
+          </image>
+          <clip>
+            <near>0.03</near>
+            <far>40</far>
+          </clip>
+          <depth_camera>
+            <clip>
+              <near>0.3</near>
+              <far>20.0</far>
+            </clip>
+          </depth_camera>
+          <noise>
+            <type>gaussian</type>
+            <mean>0</mean>
+            <stddev>0.005</stddev>
+          </noise>
+        </camera>
+      </sensor>
+
+      <sensor name="zedx_imu" type="imu">
+        <topic>/model/zedx/imu</topic>
+        <always_on>1</always_on>
+        <update_rate>200</update_rate>
+        <imu>
+          <enable_orientation>0</enable_orientation>
+          <angular_velocity>
+            <x>
+              <noise type="gaussian">
+                <mean>0</mean>
+                <stddev>0.009</stddev>
+              </noise>
+            </x>
+            <y>
+              <noise type="gaussian">
+                <mean>0</mean>
+                <stddev>0.009</stddev>
+              </noise>
+            </y>
+            <z>
+              <noise type="gaussian">
+                <mean>0</mean>
+                <stddev>0.009</stddev>
+              </noise>
+            </z>
+          </angular_velocity>
+          <linear_acceleration>
+            <x>
+              <noise type="gaussian">
+                <mean>0</mean>
+                <stddev>0.021</stddev>
+              </noise>
+            </x>
+            <y>
+              <noise type="gaussian">
+                <mean>0</mean>
+                <stddev>0.021</stddev>
+              </noise>
+            </y>
+            <z>
+              <noise type="gaussian">
+                <mean>0</mean>
+                <stddev>0.021</stddev>
+              </noise>
+            </z>
+          </linear_acceleration>
+        </imu>
+      </sensor>
+    </link>
+  </model>
+</sdf>

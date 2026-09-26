@@ -1,0 +1,14 @@
+{
+  "dataset": "/home/ruben/halmstad_ws/datasets/final/baylands_generalization_rotundan",
+  "pred_dir": "/home/ruben/halmstad_ws/models/obb/experiments/sam3_hybrid_full/runs/predictions/baylands-leader-v6/baylands_generalization_rotundan_test_all",
+  "split": "test",
+  "images": 252,
+  "status_counts": {
+    "matched": 177,
+    "correct_empty": 51,
+    "no_prediction": 12,
+    "multi_prediction": 10,
+    "false_positive_empty": 2
+  },
+  "mean_best_iou_non_empty": 0.7408310855614973
+}

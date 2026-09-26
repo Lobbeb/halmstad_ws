@@ -1,0 +1,167 @@
+Run these in the audit script:
+FOLLOW:
+./run.sh tmux_1to1 baylands mode:=follow
+
+YOLO:
+./run.sh tmux_1to1 baylands mode:=yolo tracker:=false external_detection_node:=detector yolo_control_mode:=follow_uav_estimate
+
+YOLO-tracker:
+./run.sh tmux_1to1 baylands mode:=yolo tracker:=true external_detection_node:=tracker tracker_config:=bytetrack.yaml yolo_control_mode:=follow_uav_estimate
+
+YOLO-visual-bridge:
+./run.sh tmux_1to1 baylands mode:=yolo tracker:=true external_detection_node:=tracker tracker_config:=bytetrack.yaml yolo_control_mode:=visual_bridge start_visual_follow_controller:=true start_visual_follow_point_generator:=true start_visual_follow_planner:=true start_visual_actuation_bridge:=true
+
+YOLO-full:
+./run.sh tmux_1to1 baylands mode:=yolo  omnet:=true omnet_network:=lora omnet_ui:=cmdenv start
+_visual_follow_controller:=true start_visual_follow_point_generator:=true start_visual_follow_planner:=true start_visual_actu
+ation_bridge:=true yolo_device:=cpu tracker:=true visual_follow_logic:=legacy use_tilt:=true start_camera_tracker:=true pan_e
+nable:=true tilt_enable:=true use_scan_relay:=true record:=true record_out:=bags/test_debug_yolo_full external_detection_node:=tracker
+
+YOLO-support-chain:
+./run.sh tmux_support_chain baylands mode:=yolo
+
+<<<<<<<<<<< FOLLOW >>>>>>>>>>>>
+
+===============================
+SORTED BY BW -> KB/s (or MB/s):
+===============================
+
+/dji0/camera0/depth_image
+average rate: 13.619
+        min: 0.045s max: 0.153s std dev: 0.03757s window: 15
+        18.26 MB/s from 29 messages
+        Message size mean: 1.23 MB min: 1.23 MB max: 1.23 MB
+        1 PUB (ONLY USED FOR YOLO BUT STILL PUBLISHING ON FOLLOW)
+        0 SUB
+
+ros2 topic hz  /a201_0000/controller_manager/statistics/full
+average rate: 250.050
+        min: 0.002s max: 0.006s std dev: 0.00032s window: 252
+        619.51 KB/s from 100 messages
+        Message size mean: 2.47 KB min: 2.47 KB max: 2.47 KB
+        1 PUB
+        0 SUB
+
+ros2 topic hz  /a201_0000/controller_manager/statistics/values
+WARNING: topic [/a201_0000/controller_manager/statistics/values] does not appear to be published yet
+average rate: 250.066
+        min: 0.003s max: 0.005s std dev: 0.00021s window: 251
+        82.38 KB/s from 100 messages
+        Message size mean: 0.33 KB min: 0.33 KB max: 0.33 KB
+        1 PUB
+        0 SUB
+
+ros2 topic hz  /a201_0000/particle_cloud
+WARNING: topic [/a201_0000/particle_cloud] does not appear to be published yet
+average rate: 2.976
+        min: 0.281s max: 0.501s std dev: 0.08279s window: 5
+        79.20 KB/s from 3 messages
+        Message size mean: 40.80 KB min: 38.49 KB max: 45.40 KB
+        1 PUB
+        0 SUB
+
+ros2 topic hz /a201_0000/controller_manager/introspection_data/full
+average rate: 19.236
+        min: 0.052s max: 0.052s std dev: 0.00020s window: 21
+        43.76 KB/s from 20 messages
+        Message size mean: 2.19 KB min: 2.19 KB max: 2.19 KB
+        1 PUB
+        0 SUB
+
+ros2 topic hz /a201_0000/bond
+average rate: 161.321
+        min: 0.000s max: 0.043s std dev: 0.00919s window: 330    
+        19.38 KB/s from 100 messages
+        Message size mean: 0.09 KB min: 0.08 KB max: 0.10 KB
+
+ros2 topic hz  /a201_0000/platform/odom
+average rate: 19.237
+        min: 0.051s max: 0.052s std dev: 0.00023s window: 21
+        14.55 KB/s from 20 messages
+        Message size mean: 0.72 KB min: 0.72 KB max: 0.72 KB
+        1 PUB
+        2 SUB
+
+ros2 topic hz /a201_0000/ground_truth/odom
+average rate: 16.735
+        min: 0.055s max: 0.061s std dev: 0.00120s window: 18
+        12.55 KB/s from 17 messages
+        Message size mean: 0.72 KB min: 0.72 KB max: 0.72 KB
+
+ros2 topic hz /a201_0000/sensors/camera_0/color/camera_info:
+        average rate: 28.981
+        min: 0.025s max: 0.048s std dev: 0.00623s window: 30
+        11.38 KB/s from 25 messages
+        Message size mean: 0.38 KB min: 0.38 KB max: 0.38 KB
+        1 PUB
+        0 SUB
+
+ros2 topic hz /a201_0000/local_costmap/costmap_raw
+average rate: 0.476
+        min: 2.100s max: 2.100s std dev: 0.00006s window: 2
+        9.45 KB/s from 3 messages
+        Message size mean: 14.53 KB min: 14.53 KB max: 14.53 KB
+
+ros2 topic hz /a201_0000/diagnostics
+average rate: 6.426
+        min: 0.000s max: 0.556s std dev: 0.22819s window: 10
+        7.18 KB/s from 16 messages
+        Message size mean: 0.71 KB min: 0.49 KB max: 0.88 KB
+        5 PUB
+        0 SUB
+
+ros2 topihz /a201_0000/controller_manager/introspection_data/values:
+        average rate: 19.261
+        min: 0.050s max: 0.054s std dev: 0.00086s window: 21
+        5.65 KB/s from 39 messages
+        Message size mean: 0.29 KB min: 0.29 KB max: 0.29 KB
+        1 PUB
+        0 SUB
+
+ros2 topic hz /a201_0000/amcl_pose
+average rate: 1.228
+        min: 0.513s max: 0.985s std dev: 0.21358s window: 3
+        1.20 KB/s from 2 messages
+        Message size mean: 0.36 KB min: 0.36 KB max: 0.36 KB
+        1 PUB
+        2 SUB
+
+ros2 topic hz /dji0/camera0/image_raw
+average rate: 15.209
+        min: 0.046s max: 0.152s std dev: 0.03476s window: 16
+        18.68 MB/s from 18 messages
+        Message size mean: 0.92 MB min: 0.92 MB max: 0.92 MB
+        1 PUB
+        0 SUB - USED ONLY FOR YOLO (unless you are monitoring in RViZ or rqt_image_view while FOLLOW)
+
+ros2 topic hz /dji0/psdk_ros2/flight_control_setpoint_ENUposition_yaw
+average rate: 10.561
+        min: 0.051s max: 0.113s std dev: 0.01783s window: 12
+        437 B/s from 9 messages
+        Message size mean: 44 B min: 44 B max: 44 B
+        1 PUB
+        1 SUB
+
+ros2 topic hz /dji0/pose
+average rate: 19.902
+        min: 0.001s max: 0.126s std dev: 0.02512s window: 21
+        1.72 KB/s from 20 messages
+        Message size mean: 0.08 KB min: 0.08 KB max: 0.08 KB
+        1 PUB
+        2 SUB
+
+------------------
+SUBS WITHOUT PUBS:
+------------------
+
+ros2 topic info -v  /a201_0000/planner_selector
+        0 PUB
+        2 SUB
+
+ros2 topic info -v /trajectories
+        1 PUB
+        0 SUB
+
+ros2 topic info -v /a201_0000/behavior_server/transition_event
+        1 PUB
+        0 SUB

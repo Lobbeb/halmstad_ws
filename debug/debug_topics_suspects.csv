@@ -1,0 +1,63 @@
+topic,hz,bw,peak_hz,peak_bw,modes,status,fix,publishers,subscribers,info
+/a201_0000/sensors/camera_0/color/image,14.598,12.83 MB/s,-,-,"FOLLOW, YOLO",,,ugv_camera_0_rgb_bridge,-,sensor_msgs/msg/Image
+/coord/leader_visual_control_debug_image,14.0,12.31 MB/s,14.000 (FULL),12.31 MB/s (FULL),"VISUAL BRIDGE, FULL",,,visual_follow_controller,-,sensor_msgs/msg/Image
+/a201_0000/sensors/lidar3d_0/points,16.191,12.10 MB/s,16.191 (VISUAL BRIDGE),12.10 MB/s (VISUAL BRIDGE),"FOLLOW, YOLO, TRACKER, VISUAL BRIDGE, FULL, SUPPORT YOLO",,,ugv_lidar3d_0_points_bridge,/a201_0000/pointcloud_to_laserscan,sensor_msgs/msg/PointCloud2
+/coord/leader_debug_image,12.793,11.24 MB/s,-,-,YOLO,,,leader_estimator,-,sensor_msgs/msg/Image
+/dji0/camera0/depth_image,7.196,8.43 MB/s,7.196 (VISUAL BRIDGE),8.43 MB/s (VISUAL BRIDGE),"YOLO, TRACKER, VISUAL BRIDGE, FULL, SUPPORT YOLO",,,uav_depth_bridge,leader_estimator,sensor_msgs/msg/Image
+/dji2/camera0/image_raw,7.798,6.85 MB/s,7.798 (SUPPORT YOLO),6.85 MB/s (SUPPORT YOLO),SUPPORT YOLO,,,/support_follow_spawn_dji2/uav_camera_bridge,support_dji2_leader_detector,sensor_msgs/msg/Image
+/dji1/camera0/image_raw,7.599,6.68 MB/s,7.599 (SUPPORT YOLO),6.68 MB/s (SUPPORT YOLO),SUPPORT YOLO,,,/support_follow_spawn_dji1/uav_camera_bridge,support_dji1_leader_detector,sensor_msgs/msg/Image
+/dji0/camera0/image_raw,7.4,6.50 MB/s,7.400 (FULL),6.50 MB/s (FULL),"FOLLOW, YOLO, TRACKER, VISUAL BRIDGE, FULL, SUPPORT YOLO",,,uav_camera_bridge,"leader_detector, leader_estimator, leader_tracker, +1",sensor_msgs/msg/Image
+/a201_0000/controller_manager/statistics/full,247.334,596.11 KB/s,247.334 (VISUAL BRIDGE),596.11 KB/s (VISUAL BRIDGE),"FOLLOW, YOLO, TRACKER, VISUAL BRIDGE, FULL, SUPPORT YOLO",,,/a201_0000/controller_manager,-,pal_statistics_msgs/msg/Statistics
+/a201_0000/controller_manager/statistics/values,246.934,79.10 KB/s,246.934 (VISUAL BRIDGE),79.10 KB/s (VISUAL BRIDGE),"FOLLOW, YOLO, TRACKER, VISUAL BRIDGE, FULL, SUPPORT YOLO",,,/a201_0000/controller_manager,-,pal_statistics_msgs/msg/StatisticsValues
+/a201_0000/sensors/lidar3d_0/scan_from_points,13.399,48.05 KB/s,-,-,"FOLLOW, YOLO, TRACKER, VISUAL BRIDGE, FULL, SUPPORT YOLO",,,/a201_0000/pointcloud_to_laserscan,"/a201_0000/local_costmap/local_costmap, /a201_0000/amcl, /a201_0000/latest_scan_relay",sensor_msgs/msg/LaserScan
+/a201_0000/controller_manager/introspection_data/full,19.798,42.30 KB/s,-,-,"FOLLOW, YOLO, TRACKER, VISUAL BRIDGE, FULL, SUPPORT YOLO",,,/a201_0000/controller_manager,-,pal_statistics_msgs/msg/Statistics
+/a201_0000/sensors/lidar3d_0/scan_from_points_relay,10.199,36.57 KB/s,10.199 (FULL),36.57 KB/s (FULL),FULL,,,/a201_0000/latest_scan_relay,/a201_0000/amcl,sensor_msgs/msg/LaserScan
+/a201_0000/platform/odom/filtered,44.988,31.81 KB/s,44.988 (VISUAL BRIDGE),31.81 KB/s (VISUAL BRIDGE),"FOLLOW, YOLO, TRACKER, VISUAL BRIDGE, FULL, SUPPORT YOLO",,,/a201_0000/ekf_node,/a201_0000/bt_navigator,nav_msgs/msg/Odometry
+/coord/ugv/support_observation_summary,8.733,18.35 KB/s,8.733 (SUPPORT YOLO),18.35 KB/s (SUPPORT YOLO),SUPPORT YOLO,,,dji0_to_ugv_forwarder,-,std_msgs/msg/String
+/coord/dji0/support_observation_summary,8.798,17.14 KB/s,8.798 (SUPPORT YOLO),17.14 KB/s (SUPPORT YOLO),SUPPORT YOLO,,,support_detection_mux,dji0_to_ugv_forwarder,std_msgs/msg/String
+/coord/leader_visual_target_estimate,19.795,14.15 KB/s,19.795 (VISUAL BRIDGE),14.15 KB/s (VISUAL BRIDGE),"VISUAL BRIDGE, FULL",,,visual_target_estimator,"follow_point_generator, follow_point_planner, +2, +3",nav_msgs/msg/Odometry
+/a201_0000/platform/odom,19.193,13.57 KB/s,19.193 (YOLO),13.57 KB/s (YOLO),"FOLLOW, YOLO, TRACKER, VISUAL BRIDGE, FULL, SUPPORT YOLO",,,/a201_0000/platform_velocity_controller,"/a201_0000/ekf_node, /a201_0000/controller_server",nav_msgs/msg/Odometry
+/dji0/pose/odom,17.466,12.21 KB/s,17.466 (SUPPORT YOLO),12.21 KB/s (SUPPORT YOLO),"FULL, SUPPORT YOLO",,,"omnet_uav_pose_to_odom, support_follow_dji0_pose_to_odom","omnet_tcp_bridge, support_follow_dji1_odom_controller, support_follow_dji2_odom_controller",nav_msgs/msg/Odometry
+/a201_0000/ground_truth/odom,16.992,12.01 KB/s,-,-,"FOLLOW, FULL",,,/a201_0000/ugv_ground_truth_bridge,"follow_uav, rosbag2_recorder, omnet_tcp_bridge",nav_msgs/msg/Odometry
+/coord/leader_visual_target_estimate_status,19.795,10.27 KB/s,19.795 (VISUAL BRIDGE),10.27 KB/s (VISUAL BRIDGE),"VISUAL BRIDGE, FULL",,,visual_target_estimator,-,std_msgs/msg/String
+/coord/leader_estimate_status,19.995,10.06 KB/s,19.995 (VISUAL BRIDGE),10.06 KB/s (VISUAL BRIDGE),"YOLO, TRACKER, VISUAL BRIDGE, FULL, SUPPORT YOLO",,,leader_estimator,"rosbag2_recorder, camera_tracker",std_msgs/msg/String
+/coord/leader_visual_control_status,19.6,9.58 KB/s,19.600 (FULL),9.58 KB/s (FULL),"VISUAL BRIDGE, FULL",,,visual_follow_controller,-,std_msgs/msg/String
+/coord/leader_selected_target_filtered,19.795,9.57 KB/s,19.795 (VISUAL BRIDGE),9.57 KB/s (VISUAL BRIDGE),"VISUAL BRIDGE, FULL",,,selected_target_filter,"visual_target_estimator, visual_follow_controller",vision_msgs/msg/Detection2DArray
+/coord/leader_visual_actuation_bridge_status,19.6,9.41 KB/s,19.600 (FULL),9.41 KB/s (FULL),"VISUAL BRIDGE, FULL",,,visual_actuation_bridge,-,std_msgs/msg/String
+/a201_0000/sensors/camera_0/color/camera_info,24.397,9.15 KB/s,-,-,"FOLLOW, YOLO",,,ugv_camera_0_rgb_bridge,-,sensor_msgs/msg/CameraInfo
+/coord/ugv/leader_detection,8.733,8.51 KB/s,8.733 (SUPPORT YOLO),8.51 KB/s (SUPPORT YOLO),SUPPORT YOLO,,,dji0_to_ugv_forwarder,-,std_msgs/msg/String
+/coord/leader_selected_target_filtered_status,19.795,7.72 KB/s,19.795 (VISUAL BRIDGE),7.72 KB/s (VISUAL BRIDGE),"VISUAL BRIDGE, FULL",,,selected_target_filter,-,std_msgs/msg/String
+/coord/dji0/leader_detection,8.798,7.33 KB/s,8.798 (SUPPORT YOLO),7.33 KB/s (SUPPORT YOLO),SUPPORT YOLO,,,support_detection_mux,dji0_to_ugv_forwarder,std_msgs/msg/String
+/a201_0000/dynamic_joint_states,19.6,7.12 KB/s,19.600 (FULL),7.12 KB/s (YOLO),"FOLLOW, YOLO, TRACKER, VISUAL BRIDGE, FULL, SUPPORT YOLO",,,/a201_0000/joint_state_broadcaster,-,control_msgs/msg/DynamicJointState
+/dji2/pose_cmd/odom,9.799,6.93 KB/s,9.799 (SUPPORT YOLO),6.93 KB/s (SUPPORT YOLO),SUPPORT YOLO,,,support_follow_dji2_odom_controller,-,nav_msgs/msg/Odometry
+/dji1/pose_cmd/odom,9.798,6.93 KB/s,9.798 (SUPPORT YOLO),6.93 KB/s (SUPPORT YOLO),SUPPORT YOLO,,,support_follow_dji1_odom_controller,-,nav_msgs/msg/Odometry
+/coord/leader_detection,6.797,6.91 KB/s,5.399 (TRACKER),5.44 KB/s (TRACKER),"YOLO, TRACKER, VISUAL BRIDGE, FULL, SUPPORT YOLO",,,"leader_detector, leader_tracker",leader_estimator,std_msgs/msg/String
+/coord/leader_planned_target_status,19.795,6.86 KB/s,19.795 (VISUAL BRIDGE),6.86 KB/s (VISUAL BRIDGE),"VISUAL BRIDGE, FULL",,,follow_point_planner,-,std_msgs/msg/String
+/a201_0000/diagnostics,9.397,6.57 KB/s,9.397 (VISUAL BRIDGE),6.57 KB/s (VISUAL BRIDGE),"FOLLOW, YOLO, TRACKER, VISUAL BRIDGE, FULL, SUPPORT YOLO",,,"/a201_0000/ekf_node, /a201_0000/twist_mux, /a201_0000/joy_node, +1, +1",-,diagnostic_msgs/msg/DiagnosticArray
+/a201_0000/controller_manager/introspection_data/values,19.793,5.57 KB/s,19.793 (VISUAL BRIDGE),5.57 KB/s (VISUAL BRIDGE),"FOLLOW, YOLO, TRACKER, VISUAL BRIDGE, FULL, SUPPORT YOLO",,,/a201_0000/controller_manager,-,pal_statistics_msgs/msg/StatisticsValues
+/coord/leader_follow_point_status,19.995,5.51 KB/s,19.995 (VISUAL BRIDGE),5.51 KB/s (VISUAL BRIDGE),"VISUAL BRIDGE, FULL",,,follow_point_generator,-,std_msgs/msg/String
+/a201_0000/platform/joint_states,19.2,4.87 KB/s,19.200 (FULL),4.87 KB/s (FULL),"FOLLOW, YOLO, TRACKER, VISUAL BRIDGE, FULL, SUPPORT YOLO",,,/a201_0000/joint_state_broadcaster,/a201_0000/robot_state_publisher,sensor_msgs/msg/JointState
+/coord/leader_detection_status,6.797,4.65 KB/s,5.399 (TRACKER),1.96 KB/s (TRACKER),"YOLO, TRACKER, VISUAL BRIDGE, FULL, SUPPORT YOLO",,,"leader_detector, leader_tracker","leader_estimator, rosbag2_recorder",std_msgs/msg/String
+/coord/support/dji2/leader_detection,5.599,4.17 KB/s,5.599 (SUPPORT YOLO),4.17 KB/s (SUPPORT YOLO),SUPPORT YOLO,,,support_dji2_leader_detector,support_detection_mux,std_msgs/msg/String
+/dji0/camera0/camera_info,9.9,3.71 KB/s,9.599 (TRACKER),3.60 KB/s (TRACKER),"FOLLOW, YOLO, TRACKER, VISUAL BRIDGE, FULL, SUPPORT YOLO",,,uav_camera_bridge,"leader_estimator, visual_target_estimator, +1",sensor_msgs/msg/CameraInfo
+/coord/ugv/support_awareness_status,8.733,3.49 KB/s,8.733 (SUPPORT YOLO),3.49 KB/s (SUPPORT YOLO),SUPPORT YOLO,,,dji0_to_ugv_forwarder,-,std_msgs/msg/String
+/dji2/camera0/camera_info,8.799,3.30 KB/s,8.799 (SUPPORT YOLO),3.30 KB/s (SUPPORT YOLO),SUPPORT YOLO,,,/support_follow_spawn_dji2/uav_camera_bridge,-,sensor_msgs/msg/CameraInfo
+/dji1/camera0/camera_info,8.498,3.19 KB/s,8.498 (SUPPORT YOLO),3.19 KB/s (SUPPORT YOLO),SUPPORT YOLO,,,/support_follow_spawn_dji1/uav_camera_bridge,-,sensor_msgs/msg/CameraInfo
+/coord/leader_estimate_fault,15.4,3.13 KB/s,15.400 (VISUAL BRIDGE),3.13 KB/s (VISUAL BRIDGE),"YOLO, TRACKER, VISUAL BRIDGE, FULL, SUPPORT YOLO",,,leader_estimator,-,std_msgs/msg/String
+/coord/leader_selected_target,19.795,2.93 KB/s,19.795 (VISUAL BRIDGE),2.93 KB/s (YOLO),"YOLO, TRACKER, VISUAL BRIDGE, FULL, SUPPORT YOLO",,,leader_estimator,selected_target_filter,vision_msgs/msg/Detection2DArray
+/coord/ugv/leader_detection_status,8.733,2.90 KB/s,8.733 (SUPPORT YOLO),2.90 KB/s (SUPPORT YOLO),SUPPORT YOLO,,,dji0_to_ugv_forwarder,-,std_msgs/msg/String
+/coord/dji0/leader_detection_status,8.798,2.54 KB/s,8.798 (SUPPORT YOLO),2.54 KB/s (SUPPORT YOLO),SUPPORT YOLO,,,support_detection_mux,dji0_to_ugv_forwarder,std_msgs/msg/String
+/coord/leader_distance_debug,19.995,2.50 KB/s,19.995 (VISUAL BRIDGE),2.50 KB/s (VISUAL BRIDGE),"YOLO, TRACKER, VISUAL BRIDGE, FULL, SUPPORT YOLO",,,leader_estimator,-,std_msgs/msg/String
+/coord/ugv/support_path_advisory,8.733,2.36 KB/s,8.733 (SUPPORT YOLO),2.36 KB/s (SUPPORT YOLO),SUPPORT YOLO,,,dji0_to_ugv_forwarder,-,std_msgs/msg/String
+/coord/support/dji2/leader_detection_status,5.599,2.30 KB/s,5.599 (SUPPORT YOLO),2.30 KB/s (SUPPORT YOLO),SUPPORT YOLO,,,support_dji2_leader_detector,support_detection_mux,std_msgs/msg/String
+/coord/leader_estimate,19.9,1.63 KB/s,19.597 (TRACKER),1.61 KB/s (TRACKER),"YOLO, TRACKER, VISUAL BRIDGE, FULL, SUPPORT YOLO",,,leader_estimator,"follow_uav, follow_point_generator, rosbag2_recorder, +1",geometry_msgs/msg/PoseStamped
+/coord/leader_visual_control,19.6,1.61 KB/s,19.600 (FULL),1.61 KB/s (FULL),"VISUAL BRIDGE, FULL",,,visual_follow_controller,visual_actuation_bridge,geometry_msgs/msg/TwistStamped
+/dji0/pose,19.595,1.61 KB/s,19.595 (VISUAL BRIDGE),1.59 KB/s (TRACKER),"FOLLOW, YOLO, TRACKER, VISUAL BRIDGE, FULL, SUPPORT YOLO",,,uav_simulator,"follow_uav, leader_estimator, follow_point_generator, +2, +4",geometry_msgs/msg/PoseStamped
+/a201_0000/platform/cmd_vel,20.794,1.54 KB/s,20.794 (VISUAL BRIDGE),1.54 KB/s (VISUAL BRIDGE),"FOLLOW, YOLO, TRACKER, VISUAL BRIDGE, FULL, SUPPORT YOLO",,,/a201_0000/twist_mux,"/a201_0000/cmd_vel_bridge, /a201_0000/platform_velocity_controller",geometry_msgs/msg/TwistStamped
+/coord/leader_follow_point,19.6,1.45 KB/s,19.600 (FULL),1.45 KB/s (VISUAL BRIDGE),"VISUAL BRIDGE, FULL",,,follow_point_generator,"follow_point_planner, visual_actuation_bridge",geometry_msgs/msg/PoseStamped
+/coord/leader_planned_target,19.589,1.45 KB/s,19.589 (VISUAL BRIDGE),1.45 KB/s (VISUAL BRIDGE),"VISUAL BRIDGE, FULL",,,follow_point_planner,visual_actuation_bridge,geometry_msgs/msg/PoseStamped
+/dji1/pose,17.596,1.44 KB/s,17.596 (SUPPORT YOLO),1.44 KB/s (SUPPORT YOLO),SUPPORT YOLO,,,support_follow_dji1_simulator,support_follow_dji1_odom_controller,geometry_msgs/msg/PoseStamped
+/dji2/pose,17.396,1.43 KB/s,17.396 (SUPPORT YOLO),1.43 KB/s (SUPPORT YOLO),SUPPORT YOLO,,,support_follow_dji2_simulator,support_follow_dji2_odom_controller,geometry_msgs/msg/PoseStamped
+/a201_0000/ground_truth/pose,16.792,1.38 KB/s,-,-,"FOLLOW, FULL",,,/a201_0000/ugv_ground_truth_bridge,-,geometry_msgs/msg/PoseStamped
+/a201_0000/platform_velocity_controller/cmd_vel_out,19.2,1.27 KB/s,19.200 (FULL),1.27 KB/s (FULL),"FOLLOW, YOLO, TRACKER, VISUAL BRIDGE, FULL, SUPPORT YOLO",,,/a201_0000/platform_velocity_controller,-,geometry_msgs/msg/TwistStamped
+/dji0/pose_cmd,15.4,1.14 KB/s,15.400 (VISUAL BRIDGE),1.14 KB/s (VISUAL BRIDGE),"VISUAL BRIDGE, FULL",,,visual_actuation_bridge,camera_tracker,geometry_msgs/msg/PoseStamped

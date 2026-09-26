@@ -8,8 +8,29 @@ SOURCE_YAML=""
 OUTPUT_YAML=""
 FACTOR="4"
 
+usage() {
+  cat <<'EOF'
+Usage:
+  ./run.sh make_nav_map source:=PATH [output:=PATH] [factor:=N]
+
+Create a lower-resolution Nav2 map YAML/PGM from a source map.
+
+Arguments:
+  source:=PATH    Required source map YAML.
+  output:=PATH    Output map YAML. Default is derived from source.
+  factor:=N       Downsample factor. Default: 4.
+
+Example:
+  ./run.sh make_nav_map source:=src/lrs_halmstad/maps/baylands.yaml factor:=4
+EOF
+}
+
 while [ "$#" -gt 0 ]; do
   case "$1" in
+    help|-h|--help)
+      usage
+      exit 0
+      ;;
     source:=*)
       SOURCE_YAML="${1#source:=}"
       ;;
@@ -21,7 +42,7 @@ while [ "$#" -gt 0 ]; do
       ;;
     *)
       echo "[run_make_nav_map] Unknown argument: $1" >&2
-      echo "Usage: ./run.sh make_nav_map source:=/abs/path/map.yaml [output:=/abs/path/output.yaml] [factor:=4]" >&2
+      usage >&2
       exit 1
       ;;
   esac
@@ -30,7 +51,7 @@ done
 
 if [ -z "$SOURCE_YAML" ]; then
   echo "[run_make_nav_map] source:=... is required" >&2
-  echo "Usage: ./run.sh make_nav_map source:=/abs/path/map.yaml [output:=/abs/path/output.yaml] [factor:=4]" >&2
+  usage >&2
   exit 1
 fi
 

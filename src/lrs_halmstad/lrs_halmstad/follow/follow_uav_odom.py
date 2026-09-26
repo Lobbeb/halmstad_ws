@@ -144,11 +144,11 @@ class FollowUavOdom(FollowControllerCoreMixin, Node):
             if self.publish_pose_cmd_topics
             else None
         )
-        self.anchor_point_pub = self.create_publisher(
+        """ self.anchor_point_pub = self.create_publisher(
             PointStamped,
             f"/{self.uav_name}/follow/target/anchor_point",
             10,
-        )
+        ) """
 
         self.timer = self.create_timer(1.0 / self.tick_hz, self.on_tick)
         self.add_on_set_parameters_callback(self._on_set_parameters)
@@ -374,7 +374,7 @@ class FollowUavOdom(FollowControllerCoreMixin, Node):
         vertical_delta = target_uav_z - self.ugv_z
         target_horizontal_distance = horizontal_distance_for_euclidean(self.d_target, vertical_delta)
         anchor_pose = self._compute_anchor_pose(target_horizontal_distance)
-        self.publish_anchor_point(anchor_pose)
+        #self.publish_anchor_point(anchor_pose)
 
         dx = anchor_pose.x - current_uav.x
         dy = anchor_pose.y - current_uav.y

@@ -25,6 +25,10 @@ canonical 0-to-100 project sequence.
   navigation, and mission completion.
 - Laptop full and reduced Baylands runtime attempts were environment-limited
   and inconclusive, not demonstrated functional failures.
+- Pre-Track-B shared-runtime synchronization: PASS. Remote `main` at
+  `fd1f7029ee6c2c54d93caf2bc62deaa40c4f3757` was merged into
+  `support-chain` from the completed Track A checkpoint
+  `931fbffd476c5005d98fc71c9251e1f0436e02d7` using normal merge history.
 
 ### Current next gate
 
@@ -236,6 +240,27 @@ or registration is already implemented.
 
 **Status: FUTURE**
 
+The intermediate pre-Track-B synchronization is complete. It incorporated
+remote `main` `fd1f7029ee6c2c54d93caf2bc62deaa40c4f3757` on `support-chain`.
+That exact main head had already received a selective runtime audit in the
+earlier `783b2ef` checkpoint. During the normal-history merge, overlapping
+startup, follow, localization, Nav2, simulation and support files retained the
+validated Track A versions. Compatible main-only plotting, network monitoring,
+UAV SLAM, spawn, camera/laser, model, world, dataset and team-documentation
+changes were retained.
+
+The merge adaptations made new environment/debug files repository-portable,
+kept GPU adapter selection opt-in, prevented a new unconditional ROS domain 3
+override, and made the YOLO debug matrix valid YAML. Broad cleanup, removal of
+the guarded simulation clock, collision-monitor changes, unrelated Nav2 tuning
+and localization changes were not reintroduced. Validation passed shell,
+Python and YAML checks; 161 Python tests (1 skipped); builds for
+`lrs_halmstad_interfaces`, `lrs_halmstad_nav_plugins` and `lrs_halmstad`; and
+all 18 `AerialSupportLayer` GTests. No Gazebo smoke was needed because the
+validated Track A core remained byte-identical to the Track A checkpoint. The
+integration delta passes `git diff --check`; inherited main dataset/result and
+mesh assets retain pre-existing whitespace warnings and were not mass-rewritten.
+
 - Fetch the latest `origin/main` only when this phase is explicitly authorized.
 - Audit new Ruben/team changes for relevant behavior and dependencies.
 - Reconcile selectively; never blindly overwrite `support-chain`.
@@ -282,6 +307,8 @@ or registration is already implemented.
   runtime-code checkpoint before the evidence-policy correction.
 - `dd08e358518f02791ccc511beeca218969390658` - documentation checkpoint from
   which the final Track A closure work began.
+- `931fbffd476c5005d98fc71c9251e1f0436e02d7` - completed Track A downstream
+  support-chain validation, used as the pre-Track-B synchronization base.
 
 ## Maintaining this plan
 

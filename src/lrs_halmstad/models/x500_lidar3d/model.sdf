@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<sdf version="1.9">
+  <model name="x500_lidar3d">
+    <include merge="true">
+      <uri>model://x500</uri>
+    </include>
+
+    <link name="lidar3d_link">
+      <!-- Tilt the 90-degree vertical fan downward.  This keeps terrain in view
+           during flight instead of aiming the narrow scan at the horizon. -->
+      <pose relative_to="base_link">0 0 0.28 0 0.785398 0</pose>
+      <inertial>
+        <!-- Sensor dynamics are intentionally negligible in the first mapping baseline. -->
+        <mass>0.01</mass>
+        <inertia>
+          <ixx>0.002</ixx><iyy>0.002</iyy><izz>0.002</izz>
+          <ixy>0</ixy><ixz>0</ixz><iyz>0</iyz>
+        </inertia>
+      </inertial>
+      <visual name="lidar3d_visual">
+        <geometry><cylinder><radius>0.043</radius><length>0.058</length></cylinder></geometry>
+        <material>
+          <ambient>0.05 0.05 0.05 1</ambient>
+          <diffuse>0.08 0.08 0.08 1</diffuse>
+          <specular>0.2 0.2 0.2 1</specular>
+        </material>
+      </visual>
+      <sensor name="lidar_32" type="gpu_lidar">
+        <gz_frame_id>x500_lidar3d_0/lidar3d_link/lidar_32</gz_frame_id>
+        <topic>/x500/lidar3d</topic>
+        <always_on>true</always_on>
+        <visualize>false</visualize>
+        <update_rate>10</update_rate>
+        <lidar>
+          <scan>
+            <horizontal>
+              <samples>512</samples><resolution>1</resolution>
+              <min_angle>-3.14159265</min_angle><max_angle>3.14159265</max_angle>
+            </horizontal>
+            <vertical>
+              <samples>32</samples><resolution>1</resolution>
+              <min_angle>-0.785398</min_angle><max_angle>0.785398</max_angle>
+            </vertical>
+          </scan>
+          <range><min>0.8</min><max>120</max><resolution>0.003</resolution></range>
+          <noise><type>gaussian</type><mean>0</mean><stddev>0.03</stddev></noise>
+        </lidar>
+      </sensor>
+    </link>
+    <joint name="lidar3d_joint" type="fixed">
+      <parent>base_link</parent>
+      <child>lidar3d_link</child>
+    </joint>
+  </model>
+</sdf>

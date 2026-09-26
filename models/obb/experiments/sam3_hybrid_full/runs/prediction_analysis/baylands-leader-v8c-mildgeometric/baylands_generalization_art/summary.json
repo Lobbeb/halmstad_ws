@@ -1,0 +1,14 @@
+{
+  "dataset": "/home/ruben/halmstad_ws/datasets/final/baylands_generalization_art",
+  "pred_dir": "/home/ruben/halmstad_ws/models/obb/experiments/sam3_hybrid_full/runs/predictions/baylands-leader-v8c-mildgeometric/baylands_generalization_art_test_all",
+  "split": "test",
+  "images": 246,
+  "status_counts": {
+    "matched": 204,
+    "multi_prediction": 10,
+    "correct_empty": 20,
+    "no_prediction": 9,
+    "false_positive_empty": 3
+  },
+  "mean_best_iou_non_empty": 0.7236121635514019
+}

@@ -16,13 +16,14 @@ DRY_RUN=false
 LOOP=false
 RATE=""
 TOPICS=()
+PROFILE=""
 PLAY_PID=""
 TOPIC_STATE_DIR=""
 USE_DASHBOARD=false
 
 usage() {
   cat <<EOF
-Usage: $0 <bag> [topic1 topic2 ...] [loop:=true|false] [rate:=1.0] [dry_run:=true|false]
+Usage: $0 <bag> [topic1 topic2 ...] [profile:=cmd_replay|route_source|thesis|omnet] [loop:=true|false] [rate:=1.0] [dry_run:=true|false]
 
 Bag resolution:
 - absolute bag path
@@ -33,6 +34,8 @@ Bag resolution:
 
 Examples:
   ./run.sh bag_monitor const_test
+  ./run.sh bag_monitor bags/replay_sources/ugv_cmd_test profile:=cmd_replay
+  ./run.sh bag_monitor bags/results/.../bag profile:=thesis
   ./run.sh bag_monitor const_test /coord/leader_estimate_status
   ./run.sh bag_monitor warehouse/const_test_yolo_0313-015514 /coord/leader_estimate_status
   ./run.sh bag_monitor warehouse/depth_test_yolo_0313-015917 /coord/leader_estimate_status /coord/leader_distance_debug
@@ -40,6 +43,12 @@ Examples:
 
 When stdout is an interactive terminal, topic playback is shown as a live dashboard
 with one block per topic instead of raw scrolling echo output.
+
+Profiles:
+  cmd_replay    Only /a201_0000/platform/cmd_vel for live-Gazebo UGV command replay.
+  route_source  Clock, UGV truth, and UGV command pipeline topics.
+  thesis        Clock, UGV/UAV poses, estimator/detection status, command topic, and OMNeT metrics.
+  omnet         Clock, UGV/UAV poses, and OMNeT metrics.
 EOF
 }
 
@@ -174,6 +183,98 @@ resolve_bag_dir_by_token() {
   fi
 
   printf '%s\n' "$latest_path"
+}
+
+add_topic_unique() {
+  local topic="$1"
+  local existing=""
+  for existing in "${TOPICS[@]}"; do
+    if [ "$existing" = "$topic" ]; then
+      return 0
+    fi
+  done
+  TOPICS+=("$topic")
+}
+
+add_omnet_topics() {
+  add_topic_unique "/omnet/sim_time"
+  add_topic_unique "/omnet/rssi_dbm"
+  add_topic_unique "/omnet/snir_db"
+  add_topic_unique "/omnet/packet_error_rate"
+  add_topic_unique "/omnet/packet_delivery_ratio"
+  add_topic_unique "/omnet/latency_s"
+  add_topic_unique "/omnet/jitter_s"
+  add_topic_unique "/omnet/radio_distance"
+}
+
+apply_topic_profile() {
+  case "$PROFILE" in
+    "")
+      return 0
+      ;;
+    cmd_replay)
+      add_topic_unique "/a201_0000/platform/cmd_vel"
+      ;;
+    route_source)
+      add_topic_unique "/clock"
+      add_topic_unique "/a201_0000/ground_truth/odom"
+      add_topic_unique "/a201_0000/platform/cmd_vel"
+      add_topic_unique "/a201_0000/cmd_vel"
+      add_topic_unique "/a201_0000/cmd_vel_nav"
+      add_topic_unique "/a201_0000/cmd_vel_smoothed"
+      add_topic_unique "/a201_0000/platform_velocity_controller/cmd_vel_out"
+      ;;
+    thesis)
+      add_topic_unique "/clock"
+      add_topic_unique "/a201_0000/ground_truth/odom"
+      add_topic_unique "/dji0/pose"
+      add_topic_unique "/coord/leader_estimate"
+      add_topic_unique "/coord/leader_estimate_status"
+      add_topic_unique "/coord/leader_estimate_error"
+      add_topic_unique "/coord/leader_detection_status"
+      add_topic_unique "/dji0/camera0/actual/center_pose"
+      add_topic_unique "/a201_0000/platform/cmd_vel"
+      add_omnet_topics
+      ;;
+    omnet)
+      add_topic_unique "/clock"
+      add_topic_unique "/a201_0000/ground_truth/odom"
+      add_topic_unique "/dji0/pose"
+      add_omnet_topics
+      ;;
+    *)
+      echo "Invalid profile: $PROFILE" >&2
+      echo "Use profile:=cmd_replay, route_source, thesis, or omnet" >&2
+      exit 2
+      ;;
+  esac
+}
+
+bag_has_topic() {
+  local topic="$1"
+  if [ -f "$BAG_DIR/metadata.yaml" ]; then
+    grep -Fq "name: $topic" "$BAG_DIR/metadata.yaml"
+    return $?
+  fi
+  ros2 bag info "$BAG_DIR" 2>/dev/null | grep -Fq "Topic: $topic "
+}
+
+filter_topics_to_bag() {
+  local topic=""
+  local kept=()
+  local skipped=()
+  for topic in "${TOPICS[@]}"; do
+    if bag_has_topic "$topic"; then
+      kept+=("$topic")
+    else
+      skipped+=("$topic")
+    fi
+  done
+  TOPICS=("${kept[@]}")
+  if [ "${#skipped[@]}" -gt 0 ]; then
+    echo "[bag_monitor] Skipping topics not in bag:" >&2
+    printf '  %s\n' "${skipped[@]}" >&2
+  fi
 }
 
 start_topic_echo() {
@@ -652,11 +753,14 @@ for arg in "$@"; do
     rate:=*)
       RATE="${arg#rate:=}"
       ;;
+    profile:=*)
+      PROFILE="${arg#profile:=}"
+      ;;
     *)
       if [ -z "$BAG_INPUT" ]; then
         BAG_INPUT="$arg"
       else
-        TOPICS+=("$arg")
+        add_topic_unique "$arg"
       fi
       ;;
   esac
@@ -683,8 +787,18 @@ if ! BAG_DIR="$(resolve_bag_dir "$BAG_INPUT")"; then
   exit 1
 fi
 
+apply_topic_profile
+if [ "${#TOPICS[@]}" -gt 0 ]; then
+  filter_topics_to_bag
+  if [ "${#TOPICS[@]}" -eq 0 ]; then
+    echo "[bag_monitor] No requested/profile topics exist in bag: $BAG_DIR" >&2
+    exit 1
+  fi
+fi
+
 if [ "$DRY_RUN" = true ]; then
   echo "Bag dir: $BAG_DIR"
+  echo "Profile: ${PROFILE:-none}"
   if [ "${#TOPICS[@]}" -eq 0 ]; then
     echo "Action: info"
   else
@@ -720,6 +834,7 @@ TOPIC_FILES=()
 trap cleanup EXIT INT TERM
 
 echo "[bag_monitor] Bag: $BAG_DIR"
+echo "[bag_monitor] Profile: ${PROFILE:-custom}"
 echo "[bag_monitor] Topics: ${#TOPICS[@]}"
 
 PLAY_CMD=(ros2 bag play "$BAG_DIR" --delay "$PLAY_START_DELAY_S")

@@ -1,0 +1,12 @@
+plot
+plots/01_model_ranking_top_models.png
+plots/02_main_vs_generalization_scatter.png
+plots/02b_main_vs_generalization_scatter_v6plus.png
+plots/03_prediction_score_scatter.png
+plots/03b_prediction_score_scatter_v6plus.png
+plots/04_heldout_generalization_bars.png
+plots/05_prediction_issue_breakdown.png
+plots/06_iou_distribution_by_dataset.png
+plots/07_route_validation_heatmap.png
+plots/08_tuning_fitness_curves.png
+plots/09_chosen_paired_no_outline.jpg
