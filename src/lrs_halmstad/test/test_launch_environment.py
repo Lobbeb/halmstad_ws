@@ -60,6 +60,26 @@ def test_tmux_ros_commands_remove_python_virtual_environment():
     assert "bash -lc" not in output
 
 
+def test_tmux_forwards_campaign_debug_topic_arguments():
+    output = _dry_run(
+        [
+            "tmux_1to1",
+            "baylands",
+            "dry_run:=true",
+            "tmux_attach:=false",
+            "gui:=false",
+            "record:=false",
+            "publish_follow_debug_topics:=true",
+            "publish_pose_cmd_topics:=true",
+            "publish_camera_debug_topics:=true",
+        ]
+    )
+
+    assert "publish_follow_debug_topics:=true" in output
+    assert "publish_pose_cmd_topics:=true" in output
+    assert "publish_camera_debug_topics:=true" in output
+
+
 def test_support_tmux_ros_commands_use_the_same_clean_environment():
     output = _dry_run(
         [
@@ -106,6 +126,52 @@ def test_normal_support_startup_reaches_gazebo_without_broad_cleanup():
     assert "pgrep -f" not in startup_sources
     assert "prepare_task_state" in startup_sources
     assert 'bash "$SCRIPT_DIR/recover_sim_controllers.sh" a201_0000 &' in startup_sources
+
+
+def test_support_observation_cleanup_is_scoped_to_the_requested_session():
+    session = "cleanup-regression"
+    output = _dry_run(
+        [
+            "tmux_support_chain",
+            "baylands",
+            f"session:={session}",
+            "dry_run:=true",
+            "tmux_attach:=false",
+            "gui:=false",
+            "record:=false",
+        ]
+    )
+    stop_source = (
+        REPO_ROOT / "scripts" / "stop_tmux_support_chain.sh"
+    ).read_text(encoding="utf-8")
+    base_stop_source = (
+        REPO_ROOT / "scripts" / "stop_tmux_1to1.sh"
+    ).read_text(encoding="utf-8")
+
+    assert (
+        "process_group_pid_file:="
+        f"/tmp/halmstad_ws/support_sessions/{session}.observation.pid"
+    ) in output
+    assert 'BROAD_CLEANUP=false' in stop_source
+    assert 'if [ "$BROAD_CLEANUP" != true ]; then' in stop_source
+    assert "signal_process_group_from_pid_file" in stop_source
+    assert 'BROAD_CLEANUP=false' in base_stop_source
+    assert 'if [ "$BROAD_CLEANUP" != true ]; then' in base_stop_source
+
+
+def test_tmux_cleanup_targets_saved_spawn_and_support_pane_titles():
+    support_stop = (
+        REPO_ROOT / "scripts" / "stop_tmux_support_chain.sh"
+    ).read_text(encoding="utf-8")
+    base_stop = (
+        REPO_ROOT / "scripts" / "stop_tmux_1to1.sh"
+    ).read_text(encoding="utf-8")
+
+    assert "CTRL_C_GROUP=(record omnet follow localization nav2 spawn)" in base_stop
+    assert "#{pane_id}|#{pane_title}" in base_stop
+    assert "#{pane_id}|#{pane_title}" in support_stop
+    assert "#{pane_id}\\t#{pane_title}" not in base_stop
+    assert "#{pane_id}\\t#{pane_title}" not in support_stop
 
 
 def test_support_planner_validation_is_wall_time_planner_only_and_opt_in():
@@ -177,7 +243,9 @@ def test_support_observation_defaults_to_baylands_weights():
     )
 
     assert 'DETECTOR_BACKEND="ultralytics"' in script
-    assert 'baylands-leader-v4-3.pt' in script
+    expected = REPO_ROOT / 'models/obb/mymodels/baylands-leader-v9-tuned-full.pt'
+    assert expected.name in script
+    assert expected.is_file()
     assert 'warehouse-v1' not in script
     assert 'if [ -n "$DETECTOR_ONNX_MODEL" ]; then' in script
     assert 'LAUNCH_ARGS+=("detector_onnx_model:=$DETECTOR_ONNX_MODEL")' in script
@@ -190,6 +258,81 @@ def test_gimbal_commands_use_active_gazebo_transport_type():
 
     assert launch_source.count("@std_msgs/msg/Float64]gz.msgs.Double") == 2
     assert "@std_msgs/msg/Float64@ignition.msgs.Double" not in launch_source
+
+
+def test_nav2_launch_excludes_unused_servers_from_lifecycle_gate(tmp_path):
+    launch_path = REPO_ROOT / "src/lrs_halmstad/launch/nav2_with_updates.launch.py"
+    spec = importlib.util.spec_from_file_location("nav2_with_updates", launch_path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    bringup = tmp_path / "nav2_bringup"
+    (bringup / "launch").mkdir(parents=True)
+    (bringup / "launch/navigation_launch.py").write_text(
+        """lifecycle_nodes = [
+    'planner_server',
+    'route_server',
+    'docking_server',
+    'collision_monitor',
+]
+Node(
+    package='nav2_planner',
+)
+Node(
+    package='nav2_route',
+)
+Node(
+    package='opennav_docking',
+)
+Node(
+    package='nav2_collision_monitor',
+)
+""",
+        encoding="utf-8",
+    )
+
+    generated = Path(
+        module._navigation_launch_without_unused_servers(str(bringup))
+    ).read_text(encoding="utf-8")
+
+    assert "planner_server" in generated
+    assert "nav2_planner" in generated
+    assert "route_server" not in generated
+    assert "nav2_route" not in generated
+    assert "docking_server" not in generated
+    assert "opennav_docking" not in generated
+    assert "collision_monitor" not in generated
+
+    generated_with_monitor = Path(
+        module._navigation_launch_without_unused_servers(
+            str(bringup), include_collision_monitor=True
+        )
+    ).read_text(encoding="utf-8")
+    assert "collision_monitor" in generated_with_monitor
+    assert "nav2_collision_monitor" in generated_with_monitor
+
+
+def test_nav2_driver_waits_for_costmap_publications_before_first_goal():
+    defaults = yaml.safe_load(
+        (REPO_ROOT / "src/lrs_halmstad/config/run_follow_defaults.yaml").read_text(
+            encoding="utf-8"
+        )
+    )["ugv_nav2_driver"]["ros__parameters"]
+    source = (
+        REPO_ROOT / "src/lrs_halmstad/lrs_halmstad/nav/ugv_nav2_driver.py"
+    ).read_text(encoding="utf-8")
+
+    assert defaults["nav2_required_costmap_topics"] == [
+        "local_costmap/costmap_raw",
+        "global_costmap/costmap_raw",
+    ]
+    assert "PolygonStamped" in source
+    assert "published_footprint" in source
+    active_call = source.index("self._wait_for_nav2_active()", source.index("def run(self)"))
+    costmap_call = source.index("self._wait_for_costmaps_ready()", active_call)
+    settle_call = source.index("self._settle_before_goals()", costmap_call)
+    waypoint_build = source.index("self._build_waypoints(start_pose)", settle_call)
+    assert active_call < costmap_call < settle_call < waypoint_build
 
 
 def test_task5_tmux_disables_dji2_without_changing_legacy_default():
@@ -392,6 +535,14 @@ def test_support_hazard_record_profile_remains_image_free_and_timestamped():
     assert "/coord/support/dji2/aerial_hazards" in output
     assert "/coord/dji0/aerial_hazards" in output
     assert "/coord/ugv/aerial_hazards" in output
+    assert "/coord/support/dji1/leader_detection_status" in output
+    assert "/coord/support/dji2/leader_detection_status" in output
+    assert "/coord/dji0/support_observation_summary" in output
+    assert "/coord/ugv/support_observation_summary" in output
+    assert "/coord/ugv/support_awareness_status" in output
+    assert "/coord/ugv/support_path_advisory" in output
+    assert "/coord/support/camera_scan_status" in output
+    assert "/dji2/pose" in output
     assert "/a201_0000/global_costmap/costmap_raw" in output
     assert "/a201_0000/plan" in output
     assert "/a201_0000/global_costmap/costmap_raw_updates" in output
@@ -404,6 +555,53 @@ def test_support_hazard_record_profile_remains_image_free_and_timestamped():
     assert "/tf_static" in output
     assert "/image_raw" not in output
     assert "/depth_image" not in output
+
+
+def test_default_follow_record_profile_captures_its_required_command_topics():
+    output = _dry_run(
+        [
+            "record_experiment",
+            "baylands",
+            "mode:=follow",
+            "profile:=default",
+            "out:=/tmp/default-follow-record-contract",
+            "dry_run:=true",
+        ]
+    )
+
+    assert "/dji0/psdk_ros2/flight_control_setpoint_ENUposition_yaw" in output
+    assert "/dji0/pose_cmd" in output
+    assert "/dji0/pose_cmd/odom" in output
+
+
+def test_default_yolo_record_profile_captures_detection_and_command_topics():
+    output = _dry_run(
+        [
+            "record_experiment",
+            "baylands",
+            "mode:=yolo",
+            "profile:=default",
+            "out:=/tmp/default-yolo-record-contract",
+            "dry_run:=true",
+        ]
+    )
+
+    assert "/coord/leader_detection" in output
+    assert "/coord/leader_estimate" in output
+    assert "/dji0/psdk_ros2/flight_control_setpoint_ENUposition_yaw" in output
+    assert "/dji0/pose_cmd" in output
+
+
+def test_c4_campaign_uses_the_supported_hazard_recording_profile():
+    campaign_source = (
+        REPO_ROOT / "scripts" / "run_results_campaign.sh"
+    ).read_text(encoding="utf-8")
+
+    runtime_case = campaign_source.split('  case "$CONDITION" in', 1)[1]
+    c4_case = runtime_case.split("    C4)", 1)[1].split("    C5)", 1)[0]
+    assert 'RECORD_PROFILE="support_hazard"' in c4_case
+    assert "record_profile:=support_hazard" in c4_case
+    assert "record_profile:=support " not in c4_case
 
 
 def test_full_runtime_profile_is_fixed_passive_and_three_uav():
@@ -443,6 +641,7 @@ def test_full_runtime_profile_is_fixed_passive_and_three_uav():
     assert "hazard_synthetic_enable:=true" not in baseline
     assert "aerial_support_layer_enable:=true" in valid
     assert "activation_status_topic:=/a201_0000/navigate_to_pose/_action/status" in valid
+    assert "start_delay_s:=8.0" in valid
     assert "active_duration_s:=0.0" in valid
     assert "active_duration_s:=4.0" in clearing
 
@@ -579,15 +778,43 @@ def test_spawn_defaults_and_independent_depth_gate_resolve_without_starting_node
             action.execute(context)
     assert context.launch_configurations["name"] == "m100"
     assert "m100" in context.launch_configurations["camera_frame_id"]
-    # Last nodes are the RGB, depth and gimbal bridges. Evaluate conditions only.
-    camera, depth, gimbal = [a for a in description.entities if isinstance(a, Node)][-3:]
-    context.launch_configurations.update(bridge_camera="true", bridge_depth="false")
+    # Last nodes are the RGB, depth, gimbal and laser bridges. Evaluate conditions only.
+    camera, depth, gimbal, laser = [
+        a for a in description.entities if isinstance(a, Node)
+    ][-4:]
+    context.launch_configurations.update(
+        bridge_camera="true", bridge_depth="false", bridge_laser="false"
+    )
     assert camera.condition.evaluate(context)
     assert not depth.condition.evaluate(context)
+    assert not laser.condition.evaluate(context)
     context.launch_configurations["bridge_depth"] = "true"
     assert depth.condition.evaluate(context)
     context.launch_configurations["bridge_camera"] = "false"
     assert not depth.condition.evaluate(context)
+    context.launch_configurations["bridge_laser"] = "true"
+    assert laser.condition.evaluate(context)
+
+    spawn_source = path.read_text(encoding="utf-8")
+    generator_source = (
+        REPO_ROOT / "src/lrs_halmstad/lrs_halmstad/generate_sdf.py"
+    ).read_text(encoding="utf-8")
+    wrapper_source = (
+        REPO_ROOT / "src/lrs_halmstad/launch/spawn_uav_1to1.launch.py"
+    ).read_text(encoding="utf-8")
+    assert '" -p laser:=", LaunchConfiguration(\'with_laser\')' in spawn_source
+    assert "LaserScan[gz.msgs.LaserScan" in spawn_source
+    assert 'mappings["with_laser"] = "true" if self.laser else "false"' in generator_source
+    for argument in (
+        "with_laser",
+        "bridge_laser",
+        "laser_name",
+        "laser_update_rate",
+        "laser_min_range",
+        "laser_max_range",
+        "laser_angle_deg",
+    ):
+        assert f"DeclareLaunchArgument('{argument}'" in wrapper_source
 
 
 def test_omnet_current_options_keep_legacy_config_mapping(tmp_path):

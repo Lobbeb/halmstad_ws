@@ -234,6 +234,10 @@ ros2 launch lrs_halmstad spawn_robot.launch.py \
 - `with_camera:=true|false`
 - `bridge_camera:=true|false` (bridge `/<name>/<camera_name>/(image_raw,camera_info)`)
 - `camera_name:=camera0` (default `camera0`)
+- `with_laser:=true|false`
+- `bridge_laser:=true|false` (bridge `/<name>/<laser_name>/scan` as `sensor_msgs/msg/LaserScan`)
+- `laser_name:=laser0`, `laser_update_rate:=10`, `laser_angle_deg:=180.0`
+- `laser_min_range:=0.2`, `laser_max_range:=25.0`
 - `x:=<m>` `y:=<m>` `z:=<m>`
 - `R:=<rad>` `P:=<rad>` `Y:=<rad>`
 - `model:=...` (legacy arg, currently not used by the generated-SDF spawn path)

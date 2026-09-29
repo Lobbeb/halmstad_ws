@@ -10,12 +10,13 @@ import rclpy
 import yaml
 from ament_index_python.packages import PackageNotFoundError, get_package_share_directory
 from action_msgs.msg import GoalStatus
-from geometry_msgs.msg import PoseStamped
+from geometry_msgs.msg import PolygonStamped, PoseStamped
 from geometry_msgs.msg import PoseWithCovarianceStamped
 from geometry_msgs.msg import Quaternion
 from lifecycle_msgs.msg import State
 from lifecycle_msgs.srv import GetState
 from nav2_msgs.action import NavigateToPose
+from nav2_msgs.msg import Costmap
 from nav_msgs.msg import Odometry
 from nav_msgs.msg import Path
 from rcl_interfaces.msg import Parameter, ParameterType, ParameterValue
@@ -113,6 +114,18 @@ class UgvNav2Driver(Node):
         if isinstance(required_lifecycle_nodes, str):
             required_lifecycle_nodes = [part.strip() for part in required_lifecycle_nodes.split(",") if part.strip()]
         self.nav2_required_lifecycle_nodes = [str(node).strip() for node in (required_lifecycle_nodes or []) if str(node).strip()]
+        self.declare_parameter(
+            "nav2_required_costmap_topics",
+            ["local_costmap/costmap_raw", "global_costmap/costmap_raw"],
+        )
+        required_costmap_topics = self.get_parameter("nav2_required_costmap_topics").value
+        if isinstance(required_costmap_topics, str):
+            required_costmap_topics = [
+                part.strip() for part in required_costmap_topics.split(",") if part.strip()
+            ]
+        self.nav2_required_costmap_topics = [
+            str(topic).strip() for topic in (required_costmap_topics or []) if str(topic).strip()
+        ]
         self.goal_reject_retry_count = max(0, int(yaml_param(self, "goal_reject_retry_count")))
         self.goal_reject_retry_delay_s = max(0.0, float(yaml_param(self, "goal_reject_retry_delay_s")))
         self.goal_sequence_csv = str(yaml_param(self, "goal_sequence_csv")).strip()
@@ -159,9 +172,48 @@ class UgvNav2Driver(Node):
             depth=10,
         )
         self._lifecycle_clients: dict[str, any] = {}
+        self._costmap_ready = {
+            topic: {"full": False, "footprint": False}
+            for topic in self.nav2_required_costmap_topics
+        }
+        self._costmap_subscriptions = []
         self._pc2ls_client = None
         self._lidar_settings = self._load_lidar_settings()
         self._pose_subscriptions = []
+
+        costmap_qos = QoSProfile(
+            durability=QoSDurabilityPolicy.TRANSIENT_LOCAL,
+            reliability=QoSReliabilityPolicy.RELIABLE,
+            history=QoSHistoryPolicy.KEEP_LAST,
+            depth=1,
+        )
+        costmap_activity_qos = QoSProfile(
+            durability=QoSDurabilityPolicy.VOLATILE,
+            reliability=QoSReliabilityPolicy.RELIABLE,
+            history=QoSHistoryPolicy.KEEP_LAST,
+            depth=10,
+        )
+        for topic in self.nav2_required_costmap_topics:
+            self._costmap_subscriptions.append(
+                self.create_subscription(
+                    Costmap,
+                    topic,
+                    lambda _message, ready_topic=topic: self._mark_costmap_ready(
+                        ready_topic, "full"
+                    ),
+                    costmap_qos,
+                )
+            )
+            self._costmap_subscriptions.append(
+                self.create_subscription(
+                    PolygonStamped,
+                    f"{topic.removesuffix('/costmap_raw')}/published_footprint",
+                    lambda _message, ready_topic=topic: self._mark_costmap_ready(
+                        ready_topic, "footprint"
+                    ),
+                    costmap_activity_qos,
+                )
+            )
 
         if self.pose_topic_type in ("pose", "pose_with_covariance", "posewithcovariancestamped"):
             self._pose_subscriptions.append(self.create_subscription(
@@ -214,6 +266,9 @@ class UgvNav2Driver(Node):
             received_monotonic_s=time.monotonic(),
         )
         self._pose_message_count += 1
+
+    def _mark_costmap_ready(self, topic: str, message_kind: str) -> None:
+        self._costmap_ready[topic][message_kind] = True
 
     def _build_initial_pose_msg(self) -> PoseWithCovarianceStamped:
         msg = PoseWithCovarianceStamped()
@@ -322,9 +377,8 @@ class UgvNav2Driver(Node):
         if self.pose_stale_timeout_s <= 0.0:
             return pose
 
-        # Freshness should be based on when this node actually received a pose
-        # message, not on header stamp subtraction. AMCL pose stamps are in sim
-        # time, and the node clock may still be on wall time during startup.
+        # Freshness is based on when this node received a pose. AMCL may keep
+        # the same source stamp while a stationary robot remains localized.
         pose_age_s = max(0.0, time.monotonic() - pose.received_monotonic_s)
         if pose_age_s <= self.pose_stale_timeout_s:
             return pose
@@ -402,6 +456,36 @@ class UgvNav2Driver(Node):
     def _wait_for_nav2_active(self) -> None:
         for node_name in self.nav2_required_lifecycle_nodes:
             self._wait_for_lifecycle_node_active(node_name)
+
+    def _wait_for_costmaps_ready(self) -> None:
+        if not self._costmap_ready:
+            return
+
+        next_log_s = time.monotonic()
+        def all_ready() -> bool:
+            return all(
+                state["full"] and state["footprint"]
+                for state in self._costmap_ready.values()
+            )
+
+        while rclpy.ok() and not all_ready():
+            rclpy.spin_once(self, timeout_sec=0.1)
+            now_s = time.monotonic()
+            if now_s >= next_log_s and not all_ready():
+                missing = [
+                    f"{topic} ({'/'.join(kind for kind, seen in state.items() if not seen)})"
+                    for topic, state in self._costmap_ready.items()
+                    if not (state["full"] and state["footprint"])
+                ]
+                self.get_logger().info(
+                    "Waiting for current Nav2 costmaps before sending goals: "
+                    + ", ".join(missing)
+                )
+                next_log_s = now_s + 5.0
+
+        if not rclpy.ok():
+            raise RuntimeError("ROS shutdown while waiting for Nav2 costmaps")
+        self.get_logger().info("Confirmed required Nav2 costmaps are publishing")
 
     def _default_lidar_settings_file(self) -> str:
         try:
@@ -938,6 +1022,7 @@ class UgvNav2Driver(Node):
         start_pose = self._ensure_pose_is_fresh()
         self._wait_for_goal_server()
         self._wait_for_nav2_active()
+        self._wait_for_costmaps_ready()
         self._settle_before_goals()
 
         segments, waypoints = self._build_waypoints(start_pose)

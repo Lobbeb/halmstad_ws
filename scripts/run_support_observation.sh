@@ -9,9 +9,10 @@ SIM_WORLD_FILE="$STATE_DIR/gazebo_sim.world"
 FOLLOW_SIM=false
 LAUNCH_PID=""
 WATCH_PID=""
+PROCESS_GROUP_PID_FILE=""
 MODELS_ROOT="${LRS_HALMSTAD_MODELS_ROOT:-$WS_ROOT/models}"
 DEFAULT_ONNX_MODEL=""
-DEFAULT_YOLO_WEIGHTS="$MODELS_ROOT/obb/mymodels/baylands-leader-v4-3.pt"
+DEFAULT_YOLO_WEIGHTS="$MODELS_ROOT/obb/mymodels/baylands-leader-v9-tuned-full.pt"
 DETECTOR_BACKEND="ultralytics"
 DETECTOR_ONNX_MODEL="$DEFAULT_ONNX_MODEL"
 YOLO_WEIGHTS="$DEFAULT_YOLO_WEIGHTS"
@@ -67,6 +68,8 @@ stop_launch_group() {
 }
 
 cleanup() {
+  local recorded_pid=""
+
   if [ -n "$WATCH_PID" ] && kill -0 "$WATCH_PID" 2>/dev/null; then
     kill "$WATCH_PID" 2>/dev/null || true
     wait "$WATCH_PID" 2>/dev/null || true
@@ -82,6 +85,13 @@ cleanup() {
 
   if [ -n "$LAUNCH_PID" ]; then
     wait "$LAUNCH_PID" 2>/dev/null || true
+  fi
+
+  if [ -n "$PROCESS_GROUP_PID_FILE" ] && [ -f "$PROCESS_GROUP_PID_FILE" ]; then
+    recorded_pid="$(cat "$PROCESS_GROUP_PID_FILE" 2>/dev/null || true)"
+    if [ "$recorded_pid" = "$LAUNCH_PID" ]; then
+      rm -f "$PROCESS_GROUP_PID_FILE"
+    fi
   fi
 }
 
@@ -136,6 +146,9 @@ for arg in "$@"; do
     hazard_fusion_enable:=*)
       HAZARD_FUSION_ENABLE="${arg#hazard_fusion_enable:=}"
       EXTRA_ARGS+=("$arg")
+      ;;
+    process_group_pid_file:=*)
+      PROCESS_GROUP_PID_FILE="${arg#process_group_pid_file:=}"
       ;;
     *)
       EXTRA_ARGS+=("$arg")
@@ -211,6 +224,10 @@ setsid ros2 launch lrs_halmstad support_observation.launch.py \
   "${LAUNCH_ARGS[@]}" \
   "${EXTRA_ARGS[@]}" &
 LAUNCH_PID=$!
+if [ -n "$PROCESS_GROUP_PID_FILE" ]; then
+  mkdir -p "$(dirname "$PROCESS_GROUP_PID_FILE")"
+  printf '%s\n' "$LAUNCH_PID" > "$PROCESS_GROUP_PID_FILE"
+fi
 
 if [ "$FOLLOW_SIM" = true ]; then
   (

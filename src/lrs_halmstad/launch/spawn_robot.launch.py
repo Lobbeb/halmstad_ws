@@ -83,6 +83,17 @@ def generate_launch_description():
         ],
         description='Camera optical frame ID; the default preserves the legacy per-UAV generated frame ID.',
     )
+    with_laser_arg = DeclareLaunchArgument(
+        'with_laser', default_value='false', description='Attach the optional UAV 2D lidar'
+    )
+    bridge_laser_arg = DeclareLaunchArgument(
+        'bridge_laser', default_value='false', description='Bridge the optional UAV LaserScan'
+    )
+    laser_name_arg = DeclareLaunchArgument('laser_name', default_value='laser0')
+    laser_update_rate_arg = DeclareLaunchArgument('laser_update_rate', default_value='10')
+    laser_min_range_arg = DeclareLaunchArgument('laser_min_range', default_value='0.2')
+    laser_max_range_arg = DeclareLaunchArgument('laser_max_range', default_value='25.0')
+    laser_angle_deg_arg = DeclareLaunchArgument('laser_angle_deg', default_value='180.0')
 
     x = LaunchConfiguration('x')
     y = LaunchConfiguration('y')
@@ -141,7 +152,13 @@ def generate_launch_description():
                     " -p camera_pitch_offset_deg:=", LaunchConfiguration('camera_pitch_offset_deg'),
                     " -p camera_name:=", LaunchConfiguration('camera_name'),
                     " -p camera_frame_id:=", LaunchConfiguration('camera_frame_id'),
-                    " -p camera_update_rate:=", LaunchConfiguration('camera_update_rate')
+                    " -p camera_update_rate:=", LaunchConfiguration('camera_update_rate'),
+                    " -p laser:=", LaunchConfiguration('with_laser'),
+                    " -p laser_name:=", LaunchConfiguration('laser_name'),
+                    " -p laser_update_rate:=", LaunchConfiguration('laser_update_rate'),
+                    " -p laser_min_range:=", LaunchConfiguration('laser_min_range'),
+                    " -p laser_max_range:=", LaunchConfiguration('laser_max_range'),
+                    " -p laser_angle_deg:=", LaunchConfiguration('laser_angle_deg')
                 ]),
                 '-x', LaunchConfiguration('x'),
                 '-y', LaunchConfiguration('y'),
@@ -214,6 +231,20 @@ def generate_launch_description():
         ])),
     )
 
+    laser_bridge = Node(
+        package='ros_gz_bridge',
+        executable='parameter_bridge',
+        name=[LaunchConfiguration('name'), '_laser_bridge'],
+        arguments=[[
+            '/', LaunchConfiguration('name'), '/', LaunchConfiguration('laser_name'),
+            '/scan@sensor_msgs/msg/LaserScan[gz.msgs.LaserScan',
+        ]],
+        output='screen',
+        condition=IfCondition(PythonExpression([
+            "'", LaunchConfiguration('bridge_laser'), "'.lower() in ('1','true','yes','on')"
+        ])),
+    )
+
     return LaunchDescription([
         name_arg,
         DeclareLaunchArgument('x', default_value="0.0"),
@@ -233,10 +264,18 @@ def generate_launch_description():
         camera_update_rate_arg,
         camera_name_arg,
         camera_frame_id_arg,
+        with_laser_arg,
+        bridge_laser_arg,
+        laser_name_arg,
+        laser_update_rate_arg,
+        laser_min_range_arg,
+        laser_max_range_arg,
+        laser_angle_deg_arg,
         model_arg,
         world_arg,        
         spawn_node,
         camera_bridge,
         depth_bridge,
         gimbal_bridge,
+        laser_bridge,
     ])

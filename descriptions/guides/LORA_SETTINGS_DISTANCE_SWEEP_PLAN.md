@@ -73,7 +73,7 @@ OMNeT topic update interval
 Run one short route with the default profile.
 
 ```bash
-cd /home/ruben/halmstad_ws
+# Run from the halmstad_ws repository root.
 
 ./run.sh nav2_route_sweep baylands \
   routes:=rotundan \

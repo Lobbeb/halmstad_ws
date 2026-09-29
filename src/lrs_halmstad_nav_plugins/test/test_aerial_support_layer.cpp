@@ -1,6 +1,7 @@
 #include <gtest/gtest.h>
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cstdint>
 #include <limits>
@@ -313,6 +314,42 @@ TEST_F(AerialSupportLayerTest, TrackMovementClearsOldFootprint)
   EXPECT_EQ(costAt(2.0, 0.0), nav2_costmap_2d::LETHAL_OBSTACLE);
 }
 
+TEST_F(AerialSupportLayerTest, RepeatedGeometryRefreshesTtlWithoutChangingMarking)
+{
+  layer_->ingest(makeArray(
+    layer_->test_now_ns,
+      {makeHazard(layer_->test_now_ns, "stable", Hazard::CONFIRMED, 0.0, 0.0, 0.01, 2.0)}));
+  cycle();
+  const size_t initial_count = markedCellCount();
+  ASSERT_GT(initial_count, 0U);
+
+  layer_->test_now_ns += kSecond;
+  layer_->ingest(makeArray(
+    layer_->test_now_ns,
+      {makeHazard(layer_->test_now_ns, "stable", Hazard::CONFIRMED, 0.0, 0.0, 0.01, 2.0)}));
+  cycle();
+  EXPECT_EQ(markedCellCount(), initial_count);
+
+  layer_->test_now_ns += 2 * kSecond;
+  cycle();
+  EXPECT_EQ(markedCellCount(), initial_count);
+
+  layer_->test_now_ns += kSecond;
+  cycle();
+  EXPECT_EQ(markedCellCount(), 0U);
+}
+
+TEST_F(AerialSupportLayerTest, PendingSnapshotKeepsLastAppliedLayerCurrent)
+{
+  layer_->ingest(makeArray(layer_->test_now_ns, {makeHazard(layer_->test_now_ns)}));
+  cycle();
+  ASSERT_TRUE(layer_->isCurrent());
+
+  layer_->test_now_ns += kSecond / 10;
+  layer_->ingest(makeArray(layer_->test_now_ns, {makeHazard(layer_->test_now_ns)}));
+  EXPECT_TRUE(layer_->isCurrent());
+}
+
 TEST_F(AerialSupportLayerTest, TrackExpiryClearsFootprint)
 {
   layer_->ingest(makeArray(
@@ -415,6 +452,52 @@ TEST_F(AerialSupportLayerTest, EmptyArrayClearsTracks)
   cycle();
   EXPECT_EQ(markedCellCount(), 0U);
   EXPECT_EQ(costAt(0.0, 0.0), nav2_costmap_2d::FREE_SPACE);
+}
+
+TEST(AerialSupportLayerTransformTest, MissingTransformDoesNotBlockAndIsRetried)
+{
+  rclcpp::NodeOptions options;
+  options.parameter_overrides({
+      rclcpp::Parameter("aerial_support_layer.enabled", true),
+      rclcpp::Parameter("aerial_support_layer.target_frame", "odom"),
+      rclcpp::Parameter("aerial_support_layer.transform_tolerance_s", 0.30),
+  });
+  auto node = std::make_shared<nav2_util::LifecycleNode>(
+    "aerial_support_layer_transform_test", "", options);
+  auto layered_costmap = std::make_unique<nav2_costmap_2d::LayeredCostmap>("odom", true, false);
+  layered_costmap->resizeMap(100, 100, 0.1, -5.0, -5.0);
+  auto tf_buffer = std::make_unique<tf2_ros::Buffer>(node->get_clock());
+  tf_buffer->setUsingDedicatedThread(true);
+  auto callback_group = node->create_callback_group(rclcpp::CallbackGroupType::MutuallyExclusive);
+  auto layer = std::make_shared<TestableAerialSupportLayer>();
+  layer->initialize(
+    layered_costmap.get(), "aerial_support_layer", tf_buffer.get(), node, callback_group);
+  layer->activate();
+
+  const auto start = std::chrono::steady_clock::now();
+  layer->ingest(makeArray(layer->test_now_ns, {makeHazard(layer->test_now_ns)}));
+  const auto elapsed = std::chrono::steady_clock::now() - start;
+  EXPECT_LT(elapsed, std::chrono::milliseconds(50));
+
+  geometry_msgs::msg::TransformStamped transform;
+  transform.header.frame_id = "odom";
+  transform.header.stamp = timeMessage(layer->test_now_ns);
+  transform.child_frame_id = "map";
+  transform.transform.rotation.w = 1.0;
+  ASSERT_TRUE(tf_buffer->setTransform(transform, "test", true));
+
+  double min_x = std::numeric_limits<double>::max();
+  double min_y = std::numeric_limits<double>::max();
+  double max_x = std::numeric_limits<double>::lowest();
+  double max_y = std::numeric_limits<double>::lowest();
+  layer->updateBounds(0.0, 0.0, 0.0, &min_x, &min_y, &max_x, &max_y);
+  const auto * map = layer->getCharMap();
+  const size_t cells = layer->getSizeInCellsX() * layer->getSizeInCellsY();
+  EXPECT_TRUE(std::any_of(map, map + cells, [](unsigned char cost) {
+    return cost == nav2_costmap_2d::LETHAL_OBSTACLE;
+  }));
+
+  layer->deactivate();
 }
 
 TEST(AerialSupportLayerPluginlibTest, DiscoversAndLoadsPlugin)

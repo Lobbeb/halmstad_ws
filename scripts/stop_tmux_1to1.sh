@@ -13,7 +13,8 @@ GROUP_GRACE_S=4
 FINAL_GRACE_S=4
 KILL_SESSION=true
 DRY_RUN=false
-CTRL_C_GROUP=(record omnet follow localization nav2)
+BROAD_CLEANUP=false
+CTRL_C_GROUP=(record omnet follow localization nav2 spawn)
 
 if [ "$#" -gt 0 ] && [[ "$1" != *":="* ]] && [[ "$1" != *=* ]]; then
   WORLD="$1"
@@ -39,9 +40,12 @@ for arg in "$@"; do
     dry_run:=*)
       DRY_RUN="${arg#dry_run:=}"
       ;;
+    broad_cleanup:=*)
+      BROAD_CLEANUP="${arg#broad_cleanup:=}"
+      ;;
     *)
       echo "Unknown argument: $arg" >&2
-      echo "Usage: $0 [world] [session:=name] [group_grace_s:=5] [final_grace_s:=5] [kill_session:=true|false] [dry_run:=true|false]" >&2
+      echo "Usage: $0 [world] [session:=name] [group_grace_s:=5] [final_grace_s:=5] [kill_session:=true|false] [dry_run:=true|false] [broad_cleanup:=true|false]" >&2
       exit 2
       ;;
   esac
@@ -110,7 +114,7 @@ window_exists() {
 
 find_pane_by_title() {
   local name="$1"
-  tmux list-panes -a -t "$SESSION" -F '#{pane_id}\t#{pane_title}' 2>/dev/null | awk -F '\t' -v want="$name" '$2 == want { print $1; exit }'
+  tmux list-panes -a -t "$SESSION" -F '#{pane_id}|#{pane_title}' 2>/dev/null | awk -F '|' -v want="$name" '$2 == want { print $1; exit }'
 }
 
 pane_exists() {
@@ -207,6 +211,11 @@ signal_named_nodes() {
 run_fallback_cleanup() {
   signal_process_group_from_pid_file "$SIM_PID_FILE" "Gazebo helper" || true
   signal_process_group_from_pid_file "$CONTROLLER_RECOVERY_PID_FILE" "controller recovery helper" || true
+  if [ "$BROAD_CLEANUP" != true ]; then
+    return 0
+  fi
+
+  echo "Explicit broad stack cleanup enabled for session: $SESSION"
   signal_processes_by_pattern "experiment recorder" 'ros2 bag record .*((runs|recordings|bags)/experiments/.*/bag)' || true
   signal_processes_by_pattern "Gazebo helper" 'scripts/run_gazebo_sim\.sh' || true
   signal_processes_by_pattern "spawn helper" 'scripts/run_spawn_uav\.sh' || true

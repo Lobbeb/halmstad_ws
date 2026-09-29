@@ -436,6 +436,7 @@ ugv_nav2_driver:
     # Startup and lifecycle gating.
     start_delay_s: 0.0           # Delay before starting route generation and Nav2 goal handling.
     nav2_required_lifecycle_nodes: [map_server, amcl, controller_server, bt_navigator]  # Lifecycle nodes that must be ACTIVE before the first goal is sent.
+    nav2_required_costmap_topics: [local_costmap/costmap_raw, global_costmap/costmap_raw]  # Require a full map plus a published footprint from both Nav2 costmaps before the first goal.
     goal_server_timeout_s: 30.0                 # Timeout waiting for the Nav2 action server to become ready.
     goal_start_delay_s: 2.0                    # Delay before sending the first goal to let Nav2/TF/costmaps settle; keep 0.2-2 s.
 

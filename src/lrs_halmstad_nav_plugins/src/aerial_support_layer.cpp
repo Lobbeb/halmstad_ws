@@ -185,6 +185,8 @@ void AerialSupportLayer::matchSize()
   tracks_.clear();
   pending_tracks_.clear();
   pending_snapshot_ = false;
+  deferred_message_.reset();
+  deferred_transform_deadline_ns_ = 0;
   dirty_bounds_.clear();
 }
 
@@ -264,10 +266,14 @@ void AerialSupportLayer::incomingHazards(HazardArray::ConstSharedPtr message)
 
   TrackStore accepted;
   accepted.reserve(message->hazards.size());
+  bool transform_unavailable = false;
   for (const auto & hazard : message->hazards) {
     Track track;
-    if (buildTrack(hazard, message->header.frame_id, now_ns, track)) {
+    const auto result = buildTrack(hazard, message->header.frame_id, now_ns, track);
+    if (result == TrackBuildResult::Accepted) {
       accepted[hazard.detection.id] = track;
+    } else if (result == TrackBuildResult::TransformUnavailable) {
+      transform_unavailable = true;
     }
   }
 
@@ -275,12 +281,19 @@ void AerialSupportLayer::incomingHazards(HazardArray::ConstSharedPtr message)
   if (!active_ || !enabled_) {
     return;
   }
-  pending_tracks_ = std::move(accepted);
-  pending_snapshot_ = true;
-  current_ = false;
+  if (transform_unavailable) {
+    deferred_message_ = std::move(message);
+    deferred_transform_deadline_ns_ = saturatingAdd(
+      now_ns, static_cast<int64_t>(transform_tolerance_s_ * kNanosecondsPerSecond));
+  } else {
+    deferred_message_.reset();
+    deferred_transform_deadline_ns_ = 0;
+    pending_tracks_ = std::move(accepted);
+    pending_snapshot_ = true;
+  }
 }
 
-bool AerialSupportLayer::buildTrack(
+AerialSupportLayer::TrackBuildResult AerialSupportLayer::buildTrack(
   const lrs_halmstad_interfaces::msg::AerialHazard & hazard,
   const std::string & array_frame,
   int64_t now_ns,
@@ -290,7 +303,7 @@ bool AerialSupportLayer::buildTrack(
   if (!nonemptyId(detection.id) || detection.header.frame_id.empty() ||
     detection.header.frame_id != array_frame)
   {
-    return false;
+    return TrackBuildResult::Rejected;
   }
 
   int64_t detection_stamp_ns = 0;
@@ -302,14 +315,14 @@ bool AerialSupportLayer::buildTrack(
     !stampNanoseconds(hazard.last_seen, last_seen_ns) ||
     !durationNanoseconds(hazard.ttl, ttl_ns) || first_seen_ns > last_seen_ns)
   {
-    return false;
+    return TrackBuildResult::Rejected;
   }
 
   const int64_t max_age_ns = static_cast<int64_t>(max_observation_age_s_ * kNanosecondsPerSecond);
   if (detection_stamp_ns > now_ns || last_seen_ns > now_ns ||
     now_ns - detection_stamp_ns > max_age_ns || now_ns - last_seen_ns > max_age_ns)
   {
-    return false;
+    return TrackBuildResult::Rejected;
   }
   if (ttl_ns == 0) {
     ttl_ns = static_cast<int64_t>(default_ttl_s_ * kNanosecondsPerSecond);
@@ -319,7 +332,7 @@ bool AerialSupportLayer::buildTrack(
   // TTL unless a subsequent explicit empty snapshot removes it.
   track.valid_until_ns = ttl_deadline;
   if (now_ns > track.valid_until_ns) {
-    return false;
+    return TrackBuildResult::Rejected;
   }
 
   if (!finite(detection.bbox.size.x) || detection.bbox.size.x <= 0.0 ||
@@ -329,7 +342,7 @@ bool AerialSupportLayer::buildTrack(
     !finite(detection.bbox.center.position.y) ||
     !finite(detection.bbox.center.position.z) || detection.results.empty())
   {
-    return false;
+    return TrackBuildResult::Rejected;
   }
 
   const auto & result = detection.results.front();
@@ -338,42 +351,42 @@ bool AerialSupportLayer::buildTrack(
     !finite(hazard.support_quality) || hazard.support_quality < 0.0 ||
     hazard.support_quality > 1.0)
   {
-    return false;
+    return TrackBuildResult::Rejected;
   }
 
   bool covariance_nonzero = false;
   for (double value : result.pose.covariance) {
     if (!finite(value)) {
-      return false;
+      return TrackBuildResult::Rejected;
     }
     covariance_nonzero = covariance_nonzero || value != 0.0;
   }
   for (size_t index : std::array<size_t, 6>{0, 7, 14, 21, 28, 35}) {
     if (result.pose.covariance[index] < 0.0) {
-      return false;
+      return TrackBuildResult::Rejected;
     }
   }
   const double xy_variance = std::max(result.pose.covariance[0], result.pose.covariance[7]);
   if (!covariance_nonzero || xy_variance > max_xy_variance_m2_) {
-    return false;
+    return TrackBuildResult::Rejected;
   }
 
   track.cost = stateCost(hazard.state);
   if (track.cost == nav2_costmap_2d::NO_INFORMATION) {
-    return false;
+    return TrackBuildResult::Rejected;
   }
 
   const auto & orientation = detection.bbox.center.orientation;
   if (!finite(orientation.x) || !finite(orientation.y) || !finite(orientation.z) ||
     !finite(orientation.w))
   {
-    return false;
+    return TrackBuildResult::Rejected;
   }
   const double quaternion_norm = std::sqrt(
     orientation.x * orientation.x + orientation.y * orientation.y +
     orientation.z * orientation.z + orientation.w * orientation.w);
   if (!finite(quaternion_norm) || quaternion_norm <= std::numeric_limits<double>::epsilon()) {
-    return false;
+    return TrackBuildResult::Rejected;
   }
 
   geometry_msgs::msg::PoseStamped source_pose;
@@ -389,33 +402,40 @@ bool AerialSupportLayer::buildTrack(
     target_pose = source_pose;
   } else {
     if (tf_ == nullptr) {
-      return false;
+      return TrackBuildResult::Rejected;
     }
     try {
+      if (!tf_->canTransform(
+          target_frame_, detection.header.frame_id,
+          rclcpp::Time(detection.header.stamp, clock_->get_clock_type()),
+          rclcpp::Duration::from_seconds(0.0)))
+      {
+        return TrackBuildResult::TransformUnavailable;
+      }
       const auto transform = tf_->lookupTransform(
         target_frame_, detection.header.frame_id,
         rclcpp::Time(detection.header.stamp, clock_->get_clock_type()),
-        rclcpp::Duration::from_seconds(transform_tolerance_s_));
+        rclcpp::Duration::from_seconds(0.0));
       tf2::doTransform(source_pose, target_pose, transform);
     } catch (const tf2::TransformException &) {
-      return false;
+      return TrackBuildResult::TransformUnavailable;
     }
   }
 
   if (!finite(target_pose.pose.position.x) || !finite(target_pose.pose.position.y)) {
-    return false;
+    return TrackBuildResult::Rejected;
   }
   track.center_x = target_pose.pose.position.x;
   track.center_y = target_pose.pose.position.y;
   track.yaw = tf2::getYaw(target_pose.pose.orientation);
   if (!finite(track.yaw)) {
-    return false;
+    return TrackBuildResult::Rejected;
   }
 
   const double uncertainty = covariance_sigma_scale_ * std::sqrt(xy_variance);
   track.half_size_x = 0.5 * std::max(detection.bbox.size.x, min_footprint_size_m_) + uncertainty;
   track.half_size_y = 0.5 * std::max(detection.bbox.size.y, min_footprint_size_m_) + uncertainty;
-  return true;
+  return TrackBuildResult::Accepted;
 }
 
 unsigned char AerialSupportLayer::stateCost(uint8_t state) const
@@ -515,19 +535,86 @@ void AerialSupportLayer::applyPendingSnapshotLocked(int64_t now_ns)
   if (!pending_snapshot_) {
     return;
   }
-  includeAllTrackBoundsLocked(tracks_);
-  tracks_ = std::move(pending_tracks_);
-  pending_tracks_.clear();
-  pending_snapshot_ = false;
-  for (auto iterator = tracks_.begin(); iterator != tracks_.end(); ) {
+  for (auto iterator = pending_tracks_.begin(); iterator != pending_tracks_.end(); ) {
     if (now_ns > iterator->second.valid_until_ns) {
-      iterator = tracks_.erase(iterator);
+      iterator = pending_tracks_.erase(iterator);
     } else {
       ++iterator;
     }
   }
+  if (sameTrackGeometryLocked(pending_tracks_)) {
+    for (const auto & item : pending_tracks_) {
+      tracks_.at(item.first).valid_until_ns = item.second.valid_until_ns;
+    }
+    pending_tracks_.clear();
+    pending_snapshot_ = false;
+    return;
+  }
+
+  includeAllTrackBoundsLocked(tracks_);
+  tracks_ = std::move(pending_tracks_);
+  pending_tracks_.clear();
+  pending_snapshot_ = false;
   includeAllTrackBoundsLocked(tracks_);
   rebuildLayerLocked();
+}
+
+bool AerialSupportLayer::sameTrackGeometryLocked(const TrackStore & other) const
+{
+  if (tracks_.size() != other.size()) {
+    return false;
+  }
+  constexpr double epsilon = 1e-9;
+  for (const auto & item : tracks_) {
+    const auto candidate = other.find(item.first);
+    if (candidate == other.end()) {
+      return false;
+    }
+    const auto & lhs = item.second;
+    const auto & rhs = candidate->second;
+    if (lhs.cost != rhs.cost || std::abs(lhs.center_x - rhs.center_x) > epsilon ||
+      std::abs(lhs.center_y - rhs.center_y) > epsilon ||
+      std::abs(lhs.yaw - rhs.yaw) > epsilon ||
+      std::abs(lhs.half_size_x - rhs.half_size_x) > epsilon ||
+      std::abs(lhs.half_size_y - rhs.half_size_y) > epsilon)
+    {
+      return false;
+    }
+  }
+  return true;
+}
+
+void AerialSupportLayer::retryDeferredSnapshotLocked(int64_t now_ns)
+{
+  if (!deferred_message_) {
+    return;
+  }
+  if (!validateArrayHeader(*deferred_message_, now_ns)) {
+    deferred_message_.reset();
+    deferred_transform_deadline_ns_ = 0;
+    return;
+  }
+
+  TrackStore accepted;
+  accepted.reserve(deferred_message_->hazards.size());
+  bool transform_unavailable = false;
+  for (const auto & hazard : deferred_message_->hazards) {
+    Track track;
+    const auto result = buildTrack(hazard, deferred_message_->header.frame_id, now_ns, track);
+    if (result == TrackBuildResult::Accepted) {
+      accepted[hazard.detection.id] = track;
+    } else if (result == TrackBuildResult::TransformUnavailable) {
+      transform_unavailable = true;
+    }
+  }
+  if (transform_unavailable && now_ns <= deferred_transform_deadline_ns_) {
+    return;
+  }
+
+  deferred_message_.reset();
+  deferred_transform_deadline_ns_ = 0;
+  pending_tracks_ = std::move(accepted);
+  pending_snapshot_ = true;
 }
 
 void AerialSupportLayer::expireTracksLocked(int64_t now_ns)
@@ -553,6 +640,8 @@ void AerialSupportLayer::clearTracksLocked()
   tracks_.clear();
   pending_tracks_.clear();
   pending_snapshot_ = false;
+  deferred_message_.reset();
+  deferred_transform_deadline_ns_ = 0;
   rebuildLayerLocked();
 }
 
@@ -580,10 +669,11 @@ void AerialSupportLayer::updateBounds(
   synchronizeRollingOriginLocked();
   const int64_t now_ns = nowNanoseconds();
   if (!enabled_) {
-    if (!tracks_.empty() || pending_snapshot_) {
+    if (!tracks_.empty() || pending_snapshot_ || deferred_message_) {
       clearTracksLocked();
     }
   } else {
+    retryDeferredSnapshotLocked(now_ns);
     applyPendingSnapshotLocked(now_ns);
     expireTracksLocked(now_ns);
   }

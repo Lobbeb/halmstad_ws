@@ -15,6 +15,7 @@ from lrs_halmstad.tools.support_hazard_evidence import (
     _clearing_mechanism,
     _global_robot_footprint,
     _request_costmap_snapshot,
+    _seed_runtime_pre_hazard_baseline,
     _set_aerial_layer,
     baseline_repeatability,
     build_parser,
@@ -572,6 +573,58 @@ def test_costmap_service_seeds_a_full_snapshot_for_deterministic_settling():
     assert _request_costmap_snapshot(node, 2.0)
     assert collector.latest_costmap().source_kind == 'service'
     assert collector.latest_costmap().data == bytes([0])
+
+
+def test_runtime_pre_hazard_baseline_uses_two_distinct_known_snapshots():
+    message = Costmap()
+    message.metadata.resolution = 1.0
+    message.metadata.size_x = 1
+    message.metadata.size_y = 1
+    message.data = [0]
+
+    class CompletedFuture:
+        def done(self):
+            return True
+
+        def result(self):
+            return SimpleNamespace(map=message)
+
+    class CostmapClient:
+        def wait_for_service(self, timeout_sec):
+            return timeout_sec == 1.0
+
+        def call_async(self, request):
+            return CompletedFuture()
+
+    collector = RuntimeEvidenceCollector(
+        crop_geometry={
+            'center_x': 0.5,
+            'center_y': 0.5,
+            'yaw': 0.0,
+            'effective_size_x': 1.0,
+            'effective_size_y': 1.0,
+        },
+        crop_margin_m=0.0,
+    )
+    stamps = iter((10, 20, 30, 40, 50, 60))
+    node = SimpleNamespace(
+        costmap_client=CostmapClient(),
+        collector=collector,
+        _evidence_now_ns=lambda: next(stamps),
+    )
+
+    assert _seed_runtime_pre_hazard_baseline(
+        node,
+        {
+            'center_x': 0.5,
+            'center_y': 0.5,
+            'yaw': 0.0,
+            'effective_size_x': 1.0,
+            'effective_size_y': 1.0,
+        },
+        0.0,
+    )
+    assert [item.received_ns for item in collector.costmaps] == [10, 40]
 
 
 def test_nav2_config_provenance_and_inflation_are_loaded_from_yaml(tmp_path):

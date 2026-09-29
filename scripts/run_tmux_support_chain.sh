@@ -5,6 +5,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 WS_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 STATE_DIR="/tmp/halmstad_ws"
 SIM_PID_FILE="$STATE_DIR/gazebo_sim.pid"
+SUPPORT_STATE_DIR="$STATE_DIR/support_sessions"
 WORLD="baylands"
 SESSION=""
 LAYOUT="panes"
@@ -335,6 +336,9 @@ for arg in "$@"; do
   esac
 done
 
+session_safe="${SESSION//[^A-Za-z0-9_.-]/_}"
+SUPPORT_OBSERVATION_PID_FILE="$SUPPORT_STATE_DIR/${session_safe}.observation.pid"
+
 if [ "$MODE_SET" != true ]; then
   BASE_ARGS=("mode:=yolo" "${BASE_ARGS[@]}")
 fi
@@ -462,7 +466,11 @@ if [ "$REDUCED_TRACK_A" = true ]; then
 else
   SUPPORT_FOLLOW_CMD=(./run.sh support_follow_odom "$WORLD" "support_with_camera:=true" "${SUPPORT_FOLLOW_ARGS[@]}")
 fi
-SUPPORT_OBSERVATION_CMD=(./run.sh support_observation "$WORLD" "${SUPPORT_OBSERVATION_ARGS[@]}")
+SUPPORT_OBSERVATION_CMD=(
+  ./run.sh support_observation "$WORLD"
+  "process_group_pid_file:=$SUPPORT_OBSERVATION_PID_FILE"
+  "${SUPPORT_OBSERVATION_ARGS[@]}"
+)
 SYNTHETIC_HAZARD_ROS_COMMAND=(
   ros2 run lrs_halmstad synthetic_hazard_publisher --ros-args
   -p use_sim_time:=true

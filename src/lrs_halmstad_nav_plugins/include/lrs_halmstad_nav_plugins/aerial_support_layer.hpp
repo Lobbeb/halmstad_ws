@@ -45,6 +45,13 @@ protected:
   void incomingHazards(HazardArray::ConstSharedPtr message);
 
 private:
+  enum class TrackBuildResult
+  {
+    Accepted,
+    Rejected,
+    TransformUnavailable,
+  };
+
   struct Bounds
   {
     bool valid{false};
@@ -76,13 +83,15 @@ private:
   void clearTracksLocked();
   void rebuildLayerLocked();
   void applyPendingSnapshotLocked(int64_t now_ns);
+  void retryDeferredSnapshotLocked(int64_t now_ns);
   void expireTracksLocked(int64_t now_ns);
   void includeTrackBoundsLocked(const Track & track);
   void includeAllTrackBoundsLocked(const TrackStore & tracks);
   void rasterizeTrackLocked(const Track & track);
   void synchronizeRollingOriginLocked();
+  bool sameTrackGeometryLocked(const TrackStore & other) const;
 
-  bool buildTrack(
+  TrackBuildResult buildTrack(
     const lrs_halmstad_interfaces::msg::AerialHazard & hazard,
     const std::string & array_frame,
     int64_t now_ns,
@@ -96,6 +105,8 @@ private:
   TrackStore tracks_;
   TrackStore pending_tracks_;
   bool pending_snapshot_{false};
+  HazardArray::ConstSharedPtr deferred_message_;
+  int64_t deferred_transform_deadline_ns_{0};
   Bounds dirty_bounds_;
   bool active_{false};
 

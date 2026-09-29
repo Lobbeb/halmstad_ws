@@ -714,7 +714,11 @@ def condition_key(condition: Any) -> str:
 def required_topic_groups(condition: Any) -> list[tuple[str, ...]]:
     common = [
         ("/dji0/pose",),
-        ("/dji0/pose_cmd", "/dji0/pose_cmd/odom"),
+        (
+            "/dji0/pose_cmd",
+            "/dji0/pose_cmd/odom",
+            "/dji0/psdk_ros2/flight_control_setpoint_ENUposition_yaw",
+        ),
         ("/a201_0000/amcl_pose_odom", "/a201_0000/platform/odom/filtered"),
     ]
     key = condition_key(condition)

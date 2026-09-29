@@ -29,6 +29,12 @@ canonical 0-to-100 project sequence.
   `fd1f7029ee6c2c54d93caf2bc62deaa40c4f3757` was merged into
   `support-chain` from the completed Track A checkpoint
   `931fbffd476c5005d98fc71c9251e1f0436e02d7` using normal merge history.
+- Post-merge pre-Track-B validation: PASS for every runnable in-repository
+  gate. Fresh Baylands Track A baseline, valid-hazard and clearing scenarios,
+  C1-C4 campaign smokes, builds, tests, recording and task-owned cleanup all
+  passed. The optional external OMNeT simulator was unavailable, and live UAV
+  laser data was blocked by a reproducible Gazebo/Ogre renderer crash; neither
+  is counted as a PASS. See `descriptions/PRE_TRACK_B_END_TO_END_VALIDATION.md`.
 
 ### Current next gate
 

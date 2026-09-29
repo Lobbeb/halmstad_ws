@@ -36,9 +36,6 @@ class GenSdf(Node):
         self.declare_parameter("laser_name", "laser0")
         self.laser_name = self.get_parameter('laser_name').get_parameter_value().string_value
 
-        self.declare_parameter("robot_name", "unknown")
-        self.robot_name = self.get_parameter('robot_name').get_parameter_value().string_value
-
         self.declare_parameter("robot", False)
         self.robot = self.get_parameter('robot').get_parameter_value().bool_value
 
@@ -59,6 +56,12 @@ class GenSdf(Node):
         
         self.declare_parameter("laser_update_rate", 10)
         self.laser_update_rate = self.get_parameter('laser_update_rate').get_parameter_value().integer_value
+        self.declare_parameter("laser_angle_deg", 180.0, numeric_param)
+        self.laser_angle_deg = float(self.get_parameter('laser_angle_deg').value)
+        self.declare_parameter("laser_min_range", 0.2, numeric_param)
+        self.laser_min_range = float(self.get_parameter('laser_min_range').value)
+        self.declare_parameter("laser_max_range", 25.0, numeric_param)
+        self.laser_max_range = float(self.get_parameter('laser_max_range').value)
         
         #self.get_logger().error(f'GenSdf: {self.name}')        
         #self.get_logger().error(f'GenSdf: {self.type}')        
@@ -74,11 +77,16 @@ class GenSdf(Node):
         mappings = {}
         mappings["robot_type"] = self.type
 
+        if self.robot:
+            mappings["name"] = self.name
+            mappings["model_static"] = "true" if self.model_static else "false"
+            mappings["base_link_kinematic"] = "true" if self.base_link_kinematic else "false"
+            mappings["with_camera"] = "true" if self.with_camera else "false"
+            mappings["with_laser"] = "true" if self.laser else "false"
+
         if self.robot and self.with_camera:
             mappings["robot_name"] = self.name
             mappings["camera_name"] = self.camera_name
-            mappings["model_static"] = "true" if self.model_static else "false"
-            mappings["base_link_kinematic"] = "true" if self.base_link_kinematic else "false"
             mappings["camera_pitch_offset"] = f'{self.camera_pitch_offset_deg}'
             mappings["camera_update_rate"] = f'{self.camera_update_rate}'
             mappings["camera_frame_id"] = (
@@ -86,19 +94,12 @@ class GenSdf(Node):
                 if self.camera_frame_id
                 else f'/{self.name}/{self.camera_name}/image_frame'
             )
-            if self.with_camera:
-                mappings["with_camera"] = "true"
-            else:
-                mappings["with_camera"] = "false"
-                
-        if self.robot:
-            mappings["name"] = self.name
-
         if self.laser:
             mappings["laser_name"] = self.laser_name
-            mappings["robot_name"] = self.robot_name
-            mappings["laser_far_clip"] = "900"
             mappings["laser_update_rate"] = f'{self.laser_update_rate}'
+            mappings["laser_angle_deg"] = f'{self.laser_angle_deg}'
+            mappings["laser_min_range"] = f'{self.laser_min_range}'
+            mappings["laser_max_range"] = f'{self.laser_max_range}'
 
             
         # self.get_logger().error(f'GenSdf XACROFILE: {self.xacro_file}')                        

@@ -134,6 +134,9 @@ fi
 
 if [ "$MODE" = "follow" ]; then
   TOPICS+=(
+    "/$UAV_NAME/psdk_ros2/flight_control_setpoint_ENUposition_yaw"
+    "/$UAV_NAME/pose_cmd"
+    "/$UAV_NAME/pose_cmd/odom"
     "/$UAV_NAME/follow/actual/tilt_deg"
     "/$UAV_NAME/follow/debug/yaw_wrap_active"
     "/$UAV_NAME/follow/debug/yaw_step_limit_rad"
@@ -148,6 +151,7 @@ fi
 
 if [ "$MODE" = "yolo" ]; then
   TOPICS+=(
+    "/coord/leader_detection"
     "/coord/leader_estimate"
     "/coord/leader_distance_debug"
     "/coord/leader_estimate_status"
@@ -166,6 +170,8 @@ if [ "$MODE" = "yolo" ]; then
     "/coord/leader_visual_target_estimate"
     "/coord/leader_visual_target_estimate_status"
     "/$UAV_NAME/psdk_ros2/flight_control_setpoint_ENUposition_yaw"
+    "/$UAV_NAME/pose_cmd"
+    "/$UAV_NAME/pose_cmd/odom"
     "/$UAV_NAME/follow/actual/tilt_deg"
   )
 fi
@@ -179,6 +185,20 @@ fi
 
 if [ "$PROFILE" = "support_hazard" ]; then
   TOPICS+=(
+    "/dji2/pose"
+    "/coord/support/dji1/leader_detection"
+    "/coord/support/dji1/leader_detection_status"
+    "/coord/support/dji2/leader_detection"
+    "/coord/support/dji2/leader_detection_status"
+    "/coord/dji0/leader_detection"
+    "/coord/dji0/leader_detection_status"
+    "/coord/dji0/support_observation_summary"
+    "/coord/ugv/leader_detection"
+    "/coord/ugv/leader_detection_status"
+    "/coord/ugv/support_observation_summary"
+    "/coord/ugv/support_awareness_status"
+    "/coord/ugv/support_path_advisory"
+    "/coord/support/camera_scan_status"
     "/coord/support/dji1/hazard_detection"
     "/coord/support/dji1/hazard_detection_status"
     "/coord/support/dji1/aerial_hazards"

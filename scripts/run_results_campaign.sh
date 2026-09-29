@@ -31,11 +31,12 @@ VISUAL_REACQUIRE_STALE_TIMEOUT_S="2.0"
 VISUAL_REACQUIRE_RETURN_FRESH_S="1.0"
 VISUAL_REACQUIRE_SOURCE="amcl_odom"
 RECORD_START_TIMEOUT_S=360
-EXPECTED_BAYLANDS_WEIGHTS="$WS_ROOT/models/obb/mymodels/baylands-leader-v0.pt"
-EXPECTED_BAYLANDS_ONNX="$WS_ROOT/models/obb/mymodels/baylands-leader-v0.onnx"
+EXPECTED_BAYLANDS_WEIGHTS="$WS_ROOT/models/obb/mymodels/baylands-leader-v9-tuned-full.pt"
+EXPECTED_BAYLANDS_ONNX="$WS_ROOT/models/obb/mymodels/onnx/baylands-leader-v9-tuned-full.onnx"
 
 ACTIVE_STOP_CMD=()
 YOLO_WEIGHTS_ABS=""
+DETECTOR_ONNX_ABS=""
 SUPPORT_ONNX_ABS=""
 SUPPORT_WEIGHTS_ABS=""
 SUPPORT_BACKEND_EFFECTIVE=""
@@ -197,7 +198,7 @@ default_yolo_weights() {
   for candidate in \
     "$YOLO_WEIGHTS" \
     "$EXPECTED_BAYLANDS_WEIGHTS" \
-    "$WS_ROOT/models/obb/mymodels/baylands-leader-v0.pt"; do
+    "$WS_ROOT/models/obb/mymodels/baylands-leader-v9-tuned-full.pt"; do
     if resolved="$(resolve_existing_path "$candidate" 2>/dev/null)"; then
       printf '%s\n' "$resolved"
       return 0
@@ -211,7 +212,7 @@ default_support_onnx() {
   for candidate in \
     "$SUPPORT_ONNX_MODEL" \
     "$EXPECTED_BAYLANDS_ONNX" \
-    "$WS_ROOT/models/obb/mymodels/baylands-leader-v0.onnx"; do
+    "$WS_ROOT/models/obb/mymodels/onnx/baylands-leader-v9-tuned-full.onnx"; do
     if resolved="$(resolve_existing_path "$candidate" 2>/dev/null)"; then
       printf '%s\n' "$resolved"
       return 0
@@ -225,7 +226,7 @@ default_support_weights() {
   for candidate in \
     "$SUPPORT_YOLO_WEIGHTS" \
     "$EXPECTED_BAYLANDS_WEIGHTS" \
-    "$WS_ROOT/models/obb/mymodels/baylands-leader-v0.pt"; do
+    "$WS_ROOT/models/obb/mymodels/baylands-leader-v9-tuned-full.pt"; do
     if resolved="$(resolve_existing_path "$candidate" 2>/dev/null)"; then
       printf '%s\n' "$resolved"
       return 0
@@ -492,6 +493,10 @@ case "$VISUAL_REACQUIRE_ASSIST" in
   true|false) ;;
   *) echo "Invalid --visual-reacquire-assist value: $VISUAL_REACQUIRE_ASSIST" >&2; exit 2 ;;
 esac
+if [ "$VISUAL_REACQUIRE_ASSIST" = true ]; then
+  echo "--visual-reacquire-assist is not implemented by the current runtime." >&2
+  exit 2
+fi
 case "$SUPPORT_BACKEND" in
   ""|ultralytics|onnx_cpu|onnx_directml) ;;
   *) echo "Invalid --support-backend value: $SUPPORT_BACKEND" >&2; exit 2 ;;
@@ -533,6 +538,16 @@ if [[ "$CONDITION" == C2 || "$CONDITION" == C3 || "$CONDITION" == C5 ]]; then
   DETECTOR_BACKEND_EFFECTIVE="$DETECTOR_BACKEND"
   MODEL_PATH="$YOLO_WEIGHTS_ABS"
   MODEL_FILENAME="$(basename "$MODEL_PATH")"
+  case "$DETECTOR_BACKEND" in
+    onnx_cpu|onnx_directml)
+      if ! DETECTOR_ONNX_ABS="$(default_support_onnx)"; then
+        print_missing_baylands_models "$CONDITION visual detector"
+        exit 1
+      fi
+      MODEL_PATH="$DETECTOR_ONNX_ABS"
+      MODEL_FILENAME="$(basename "$MODEL_PATH")"
+      ;;
+  esac
 fi
 if [ "$CONDITION" = C4 ]; then
   if [ -z "$SUPPORT_BACKEND" ]; then
@@ -629,21 +644,21 @@ for run_index in $(seq "$START_INDEX" "$last_run_index"); do
       RECORD_PROFILE="default"
       YOLO_CONTROL_MODE="follow_uav_estimate"
       VISUAL_FOLLOW_LOGIC=""
-      START_CMD=(./run.sh tmux_1to1 "${COMMON_ARGS[@]}" mode:=yolo record_profile:=default publish_follow_debug_topics:=true yolo_control_mode:=follow_uav_estimate "detector_backend:=$DETECTOR_BACKEND" "weights:=$YOLO_WEIGHTS_ABS" "detector_benchmark_csv_path:=$run_dir/detector.csv" "tracker:=$TRACKER_ENABLE" "external_detection_node:=$EXTERNAL_DETECTION_NODE" "visual_reacquire_assist_enable:=$VISUAL_REACQUIRE_ASSIST" "visual_reacquire_stale_timeout_s:=$VISUAL_REACQUIRE_STALE_TIMEOUT_S" "visual_reacquire_return_fresh_s:=$VISUAL_REACQUIRE_RETURN_FRESH_S" "visual_reacquire_source:=$VISUAL_REACQUIRE_SOURCE" "detector_conf_threshold:=$DETECTOR_CONF_THRESHOLD" "detector_iou_threshold:=$DETECTOR_IOU_THRESHOLD")
+      START_CMD=(./run.sh tmux_1to1 "${COMMON_ARGS[@]}" mode:=yolo record_profile:=default publish_follow_debug_topics:=true yolo_control_mode:=follow_uav_estimate "detector_backend:=$DETECTOR_BACKEND" "weights:=$YOLO_WEIGHTS_ABS" "detector_benchmark_csv_path:=$run_dir/detector.csv" "tracker:=$TRACKER_ENABLE" "external_detection_node:=$EXTERNAL_DETECTION_NODE")
       STOP_CMD=(./stop.sh tmux_1to1 "$WORLD" "session:=$session")
       ;;
     C3)
       RECORD_PROFILE="default"
       YOLO_CONTROL_MODE="visual_bridge"
       VISUAL_FOLLOW_LOGIC="follow_core"
-      START_CMD=(./run.sh tmux_1to1 "${COMMON_ARGS[@]}" mode:=yolo record_profile:=default yolo_control_mode:=visual_bridge visual_follow_logic:=follow_core "detector_backend:=$DETECTOR_BACKEND" "weights:=$YOLO_WEIGHTS_ABS" "detector_benchmark_csv_path:=$run_dir/detector.csv" "tracker:=$TRACKER_ENABLE" "external_detection_node:=$EXTERNAL_DETECTION_NODE" "visual_reacquire_assist_enable:=$VISUAL_REACQUIRE_ASSIST" "visual_reacquire_stale_timeout_s:=$VISUAL_REACQUIRE_STALE_TIMEOUT_S" "visual_reacquire_return_fresh_s:=$VISUAL_REACQUIRE_RETURN_FRESH_S" "visual_reacquire_source:=$VISUAL_REACQUIRE_SOURCE" "detector_conf_threshold:=$DETECTOR_CONF_THRESHOLD" "detector_iou_threshold:=$DETECTOR_IOU_THRESHOLD")
+      START_CMD=(./run.sh tmux_1to1 "${COMMON_ARGS[@]}" mode:=yolo record_profile:=default yolo_control_mode:=visual_bridge visual_follow_logic:=follow_core "detector_backend:=$DETECTOR_BACKEND" "weights:=$YOLO_WEIGHTS_ABS" "detector_benchmark_csv_path:=$run_dir/detector.csv" "tracker:=$TRACKER_ENABLE" "external_detection_node:=$EXTERNAL_DETECTION_NODE")
       STOP_CMD=(./stop.sh tmux_1to1 "$WORLD" "session:=$session")
       ;;
     C4)
-      RECORD_PROFILE="support"
+      RECORD_PROFILE="support_hazard"
       YOLO_CONTROL_MODE=""
       VISUAL_FOLLOW_LOGIC=""
-      START_CMD=(./run.sh tmux_support_chain "${COMMON_ARGS[@]}" mode:=follow record_profile:=support support_mux_relation_source:=odom support_mux_source_stale_timeout_s:=4.0 support_camera_scan_enable:=true support_bridge_gimbal:=true "support_detector_backend:=$SUPPORT_BACKEND_EFFECTIVE")
+      START_CMD=(./run.sh tmux_support_chain "${COMMON_ARGS[@]}" mode:=follow record_profile:=support_hazard support_mux_relation_source:=odom support_mux_source_stale_timeout_s:=4.0 support_camera_scan_enable:=true support_bridge_gimbal:=true "support_detector_backend:=$SUPPORT_BACKEND_EFFECTIVE")
       if [ "$SUPPORT_BACKEND_EFFECTIVE" = "ultralytics" ]; then
         START_CMD+=("support_yolo_weights:=$SUPPORT_WEIGHTS_ABS")
       else
@@ -655,10 +670,18 @@ for run_index in $(seq "$START_INDEX" "$last_run_index"); do
       RECORD_PROFILE="omnet"
       YOLO_CONTROL_MODE="follow_uav_estimate"
       VISUAL_FOLLOW_LOGIC=""
-      START_CMD=(./run.sh tmux_1to1 "${COMMON_ARGS[@]}" mode:=yolo record_profile:=omnet yolo_control_mode:=follow_uav_estimate "detector_backend:=$DETECTOR_BACKEND" "weights:=$YOLO_WEIGHTS_ABS" "detector_benchmark_csv_path:=$run_dir/detector.csv" "tracker:=$TRACKER_ENABLE" "external_detection_node:=$EXTERNAL_DETECTION_NODE" "visual_reacquire_assist_enable:=$VISUAL_REACQUIRE_ASSIST" "visual_reacquire_stale_timeout_s:=$VISUAL_REACQUIRE_STALE_TIMEOUT_S" "visual_reacquire_return_fresh_s:=$VISUAL_REACQUIRE_RETURN_FRESH_S" "visual_reacquire_source:=$VISUAL_REACQUIRE_SOURCE" omnet:=true "omnet_network:=$OMNET_NETWORK" omnet_ui:=cmdenv "omnet_project:=$OMNET_PROJECT" "omnet_result_dir:=$run_dir/omnet" "detector_conf_threshold:=$DETECTOR_CONF_THRESHOLD" "detector_iou_threshold:=$DETECTOR_IOU_THRESHOLD")
+      START_CMD=(./run.sh tmux_1to1 "${COMMON_ARGS[@]}" mode:=yolo record_profile:=omnet yolo_control_mode:=follow_uav_estimate "detector_backend:=$DETECTOR_BACKEND" "weights:=$YOLO_WEIGHTS_ABS" "detector_benchmark_csv_path:=$run_dir/detector.csv" "tracker:=$TRACKER_ENABLE" "external_detection_node:=$EXTERNAL_DETECTION_NODE" omnet:=true "omnet_network:=$OMNET_NETWORK" omnet_ui:=cmdenv "omnet_project:=$OMNET_PROJECT" "omnet_result_dir:=$run_dir/omnet")
       STOP_CMD=(./stop.sh tmux_1to1 "$WORLD" "session:=$session")
       ;;
   esac
+
+  if [[ "$CONDITION" == C2 || "$CONDITION" == C3 || "$CONDITION" == C5 ]]; then
+    case "$DETECTOR_BACKEND" in
+      onnx_cpu|onnx_directml)
+        START_CMD+=("detector_onnx_model:=$DETECTOR_ONNX_ABS")
+        ;;
+    esac
+  fi
 
   echo "[results_campaign] Starting $CONDITION $run_id -> $run_dir"
   write_run_json "$metadata_path" "$CONDITION" "$run_id" "$run_dir" "starting" "" "${START_CMD[@]}"
@@ -692,7 +715,14 @@ done
 
 summary_dir="$CONDITION_ROOT/summary"
 mkdir -p "$summary_dir"
-if python3 "$WS_ROOT/scripts/results_summarize_bag.py" "$CONDITION_ROOT" --out "$summary_dir" --warmup "$WARMUP_S"; then
+if (
+  set +u
+  unset VIRTUAL_ENV PYTHONHOME PYTHONPATH
+  export PATH=/usr/bin:/bin:/usr/sbin:/sbin:$PATH
+  source /opt/ros/jazzy/setup.bash
+  set -u
+  python3 "$WS_ROOT/scripts/results_summarize_bag.py" "$CONDITION_ROOT" --out "$summary_dir" --warmup "$WARMUP_S"
+); then
   echo "[results_campaign] Summary written to $summary_dir"
 else
   echo "[results_campaign] Warning: summary failed; bags are still in $CONDITION_ROOT" >&2

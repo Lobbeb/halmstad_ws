@@ -162,7 +162,9 @@ SUPPORT_CMD=(
   hazard_synthetic_state:=1
   hazard_synthetic_publish_rate_hz:=2.0
   hazard_synthetic_ttl_s:=4.0
-  hazard_synthetic_start_delay_s:=1.0
+  # Leave enough simulation time for the first accepted-goal plan to reach the
+  # passive evidence recorder before introducing the hazard.
+  hazard_synthetic_start_delay_s:=8.0
   hazard_synthetic_active_duration_s:="$ACTIVE_DURATION_S"
   hazard_synthetic_publish_empty_after_active_duration:=true
   hazard_synthetic_activation_status_topic:=/a201_0000/navigate_to_pose/_action/status

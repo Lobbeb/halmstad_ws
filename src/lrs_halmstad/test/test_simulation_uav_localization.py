@@ -1,6 +1,7 @@
 import inspect
 import math
 from pathlib import Path
+import threading
 
 import pytest
 from geometry_msgs.msg import PoseStamped
@@ -19,6 +20,7 @@ from lrs_halmstad.sim.simulation_uav_localization import (
     world_point_to_map,
 )
 from lrs_halmstad.sim.simulator import Simulator
+from lrs_halmstad.sim.gazebo_model_pose_bridge import GazeboModelPoseBridge
 
 
 def _simulator_pitch_fixture(mount_pitch_deg=30.0):
@@ -36,6 +38,37 @@ def test_gimbal_joint_command_matches_fixed_camera_mount():
 
     assert math.degrees(joint_command) == pytest.approx(-32.0)
     assert 30.0 - math.degrees(joint_command) == pytest.approx(62.0)
+
+
+def test_gazebo_model_pose_bridge_selects_named_json_pose_and_source_stamp():
+    bridge = GazeboModelPoseBridge.__new__(GazeboModelPoseBridge)
+    bridge.model_name = 'a201_0000/robot'
+    bridge.source_topic = '/world/baylands/dynamic_pose/info'
+    bridge.publish_hz = 0.0
+    bridge._min_publish_period_s = 0.0
+    bridge._lock = threading.Lock()
+    bridge._prev_pose = None
+    bridge._received_first_pose = True
+    published = []
+    bridge._publish_state = published.append
+
+    bridge._on_pose_payload({
+        'header': {'stamp': {'sec': '12', 'nsec': 345}},
+        'pose': [
+            {'name': 'dji0', 'position': {'x': 99.0}},
+            {
+                'name': 'a201_0000/robot',
+                'position': {'x': 1.0, 'y': 2.0, 'z': 3.0},
+                'orientation': {'z': 0.0, 'w': 1.0},
+            },
+        ],
+    })
+
+    assert len(published) == 1
+    state = published[0]
+    assert (state.stamp_sec, state.stamp_nsec) == (12, 345)
+    assert (state.x, state.y, state.z) == pytest.approx((1.0, 2.0, 3.0))
+    assert state.qw == pytest.approx(1.0)
 
 
 def test_reported_camera_tilt_matches_physical_joint_orientation():

@@ -10,7 +10,7 @@ WARMUP_S=45
 WORLD="baylands"
 GUI="false"
 OUT_ROOT="bags/results"
-WEIGHTS="models/obb/mymodels/baylands-leader-v0.pt"
+WEIGHTS="models/obb/mymodels/baylands-leader-v9-tuned-full.pt"
 SUPPORT_WEIGHTS=""
 SUPPORT_BACKEND="ultralytics"
 ROUTE_SCHEDULE="rotundan,road_to_west,road_to_spawn,spawn,parkinglot_west"
@@ -25,7 +25,7 @@ Runs C1, C2, C3, and C4 sequentially using the Baylands Results harness.
 
 Options:
   --gui true|false              Gazebo GUI, default false
-  --weights PATH                Baylands .pt model for C2/C3, default models/obb/mymodels/baylands-leader-v0.pt
+  --weights PATH                Baylands .pt model for C2/C3, default models/obb/mymodels/baylands-leader-v9-tuned-full.pt
   --support-weights PATH        Baylands .pt model for C4, default same as --weights
   --support-backend NAME        C4 backend, default ultralytics
   --route-schedule LIST         Fixed Baylands route schedule, default rotundan,road_to_west,road_to_spawn,spawn,parkinglot_west
@@ -128,7 +128,15 @@ FAILED_CONDITIONS=()
 
 summarize_all() {
   echo "[results_campaign_all] Summarising full campaign"
-  (cd "$WS_ROOT" && python3 scripts/results_summarize_bag.py "$OUT_ROOT_ABS" --warmup "$WARMUP_S")
+  (
+    cd "$WS_ROOT"
+    set +u
+    unset VIRTUAL_ENV PYTHONHOME PYTHONPATH
+    export PATH=/usr/bin:/bin:/usr/sbin:/sbin:$PATH
+    source /opt/ros/jazzy/setup.bash
+    set -u
+    python3 scripts/results_summarize_bag.py "$OUT_ROOT_ABS" --warmup "$WARMUP_S"
+  )
 }
 
 run_condition() {

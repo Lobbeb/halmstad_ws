@@ -347,7 +347,7 @@ The verified simulation contract is:
 - timestamped Gazebo-world poses on `/dji1/pose` and `/dji1/camera0/actual/center_pose`;
 - TF chain `map → dji1/base_link → dji1/camera0/image_optical_frame` at the source acquisition timestamp.
 
-The Baylands support-observation wrapper defaults to the available Baylands checkpoint `models/obb/mymodels/baylands-leader-v4-3.pt` with the Ultralytics backend. Its verified class is `ugv`; this is a geometry and transport fixture, not a validated environmental-hazard detector.
+The Baylands support-observation wrapper defaults to the available Baylands checkpoint `models/obb/mymodels/baylands-leader-v9-tuned-full.pt` with the Ultralytics backend. Its verified class is `ugv`; this is a geometry and transport fixture, not a validated environmental-hazard detector.
 
 World→map is a simulation-only planar calibration fitted from the existing `parkinglot_west` world/AMCL waypoint pairs. `parkinglot_west_0` is held out: the current fit has 1.152 m maximum fit residual and 0.578 m held-out XY error, below the configurable 1.25 m and 0.75 m gates. This calibration is not a claim that the full Baylands raster is globally rigid, and it must not be reused outside its calibrated route without new evidence.
 
@@ -678,7 +678,6 @@ For `world:=baylands`, the launch defaults now auto-fill the current verified Ba
 Current Baylands follow shortcuts:
 
 ```bash
-cd /home/ruben/halmstad_ws
 ./run.sh tmux_1to1 baylands
 ./run.sh tmux_1to1 baylands waypoint:=parkinglot_east_0 mode:=follow \
   nav2_goals:=parkinglot_east
@@ -687,7 +686,6 @@ cd /home/ruben/halmstad_ws
 Direct Baylands stack:
 
 ```bash
-cd /home/ruben/halmstad_ws
 ./run.sh gazebo_sim baylands true waypoint:=parkinglot_east_0
 ./run.sh spawn_uav baylands
 ./run.sh localization baylands lidar:=3d

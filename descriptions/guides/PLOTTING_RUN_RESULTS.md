@@ -7,7 +7,7 @@ Use this after a recorded run has finished and the rosbag is closed.
 Run from the workspace root:
 
 ```bash
-cd /home/ruben/halmstad_ws
+# Run from the halmstad_ws repository root.
 source /opt/ros/jazzy/setup.bash
 source install/setup.bash
 ```

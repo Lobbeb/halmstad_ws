@@ -2,6 +2,8 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+STATE_DIR="/tmp/halmstad_ws"
+SUPPORT_STATE_DIR="$STATE_DIR/support_sessions"
 WORLD="baylands"
 SESSION=""
 GROUP_GRACE_S=4
@@ -9,6 +11,7 @@ FINAL_GRACE_S=4
 SUPPORT_GRACE_S=2
 KILL_SESSION=true
 DRY_RUN=false
+BROAD_CLEANUP=false
 
 if [ "$#" -gt 0 ] && [[ "$1" != *":="* ]] && [[ "$1" != *=* ]]; then
   WORLD="$1"
@@ -37,13 +40,19 @@ for arg in "$@"; do
     dry_run:=*)
       DRY_RUN="${arg#dry_run:=}"
       ;;
+    broad_cleanup:=*)
+      BROAD_CLEANUP="${arg#broad_cleanup:=}"
+      ;;
     *)
       echo "Unknown argument: $arg" >&2
-      echo "Usage: $0 [world] [session:=name] [group_grace_s:=4] [final_grace_s:=4] [support_grace_s:=2] [kill_session:=true|false] [dry_run:=true|false]" >&2
+      echo "Usage: $0 [world] [session:=name] [group_grace_s:=4] [final_grace_s:=4] [support_grace_s:=2] [kill_session:=true|false] [dry_run:=true|false] [broad_cleanup:=true|false]" >&2
       exit 2
       ;;
   esac
 done
+
+session_safe="${SESSION//[^A-Za-z0-9_.-]/_}"
+SUPPORT_OBSERVATION_PID_FILE="$SUPPORT_STATE_DIR/${session_safe}.observation.pid"
 
 tmux_has_session() {
   tmux has-session -t "$SESSION" 2>/dev/null
@@ -51,7 +60,7 @@ tmux_has_session() {
 
 find_pane_by_title() {
   local name="$1"
-  tmux list-panes -a -t "$SESSION" -F '#{pane_id}\t#{pane_title}' 2>/dev/null | awk -F '\t' -v want="$name" '$2 == want { print $1; exit }'
+  tmux list-panes -a -t "$SESSION" -F '#{pane_id}|#{pane_title}' 2>/dev/null | awk -F '|' -v want="$name" '$2 == want { print $1; exit }'
 }
 
 window_exists() {
@@ -111,7 +120,42 @@ signal_named_nodes() {
   signal_processes_by_pattern "$label" "__node:=($names_regex)(\\s|$)"
 }
 
+signal_process_group_from_pid_file() {
+  local pid_file="$1"
+  local label="$2"
+  local pid=""
+  local pgid=""
+
+  [ -f "$pid_file" ] || return 1
+  pid="$(cat "$pid_file" 2>/dev/null || true)"
+  [ -n "$pid" ] || return 1
+  kill -0 "$pid" 2>/dev/null || {
+    rm -f "$pid_file"
+    return 1
+  }
+  pgid="$(ps -o pgid= -p "$pid" 2>/dev/null | tr -d ' ')"
+  [ -n "$pgid" ] || return 1
+
+  echo "Safety cleanup: signaling task-owned $label process group $pgid"
+  if [ "$DRY_RUN" != true ]; then
+    /bin/kill -INT -- "-$pgid" 2>/dev/null || true
+    sleep 2
+    /bin/kill -TERM -- "-$pgid" 2>/dev/null || true
+    sleep 2
+    /bin/kill -KILL -- "-$pgid" 2>/dev/null || true
+    rm -f "$pid_file"
+  fi
+  return 0
+}
+
 run_support_fallback_cleanup() {
+  signal_process_group_from_pid_file \
+    "$SUPPORT_OBSERVATION_PID_FILE" "support observation" || true
+  if [ "$BROAD_CLEANUP" != true ]; then
+    return 0
+  fi
+
+  echo "Explicit broad support cleanup enabled for session: $SESSION"
   signal_processes_by_pattern "support follow helper" 'scripts/run_support_follow_odom\.sh' || true
   signal_processes_by_pattern "support observation helper" 'scripts/run_support_observation\.sh' || true
   signal_processes_by_pattern "support follow launch" 'ros2 launch lrs_halmstad support_follow_odom\.launch\.py' || true
@@ -142,6 +186,7 @@ fi
   "group_grace_s:=$GROUP_GRACE_S" \
   "final_grace_s:=$FINAL_GRACE_S" \
   "kill_session:=$KILL_SESSION" \
-  "dry_run:=$DRY_RUN"
+  "dry_run:=$DRY_RUN" \
+  "broad_cleanup:=$BROAD_CLEANUP"
 
 run_support_fallback_cleanup

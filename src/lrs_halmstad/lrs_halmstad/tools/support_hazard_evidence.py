@@ -2411,6 +2411,36 @@ def _request_costmap_snapshot(node: PlannerEvidenceNode, timeout_s: float) -> bo
     return True
 
 
+def _seed_runtime_pre_hazard_baseline(
+    node: RuntimeEvidenceNode,
+    geometry: dict[str, float],
+    inflation_radius_m: float,
+    *,
+    attempts: int = 4,
+    timeout_s: float = 1.0,
+) -> bool:
+    """Capture distinct service snapshots until the pre-hazard region settles."""
+    for _ in range(attempts):
+        if _has_nonempty(node.collector, UGV_TOPIC):
+            return False
+        if _request_costmap_snapshot(node, timeout_s):
+            baseline, _ = settled_baseline_selection(
+                node.collector.costmaps,
+                geometry,
+                inflation_radius_m,
+                required_consecutive=2,
+            )
+            if baseline is not None:
+                return True
+        previous_ns = node._evidence_now_ns()
+        _spin_until(
+            node,
+            lambda: node._evidence_now_ns() > previous_ns,
+            time.monotonic() + timeout_s,
+        )
+    return False
+
+
 def _has_nonempty(collector: EvidenceCollector, topic: str) -> bool:
     return any(sample.message.hazards for sample in collector.samples[topic])
 
@@ -4541,6 +4571,12 @@ def _run_runtime_live(args: argparse.Namespace, ros_args: list[str]) -> int:
             rclpy.spin_once(node, timeout_sec=0.1)
         layer_enabled = _get_aerial_layer_enabled(node, 10.0)
         runtime_goal_checker = _get_runtime_goal_checker(node, 10.0)
+        if args.scenario != 'baseline':
+            _seed_runtime_pre_hazard_baseline(
+                node,
+                geometry,
+                float(nav2_config['inflation_radius_m']),
+            )
         deadline = time.monotonic() + args.timeout_s
         terminal_seen_at = None
         while time.monotonic() < deadline and rclpy.ok():
